@@ -7,12 +7,14 @@ import {
   type SecurityInfo,
 } from '../lib/api'
 import { fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { useToast } from '../lib/use-toast'
 
 interface SettingsFormState {
   reserved_ports: string
   default_traffic_limit_bytes: string
   default_bandwidth_limit_mbps: string
   stats_retention_days: string
+  agent_control_endpoint: string
 }
 
 interface SettingsState {
@@ -30,9 +32,11 @@ const EMPTY_FORM: SettingsFormState = {
   default_traffic_limit_bytes: '',
   default_bandwidth_limit_mbps: '',
   stats_retention_days: '',
+  agent_control_endpoint: '',
 }
 
 export default function Settings() {
+  const toast = useToast()
   const [state, setState] = useState<SettingsState>({
     initial: {},
     form: EMPTY_FORM,
@@ -70,6 +74,7 @@ export default function Settings() {
             default_traffic_limit_bytes: initial.default_traffic_limit_bytes ?? '',
             default_bandwidth_limit_mbps: initial.default_bandwidth_limit_mbps ?? '',
             stats_retention_days: initial.stats_retention_days ?? '',
+            agent_control_endpoint: initial.agent_control_endpoint ?? '',
           },
           loading: false,
         }))
@@ -99,6 +104,7 @@ export default function Settings() {
         'default_traffic_limit_bytes',
         'default_bandwidth_limit_mbps',
         'stats_retention_days',
+        'agent_control_endpoint',
       ]
       for (const k of keys) {
         if (f[k] !== (init[k] ?? '')) diff[k] = f[k]
@@ -121,12 +127,15 @@ export default function Settings() {
           default_traffic_limit_bytes: resp.settings.default_traffic_limit_bytes ?? '',
           default_bandwidth_limit_mbps: resp.settings.default_bandwidth_limit_mbps ?? '',
           stats_retention_days: resp.settings.stats_retention_days ?? '',
+          agent_control_endpoint: resp.settings.agent_control_endpoint ?? '',
         },
         savedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
       }))
+      toast.success('设置已保存')
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '保存失败'
       setState((p) => ({ ...p, saving: false, saveError: msg }))
+      toast.error(msg)
     }
   }
 
@@ -155,6 +164,21 @@ export default function Settings() {
         onSubmit={onSubmit}
         className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 space-y-4 max-w-2xl"
       >
+        <div>
+          <label className={fieldLabelCls}>Agent 上报端点</label>
+          <input
+            type="text"
+            value={state.form.agent_control_endpoint}
+            onChange={(e) => set('agent_control_endpoint', e.target.value)}
+            className={fieldInputCls}
+            placeholder="https://relay.example.com:50051"
+          />
+          <p className="text-[11px] text-zinc-500 mt-1">
+            Agent 默认 gRPC 连入地址。新建节点的「安装命令」会嵌入这个值；
+            生产建议用 https。留空表示未配置（节点详情页的安装命令按钮会禁用）。
+          </p>
+        </div>
+
         <div>
           <label className={fieldLabelCls}>保留端口 (reserved_ports)</label>
           <textarea
