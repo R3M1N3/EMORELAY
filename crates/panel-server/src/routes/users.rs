@@ -159,7 +159,7 @@ pub async fn create(
     validate_role(&req.role)?;
 
     let hash = hash_password(&req.password).map_err(ApiError::Internal)?;
-    let new_id = User::create(&state.pool, username, &hash, &req.role)
+    let new_id = User::create(&state.pool, username, &hash, &req.role, None, None)
         .await
         .map_err(map_sqlx_to_api)?;
     let user = User::find_by_id(&state.pool, new_id)
@@ -226,6 +226,8 @@ pub async fn update(
         id,
         new_hash.as_deref(),
         req.role.as_deref(),
+        None,
+        None,
     )
     .await?;
     if rows == 0 {

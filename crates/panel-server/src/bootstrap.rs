@@ -23,7 +23,7 @@ pub async fn ensure_admin_user(pool: &SqlitePool) -> Result<()> {
         anyhow::bail!("PANEL_BOOTSTRAP_ADMIN_PASSWORD is empty; refusing to create admin");
     }
     let hash = hash_password(&password).context("hash bootstrap admin password")?;
-    User::create(pool, &username, &hash, "admin")
+    User::create(pool, &username, &hash, "admin", None, None)
         .await
         .context("insert bootstrap admin")?;
     info!(username = %username, "bootstrap admin user created");

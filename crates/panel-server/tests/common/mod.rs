@@ -63,7 +63,7 @@ pub async fn make_app() -> Result<TestApp> {
 
     // 直接创建 admin(跳过 bootstrap 的 env 依赖)。
     let hash = hash_password("admin-test-password")?;
-    let admin_user_id = User::create(&pool, "admin", &hash, "admin").await?;
+    let admin_user_id = User::create(&pool, "admin", &hash, "admin", None, None).await?;
 
     let app = routes::router(state.clone());
     let admin_token = login(&app, "admin", "admin-test-password").await?;
@@ -85,7 +85,7 @@ pub async fn make_user_token(
     password: &str,
 ) -> Result<(i64, String)> {
     let hash = hash_password(password)?;
-    let user_id = User::create(&app.state.pool, username, &hash, "user").await?;
+    let user_id = User::create(&app.state.pool, username, &hash, "user", None, None).await?;
     let token = login(&app.app, username, password).await?;
     Ok((user_id, token))
 }
