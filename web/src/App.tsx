@@ -10,26 +10,29 @@ import RuleDetail from './pages/RuleDetail'
 import NodeDetail from './pages/NodeDetail'
 import { AuthProvider } from './lib/auth'
 import { useAuth } from './lib/use-auth'
+import { ToastProvider } from './lib/toast'
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<ProtectedShell />}>
-            <Route index element={<Dashboard />} />
-            <Route path="nodes" element={<Nodes />} />
-            <Route path="nodes/:id" element={<NodeDetail />} />
-            <Route path="rules" element={<Rules />} />
-            <Route path="rules/:id" element={<RuleDetail />} />
-            <Route path="users" element={<Users />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<ProtectedShell />}>
+              <Route index element={<Dashboard />} />
+              <Route path="nodes" element={<Nodes />} />
+              <Route path="nodes/:id" element={<NodeDetail />} />
+              <Route path="rules" element={<Rules />} />
+              <Route path="rules/:id" element={<RuleDetail />} />
+              <Route path="users" element={<Users />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ToastProvider>
   )
 }
 

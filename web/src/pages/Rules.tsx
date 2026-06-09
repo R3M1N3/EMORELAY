@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { useToast } from '../lib/use-toast'
 import {
   ApiError,
   formatBytes,
@@ -30,6 +31,7 @@ interface ListState {
 }
 
 export default function Rules() {
+  const toast = useToast()
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [nodeList, setNodeList] = useState<NodeView[]>([])
   const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
@@ -107,11 +109,12 @@ export default function Rules() {
     setBusy(true)
     try {
       await rules.del(rule.id)
+      toast.success('规则已删除')
       setConfirming(null)
       await reload()
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '删除失败'
-      setList((s) => ({ ...s, error: msg }))
+      toast.error(msg)
       setConfirming(null)
     } finally {
       setBusy(false)
@@ -123,10 +126,11 @@ export default function Rules() {
     try {
       if (rule.enabled) await rules.disable(rule.id)
       else await rules.enable(rule.id)
+      toast.success(rule.enabled ? '已禁用' : '已启用')
       await reload()
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '操作失败'
-      setList((s) => ({ ...s, error: msg }))
+      toast.error(msg)
     } finally {
       setActingId(null)
     }
@@ -136,10 +140,11 @@ export default function Rules() {
     setActingId(rule.id)
     try {
       await rules.restart(rule.id)
+      toast.success('已下发重启')
       await reload()
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '重启失败'
-      setList((s) => ({ ...s, error: msg }))
+      toast.error(msg)
     } finally {
       setActingId(null)
     }
@@ -296,6 +301,7 @@ export default function Rules() {
             nodeList={nodeList}
             onCancel={() => setEditing(null)}
             onSuccess={async () => {
+              toast.success(editing.mode === 'create' ? '规则已创建' : '规则已保存')
               setEditing(null)
               await reload()
             }}
