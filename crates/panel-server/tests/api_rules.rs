@@ -184,6 +184,71 @@ async fn create_rule_outside_port_pool_rejected() {
 // P2: 规则级到期/流量/带宽三个限制字段已下线,对应 auto_stop 测试随之删除;
 // 用户级到期/配额覆盖在 user_quota sweeper 测试(Task 5)。
 #[tokio::test]
+async fn rule_with_profile_roundtrip_and_detach() {
+    let app = make_app().await.unwrap();
+    let t = &app.admin_token;
+    let node_id = make_node(&app).await;
+
+    // 建 profile(77 Mbps)
+    let req = auth_req(
+        Method::POST,
+        "/api/bandwidth-profiles",
+        t,
+        Some(json!({ "name": "p77", "bandwidth_mbps": 77 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let profile_id = body["id"].as_i64().unwrap();
+
+    // 带 profile 建规则 → bandwidth_mbps 回显 77
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        t,
+        Some(json!({
+            "node_id": node_id,
+            "name": "with-profile",
+            "protocol": "tcp",
+            "listen_port": 21000,
+            "target_host": "1.2.3.4",
+            "target_port": 80,
+            "bandwidth_profile_id": profile_id,
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rule_id = body["id"].as_i64().unwrap();
+    assert_eq!(body["bandwidth_profile_id"], profile_id);
+    assert_eq!(body["bandwidth_mbps"], 77);
+
+    // PATCH bandwidth_profile_id=0 → 解除关联,两字段回 null
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        t,
+        Some(json!({ "bandwidth_profile_id": 0 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["bandwidth_profile_id"].is_null());
+    assert!(body["bandwidth_mbps"].is_null());
+
+    // PATCH 不存在的 profile → 400
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        t,
+        Some(json!({ "bandwidth_profile_id": 99999 })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn create_rule_without_profile_returns_null_bandwidth() {
     let app = make_app().await.unwrap();
     let t = &app.admin_token;

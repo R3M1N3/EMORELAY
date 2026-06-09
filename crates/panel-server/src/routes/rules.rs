@@ -92,7 +92,7 @@ pub struct CreateRuleRequest {
     pub protocol: String,
     #[serde(default = "default_listen_ip")]
     pub listen_ip: String,
-    pub listen_port: u16,
+    pub listen_port: Option<u16>,
     pub target_host: String,
     pub target_port: u16,
     pub bandwidth_profile_id: Option<i64>,
@@ -240,7 +240,7 @@ pub async fn create(
         return Err(ApiError::BadRequest("name is required".into()));
     }
     validate_protocol(&req.protocol)?;
-    if req.listen_port == 0 || req.target_port == 0 {
+    if matches!(req.listen_port, Some(0)) || req.target_port == 0 {
         return Err(ApiError::BadRequest(
             "listen_port and target_port must be 1-65535".into(),
         ));
@@ -264,21 +264,24 @@ pub async fn create(
             .await?
             .ok_or_else(|| ApiError::BadRequest("bandwidth_profile_id does not exist".into()))?;
     }
-    let listen_port_i64 = i64::from(req.listen_port);
-    if listen_port_i64 < node.port_pool_min || listen_port_i64 > node.port_pool_max {
-        return Err(ApiError::BadRequest(format!(
-            "listen_port {} outside node's port pool [{}-{}]",
-            req.listen_port, node.port_pool_min, node.port_pool_max
-        )));
-    }
-
     let reserved = settings::reserved_ports(&state.pool).await;
-    if reserved.contains(&listen_port_i64) {
-        return Err(ApiError::BadRequest(format!(
-            "listen_port {} is reserved",
-            req.listen_port
-        )));
-    }
+    let listen_port_i64 = match req.listen_port {
+        Some(p) => {
+            let p = i64::from(p);
+            if p < node.port_pool_min || p > node.port_pool_max {
+                return Err(ApiError::BadRequest(format!(
+                    "listen_port {} outside node's port pool [{}-{}]",
+                    p, node.port_pool_min, node.port_pool_max
+                )));
+            }
+            if reserved.contains(&p) {
+                return Err(ApiError::BadRequest(format!("listen_port {p} is reserved")));
+            }
+            p
+        }
+        // 留空 → 池内最小可用端口(排除 reserved 与按协议互斥的占用)。
+        None => allocate_port(&state.pool, &node, &req.listen_ip, &req.protocol, &reserved).await?,
+    };
 
     // UNIQUE 索引按 protocol 字符串精确匹配,tcp_udp 与 tcp/udp 在 DB 层不互斥;此处补应用层互斥。
     ensure_no_protocol_conflict(
@@ -676,6 +679,54 @@ async fn ensure_no_protocol_conflict(
         )));
     }
     Ok(())
+}
+
+/// 自动分配:node 池内最小可用 listen_port。
+/// 占用集合 = 同 node + 同 listen_ip 的活跃规则,按协议互斥语义判定:
+/// tcp ↔ {tcp, tcp_udp} / udp ↔ {udp, tcp_udp} / tcp_udp ↔ 全部。
+/// 并发窗口与 ensure_no_protocol_conflict 相同:精确重复由 DB UNIQUE 兜底,
+/// 互斥型并发与既有 create 行为一致(MVP 已接受)。
+async fn allocate_port(
+    pool: &sqlx::SqlitePool,
+    node: &Node,
+    listen_ip: &str,
+    protocol: &str,
+    reserved: &[i64],
+) -> ApiResult<i64> {
+    let taken: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT listen_port, protocol FROM forward_rules \
+         WHERE node_id = ? AND listen_ip = ? AND deleted_at IS NULL \
+           AND listen_port BETWEEN ? AND ?",
+    )
+    .bind(node.id)
+    .bind(listen_ip)
+    .bind(node.port_pool_min)
+    .bind(node.port_pool_max)
+    .fetch_all(pool)
+    .await?;
+
+    let conflicts = |existing: &str| -> bool {
+        match protocol {
+            "tcp" => matches!(existing, "tcp" | "tcp_udp"),
+            "udp" => matches!(existing, "udp" | "tcp_udp"),
+            _ => true, // tcp_udp 与所有协议互斥
+        }
+    };
+    let blocked: std::collections::HashSet<i64> = taken
+        .iter()
+        .filter(|(_, proto)| conflicts(proto))
+        .map(|(port, _)| *port)
+        .collect();
+
+    for port in node.port_pool_min..=node.port_pool_max {
+        if !reserved.contains(&port) && !blocked.contains(&port) {
+            return Ok(port);
+        }
+    }
+    Err(ApiError::BadRequest(format!(
+        "port pool exhausted on node {} [{}-{}]",
+        node.id, node.port_pool_min, node.port_pool_max
+    )))
 }
 
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
