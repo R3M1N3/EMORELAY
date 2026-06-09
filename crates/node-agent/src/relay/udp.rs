@@ -39,6 +39,15 @@ struct Session {
 }
 
 pub async fn start(rule: Rule, stats: Arc<StatsCollector>) -> Result<UdpRelayHandle> {
+    start_inner(rule, stats, SESSION_TIMEOUT, SWEEP_INTERVAL).await
+}
+
+async fn start_inner(
+    rule: Rule,
+    stats: Arc<StatsCollector>,
+    session_timeout: Duration,
+    sweep_interval: Duration,
+) -> Result<UdpRelayHandle> {
     let listen_ip: IpAddr = rule
         .listen_ip
         .parse()
@@ -64,7 +73,7 @@ pub async fn start(rule: Rule, stats: Arc<StatsCollector>) -> Result<UdpRelayHan
 
     let join = tokio::spawn(async move {
         let mut buf = vec![0u8; MAX_PACKET];
-        let mut sweep_tick = interval(SWEEP_INTERVAL);
+        let mut sweep_tick = interval(sweep_interval);
         sweep_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         sweep_tick.tick().await; // 立即触发的首个 tick 消费掉
 
@@ -99,7 +108,7 @@ pub async fn start(rule: Rule, stats: Arc<StatsCollector>) -> Result<UdpRelayHan
                     }
                 }
                 _ = sweep_tick.tick() => {
-                    sweep_expired(rule_id, &sessions).await;
+                    sweep_expired(rule_id, &sessions, session_timeout).await;
                 }
             }
         }
@@ -125,6 +134,8 @@ async fn forward(
     target_port: u16,
     counter: &Arc<RuleCounter>,
 ) -> Result<()> {
+    // TODO(bandwidth): 在 send / fetch_add 之前接入 traits::QuotaGuard 做 token bucket
+    //   限速 (plan §10);MVP 用 NullQuota 占位,不限速。
     let mut map = sessions.lock().await;
     if let Some(s) = map.get_mut(&client_addr) {
         s.last_seen = Instant::now();
@@ -187,12 +198,16 @@ async fn forward(
     Ok(())
 }
 
-async fn sweep_expired(rule_id: i64, sessions: &Arc<Mutex<HashMap<SocketAddr, Session>>>) {
+async fn sweep_expired(
+    rule_id: i64,
+    sessions: &Arc<Mutex<HashMap<SocketAddr, Session>>>,
+    session_timeout: Duration,
+) {
     let mut map = sessions.lock().await;
     let now = Instant::now();
     let expired: Vec<SocketAddr> = map
         .iter()
-        .filter(|(_, s)| now.duration_since(s.last_seen) > SESSION_TIMEOUT)
+        .filter(|(_, s)| now.duration_since(s.last_seen) > session_timeout)
         .map(|(a, _)| *a)
         .collect();
     for addr in &expired {
@@ -207,6 +222,16 @@ async fn sweep_expired(rule_id: i64, sessions: &Arc<Mutex<HashMap<SocketAddr, Se
             "udp sessions swept"
         );
     }
+}
+
+#[cfg(test)]
+async fn start_with(
+    rule: Rule,
+    stats: Arc<StatsCollector>,
+    session_timeout: Duration,
+    sweep_interval: Duration,
+) -> Result<UdpRelayHandle> {
+    start_inner(rule, stats, session_timeout, sweep_interval).await
 }
 
 #[cfg(test)]
@@ -293,5 +318,60 @@ mod tests {
         assert!(s.tx_bytes >= 4, "tx_bytes={}", s.tx_bytes);
         assert!(s.rx_bytes >= 4, "rx_bytes={}", s.rx_bytes);
         assert_eq!(s.error_count, 0);
+    }
+
+    /// 验证 session 闲置超过 session_timeout 后被 sweep:同 client port 第二次发包
+    /// 触发新 session 建立, connection_count 应递增到 2。
+    #[tokio::test]
+    async fn udp_session_expires_after_timeout() {
+        let echo_port = spawn_udp_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+
+        // 用短超时,快速验证 sweep 路径。
+        let handle = start_with(
+            rule_for(listen_port, echo_port),
+            stats.clone(),
+            Duration::from_millis(200), // session_timeout
+            Duration::from_millis(50),  // sweep_interval
+        )
+        .await
+        .expect("relay start");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // 同一 client (固定 port) 发两轮包,中间隔过 session_timeout。
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut buf = [0u8; 64];
+
+        client
+            .send_to(b"first", ("127.0.0.1", listen_port))
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_millis(300), client.recv_from(&mut buf))
+            .await
+            .expect("first recv timed out")
+            .unwrap();
+
+        // 等过 session_timeout + 一个 sweep 周期 + 余量
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        client
+            .send_to(b"second", ("127.0.0.1", listen_port))
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_millis(300), client.recv_from(&mut buf))
+            .await
+            .expect("second recv timed out")
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handle.stop().await;
+
+        let snap = stats.drain_snapshot();
+        let s = snap.iter().find(|s| s.rule_id == 7).expect("stats");
+        assert_eq!(
+            s.connection_count, 2,
+            "session 过期后第二次发包应建新 session, 计数 +1"
+        );
     }
 }

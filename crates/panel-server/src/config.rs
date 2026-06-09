@@ -12,6 +12,10 @@ pub struct Config {
     /// gRPC TLS server cert(PEM)。`None` → 走 plaintext。生产强烈建议配。
     pub grpc_tls_cert: Option<String>,
     pub grpc_tls_key: Option<String>,
+    /// 可选 mTLS:从此 PEM 加载根 CA 校验 Agent 客户端证书。
+    /// None → 仅 server-side TLS;Some → 强制 mTLS,Agent 必须提供 trusted client cert。
+    /// 要求 grpc_tls_cert/key 已配置(单向 TLS 是 mTLS 前置)。
+    pub grpc_tls_client_ca: Option<String>,
 }
 
 impl Config {
@@ -34,6 +38,9 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty()),
             grpc_tls_key: env::var("PANEL_GRPC_TLS_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            grpc_tls_client_ca: env::var("PANEL_GRPC_TLS_CLIENT_CA")
                 .ok()
                 .filter(|s| !s.is_empty()),
         })

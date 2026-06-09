@@ -94,6 +94,8 @@ async fn bridge(
     let (mut s_r, mut s_w) = server.split();
 
     // 与 plan.md 字段命名对齐：tx = client → target（发送出去），rx = target → client。
+    // TODO(bandwidth): 接入 traits::QuotaGuard,在 fetch_add 之前/之后做 token bucket
+    //   限速 (plan §10);MVP 用 NullQuota 占位,不限速。
     let tx_counter = counter.clone();
     let c2s = async {
         let n = tokio::io::copy(&mut c_r, &mut s_w).await?;

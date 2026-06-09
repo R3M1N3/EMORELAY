@@ -105,6 +105,8 @@ async fn run_session(
         config.node_id,
         config.token.clone(),
         config.grpc_ca_cert.clone(),
+        config.grpc_client_cert.clone(),
+        config.grpc_client_key.clone(),
     )
     .await?;
     client.register().await?;

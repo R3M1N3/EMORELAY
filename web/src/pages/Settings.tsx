@@ -315,9 +315,23 @@ function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
     : jwtOk
     ? { text: '已配置 (强度足够)', cls: 'text-emerald-300' }
     : { text: '已配置 (强度偏弱)', cls: 'text-amber-300' }
-  const tlsStatus = data.grpc_tls_enabled
-    ? { text: 'Token + TLS', cls: 'text-emerald-300', hint: 'Agent 与主控通过 TLS 加密传输,token 不裸跑' }
-    : { text: 'Token (明文)', cls: 'text-amber-300', hint: '生产建议配置 PANEL_GRPC_TLS_CERT/KEY 启用 TLS' }
+  const tlsStatus = data.grpc_mtls_enabled
+    ? {
+        text: 'Token + mTLS',
+        cls: 'text-emerald-300',
+        hint: '双向证书认证 + 加密传输;请同时确认 Agent 端配置 AGENT_GRPC_CLIENT_CERT/KEY,否则 TLS 握手会失败导致 Agent 离线',
+      }
+    : data.grpc_tls_enabled
+    ? {
+        text: 'Token + TLS',
+        cls: 'text-emerald-300',
+        hint: 'TLS 加密传输,token 不裸跑;配 PANEL_GRPC_TLS_CLIENT_CA 可升级 mTLS',
+      }
+    : {
+        text: 'Token (明文)',
+        cls: 'text-amber-300',
+        hint: '生产建议配置 PANEL_GRPC_TLS_CERT/KEY 启用 TLS',
+      }
   return (
     <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">安全状态</h3>

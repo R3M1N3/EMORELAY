@@ -1,0 +1,48 @@
+[Unit]
+Description=EMORELAY Node Agent (TCP/UDP forward relay)
+Documentation=https://github.com/Remine1337/EMORELAY
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 部署侧需先创建非特权用户:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin emorelay
+User=emorelay
+Group=emorelay
+
+WorkingDirectory=/opt/emorelay
+ExecStart=/opt/emorelay/node-agent
+EnvironmentFile=/etc/emorelay/agent.env
+
+Restart=on-failure
+RestartSec=10s
+
+# 安全收紧 (plan §9 红线: Agent 不执行任意 shell, 最小权限运行)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# agent-state.json 在 WorkingDirectory 下,ProtectSystem=strict 后必须显式放行写。
+# 若 AGENT_STATE_PATH 指到其他目录,需在这一行追加该目录,否则 agent 启动会 EACCES。
+ReadWritePaths=/opt/emorelay
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+# TCP/UDP relay + gRPC 控制面只需要这三类地址族;阻断 AF_PACKET / AF_NETLINK 等
+# 减少潜在 raw socket 利用面。
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# 默认不需要任何 capability;若管理员需要 bind <1024 端口,可启用下面两行:
+# AmbientCapabilities=CAP_NET_BIND_SERVICE
+# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

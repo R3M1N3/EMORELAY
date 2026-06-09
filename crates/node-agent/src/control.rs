@@ -5,9 +5,9 @@ use emorelay_common::control::v1::{
 };
 use tokio_stream::Stream;
 use tonic::metadata::MetadataValue;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 use tonic::{Request, Streaming};
-use tracing::info;
+use tracing::{info, warn};
 
 /// 必须与 panel-server::grpc::SESSION_METADATA_KEY 同名。
 const SESSION_METADATA_KEY: &str = "x-emorelay-session";
@@ -21,14 +21,17 @@ pub struct ControlClient {
 
 impl ControlClient {
     /// 连接 control plane。endpoint 是 `https://` 时启用 TLS:
-    /// - `ca_cert` Some → 用它(自签 CA)校验 server
-    /// - `ca_cert` None → 走系统根证书(tls-roots feature)
+    /// - `ca_cert` Some → 用它(自签 CA)校验 server;None → 走系统根证书(tls-roots feature)
+    /// - `client_cert`+`client_key` 同时 Some → 启用 mTLS,带 client identity 证明自己
+    ///   (panel-server 配 PANEL_GRPC_TLS_CLIENT_CA 时强制要求)
     /// endpoint 是 `http://` 时走 plaintext(仅推荐 dev)。
     pub async fn connect(
         endpoint: String,
         node_id: i64,
         token: String,
         ca_cert: Option<String>,
+        client_cert: Option<String>,
+        client_key: Option<String>,
     ) -> Result<Self> {
         let mut ep: Endpoint =
             Channel::from_shared(endpoint.clone()).context("invalid AGENT_CONTROL_ENDPOINT")?;
@@ -42,9 +45,31 @@ impl ControlClient {
                 // 走系统根证书(tls-roots),默认 ALPN h2。
                 tls = tls.with_enabled_roots();
             }
+            // mTLS client identity:cert+key 必须同时给,否则视为单向 TLS。
+            let mtls = match (client_cert.as_deref(), client_key.as_deref()) {
+                (Some(c), Some(k)) => {
+                    let cert = std::fs::read(c)
+                        .with_context(|| format!("read AGENT_GRPC_CLIENT_CERT: {c}"))?;
+                    let key = std::fs::read(k)
+                        .with_context(|| format!("read AGENT_GRPC_CLIENT_KEY: {k}"))?;
+                    tls = tls.identity(Identity::from_pem(cert, key));
+                    true
+                }
+                (None, None) => false,
+                _ => anyhow::bail!(
+                    "AGENT_GRPC_CLIENT_CERT and AGENT_GRPC_CLIENT_KEY must both be set or both empty"
+                ),
+            };
             ep = ep.tls_config(tls).context("apply gRPC TLS config")?;
-            info!(endpoint = %endpoint, "agent control plane: TLS enabled");
+            info!(endpoint = %endpoint, mtls, "agent control plane: TLS enabled");
         } else {
+            if client_cert.is_some() || client_key.is_some() {
+                warn!(
+                    endpoint = %endpoint,
+                    "AGENT_GRPC_CLIENT_CERT/KEY configured but endpoint is plaintext (http://); \
+                     mTLS NOT in effect — change endpoint to https:// or remove client cert env"
+                );
+            }
             info!(endpoint = %endpoint, "agent control plane: plaintext");
         }
         let channel = ep.connect().await.context("connect to control plane")?;

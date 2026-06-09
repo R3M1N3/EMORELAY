@@ -50,6 +50,7 @@ pub async fn make_app() -> Result<TestApp> {
         grpc_bind_addr: "0.0.0.0:0".into(),
         grpc_tls_cert: None,
         grpc_tls_key: None,
+        grpc_tls_client_ca: None,
     };
     let state = AppState {
         config,

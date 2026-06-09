@@ -29,6 +29,7 @@ export default function Nodes() {
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [search, setSearch] = useState('')
 
   async function reload() {
     setList((s) => ({ ...s, loading: true, error: null }))
@@ -95,54 +96,84 @@ export default function Nodes() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
-        {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
-        ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">
-            尚无节点。点击右上角「新增节点」开始。
-          </div>
-        ) : (
+      {(() => {
+        const needle = search.trim().toLowerCase()
+        const filtered = needle
+          ? list.items.filter((n) =>
+              [n.name, n.region, n.public_ip, n.grpc_endpoint]
+                .some((s) => s.toLowerCase().includes(needle)),
+            )
+          : list.items
+        return (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                    <th className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
-                    <th className="px-4 py-2.5 text-left font-medium">gRPC</th>
-                    <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                    <th className="px-4 py-2.5 text-left font-medium">资源</th>
-                    <th className="px-4 py-2.5 text-left font-medium">流量</th>
-                    <th className="px-4 py-2.5 text-left font-medium">端口池</th>
-                    <th className="px-4 py-2.5 text-right font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {list.items.map((n) => (
-                    <NodeRow
-                      key={n.id}
-                      node={n}
-                      onEdit={() => setEditing({ mode: 'edit', node: n })}
-                      onDelete={() => setConfirming(n)}
-                    />
-                  ))}
-                </tbody>
-              </table>
+            <div className="flex items-center gap-3 flex-wrap">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索当前页 (名称 / 区域 / IP / gRPC)"
+                className={`${fieldInputCls} max-w-sm`}
+              />
+              {needle && (
+                <span className="text-xs text-zinc-500">
+                  匹配 {filtered.length} / {list.items.length} 条 (仅当前页)
+                </span>
+              )}
             </div>
-            <Pagination
-              page={page}
-              pageSize={pageSize}
-              total={list.total}
-              onChangePage={setPage}
-              onChangePageSize={(n) => {
-                setPageSize(n)
-                setPage(1)
-              }}
-            />
+
+            <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+              {list.loading ? (
+                <div className="p-6 text-sm text-zinc-400">加载中…</div>
+              ) : list.items.length === 0 ? (
+                <div className="p-6 text-sm text-zinc-500">
+                  尚无节点。点击右上角「新增节点」开始。
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="p-6 text-sm text-zinc-500">没有匹配的节点。</div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+                        <tr>
+                          <th className="px-4 py-2.5 text-left font-medium">名称</th>
+                          <th className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
+                          <th className="px-4 py-2.5 text-left font-medium">gRPC</th>
+                          <th className="px-4 py-2.5 text-left font-medium">状态</th>
+                          <th className="px-4 py-2.5 text-left font-medium">资源</th>
+                          <th className="px-4 py-2.5 text-left font-medium">流量</th>
+                          <th className="px-4 py-2.5 text-left font-medium">端口池</th>
+                          <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {filtered.map((n) => (
+                          <NodeRow
+                            key={n.id}
+                            node={n}
+                            onEdit={() => setEditing({ mode: 'edit', node: n })}
+                            onDelete={() => setConfirming(n)}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={list.total}
+                    onChangePage={setPage}
+                    onChangePageSize={(n) => {
+                      setPageSize(n)
+                      setPage(1)
+                    }}
+                  />
+                </>
+              )}
+            </section>
           </>
-        )}
-      </section>
+        )
+      })()}
 
       {editing && (
         <Modal

@@ -27,6 +27,7 @@ export default function Users() {
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [search, setSearch] = useState('')
 
   async function reload() {
     setList((s) => ({ ...s, loading: true, error: null }))
@@ -92,51 +93,78 @@ export default function Users() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
-        {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
-        ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">尚无用户。</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
-                <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">用户名</th>
-                  <th className="px-4 py-2.5 text-left font-medium">角色</th>
-                  <th className="px-4 py-2.5 text-right font-medium">规则数</th>
-                  <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
-                  <th className="px-4 py-2.5 text-left font-medium">创建于</th>
-                  <th className="px-4 py-2.5 text-left font-medium">更新于</th>
-                  <th className="px-4 py-2.5 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {list.items.map((u) => (
-                  <UserRow
-                    key={u.id}
-                    user={u}
-                    onEdit={() => setEditing({ mode: 'edit', user: u })}
-                    onDelete={() => setConfirming(u)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {!list.loading && list.items.length > 0 && (
-          <Pagination
-            page={page}
-            pageSize={pageSize}
-            total={list.total}
-            onChangePage={setPage}
-            onChangePageSize={(n) => {
-              setPageSize(n)
-              setPage(1)
-            }}
-          />
-        )}
-      </section>
+      {(() => {
+        const needle = search.trim().toLowerCase()
+        const filtered = needle
+          ? list.items.filter((u) => u.username.toLowerCase().includes(needle))
+          : list.items
+        return (
+          <>
+            <div className="flex items-center gap-3 flex-wrap">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索当前页 (用户名)"
+                className={`${fieldInputCls} max-w-sm`}
+              />
+              {needle && (
+                <span className="text-xs text-zinc-500">
+                  匹配 {filtered.length} / {list.items.length} 条 (仅当前页)
+                </span>
+              )}
+            </div>
+
+            <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+              {list.loading ? (
+                <div className="p-6 text-sm text-zinc-400">加载中…</div>
+              ) : list.items.length === 0 ? (
+                <div className="p-6 text-sm text-zinc-500">尚无用户。</div>
+              ) : filtered.length === 0 ? (
+                <div className="p-6 text-sm text-zinc-500">没有匹配的用户。</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left font-medium">用户名</th>
+                        <th className="px-4 py-2.5 text-left font-medium">角色</th>
+                        <th className="px-4 py-2.5 text-right font-medium">规则数</th>
+                        <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
+                        <th className="px-4 py-2.5 text-left font-medium">创建于</th>
+                        <th className="px-4 py-2.5 text-left font-medium">更新于</th>
+                        <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {filtered.map((u) => (
+                        <UserRow
+                          key={u.id}
+                          user={u}
+                          onEdit={() => setEditing({ mode: 'edit', user: u })}
+                          onDelete={() => setConfirming(u)}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!list.loading && list.items.length > 0 && (
+                <Pagination
+                  page={page}
+                  pageSize={pageSize}
+                  total={list.total}
+                  onChangePage={setPage}
+                  onChangePageSize={(n) => {
+                    setPageSize(n)
+                    setPage(1)
+                  }}
+                />
+              )}
+            </section>
+          </>
+        )
+      })()}
 
       {editing && (
         <Modal

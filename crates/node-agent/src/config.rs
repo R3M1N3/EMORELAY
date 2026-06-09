@@ -11,6 +11,10 @@ pub struct Config {
     /// - Some → 用它验证 server cert(开发模式 + 自签 CA)
     /// - None → 走系统根证书(生产 + 真实证书,需 tonic tls-roots feature)
     pub grpc_ca_cert: Option<String>,
+    /// mTLS 客户端证书 + 私钥路径(PEM)。两者必须同时给或同时空。
+    /// 当 panel-server 配置 PANEL_GRPC_TLS_CLIENT_CA 时,Agent 必须提供。
+    pub grpc_client_cert: Option<String>,
+    pub grpc_client_key: Option<String>,
 }
 
 impl Config {
@@ -32,12 +36,27 @@ impl Config {
         let state_path =
             env::var("AGENT_STATE_PATH").unwrap_or_else(|_| "./agent-state.json".into());
         let grpc_ca_cert = env::var("AGENT_GRPC_CA_CERT").ok().filter(|s| !s.is_empty());
+        let grpc_client_cert = env::var("AGENT_GRPC_CLIENT_CERT")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let grpc_client_key = env::var("AGENT_GRPC_CLIENT_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
+        // cert/key 必须成对(留给 connect() 兜底校验也可,这里 fail-fast 更早暴露)。
+        match (grpc_client_cert.is_some(), grpc_client_key.is_some()) {
+            (true, false) | (false, true) => anyhow::bail!(
+                "AGENT_GRPC_CLIENT_CERT and AGENT_GRPC_CLIENT_KEY must both be set or both empty"
+            ),
+            _ => {}
+        }
         Ok(Self {
             node_id,
             control_endpoint,
             token,
             state_path,
             grpc_ca_cert,
+            grpc_client_cert,
+            grpc_client_key,
         })
     }
 }

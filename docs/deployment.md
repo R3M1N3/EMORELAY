@@ -158,7 +158,40 @@ panel-server 支持 gRPC 通道 TLS。两步:
    AGENT_GRPC_CA_CERT=/path/to/ca.crt   # 自签;真实证书可留空走系统根证书
    ```
 
-panel-server 启动时会日志确认 `grpc control plane listening (TLS)`;两个 TLS env 都空时会 warn `running in PLAINTEXT (...not recommended for production)`。
+panel-server 启动时会日志确认 `grpc control plane listening (server TLS - no client cert required)`;两个 TLS env 都空时会 warn `running in PLAINTEXT (...not recommended for production)`。
+
+### 4.4 gRPC mTLS(双向认证,推荐生产)
+
+单向 TLS(4.3)只让 Agent 验证 server 身份;mTLS 在此基础上让 server 也验证 Agent 的客户端证书,真正"双向认证"。开启步骤(在 4.3 已配置 server TLS 的基础上):
+
+1. 用同一份 CA 给 Agent 签客户端证书(脚本已支持):
+   ```sh
+   sh scripts/gen-dev-tls.sh ./tls
+   # 产物含 ca.crt / server.crt / server.key / agent.crt / agent.key
+   ```
+
+2. panel-server `.env` 增加:
+   ```sh
+   PANEL_GRPC_TLS_CLIENT_CA=/path/to/ca.crt
+   ```
+   该 CA 签发的客户端证书都被信任;未提供证书或证书链不被信任的 Agent 连接直接被 TLS 层拒绝(早于 gRPC 鉴权)。
+
+3. Agent 端 `.env` 增加:
+   ```sh
+   AGENT_GRPC_CLIENT_CERT=/path/to/agent.crt
+   AGENT_GRPC_CLIENT_KEY=/path/to/agent.key
+   ```
+   两者必须同时配置,否则 Agent 启动时直接 fail-fast。
+
+启动后日志确认 `grpc control plane listening (mTLS - client cert required)`。Settings 页"安全状态"也会显示"Token + mTLS"。
+
+注意:生产中如果 Agent 数量多,可让每台 Agent 用独立 client cert 便于撤销。撤销机制 MVP 未实现(不维护 CRL/OCSP),需要时直接换 CA 重签所有合法 Agent。
+
+故障排查:mTLS 握手失败时 Agent 拿到的是 TLS 层错误(传输 transport error),而不是 gRPC `PermissionDenied`。常见原因:
+- Agent 未配 `AGENT_GRPC_CLIENT_CERT/KEY`,或路径不可读
+- Agent 证书不是同一 CA 签发的(指纹对不上)
+- Agent 证书缺少 `extendedKeyUsage = clientAuth`(`scripts/gen-dev-tls.sh` 已加,自己签的需手动加)
+- Agent 端 `AGENT_CONTROL_ENDPOINT` 是 `http://` 而非 `https://`(此时 client cert 被忽略,Agent 日志会 warn 但实际仍裸跑)
 
 ---
 

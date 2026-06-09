@@ -4,6 +4,8 @@ use emorelay_common::control::v1::{
     NodeStatsBatch, RegisterRequest, RegisterResponse, RuleStatsBatch, SubscribeRequest,
 };
 use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
@@ -13,6 +15,7 @@ use crate::{
     audit,
     auth::token::{generate_token, hash_token},
     grpc::commands::{apply_command, parse_sqlite_datetime},
+    grpc::dispatcher::CommandDispatcher,
     grpc::session::SessionInfo,
     grpc::SESSION_METADATA_KEY,
     models::rule::Rule as DbRule,
@@ -190,7 +193,7 @@ impl ControlPlane for ControlPlaneImpl {
         if inner.node_id != session_node_id {
             return Err(Status::permission_denied("session/node mismatch"));
         }
-        let rx = self.state.dispatcher.subscribe(inner.node_id);
+        let (rx, generation) = self.state.dispatcher.subscribe(inner.node_id);
 
         // Reconcile：新 channel 建立后立即重放该 node 所有 active 规则。
         // 覆盖断网期间漏掉的 CRUD，让 Agent 重连后与 server 真值对齐。
@@ -210,7 +213,18 @@ impl ControlPlane for ControlPlaneImpl {
         };
         info!(node_id = inner.node_id, reconciled, "command stream opened");
 
-        let stream = UnboundedReceiverStream::new(rx).map(Ok);
+        // 用 GuardedStream 包装 receiver:stream 终止 (agent 断连 / 主动 cancel) 时
+        // DispatcherGuard::drop -> unsubscribe_if(node_id, generation),清理 channels
+        // 表中的 dead sender,防长跑下内存累积。
+        let guard = DispatcherGuard {
+            dispatcher: self.state.dispatcher.clone(),
+            node_id: inner.node_id,
+            generation,
+        };
+        let stream = GuardedStream {
+            inner: UnboundedReceiverStream::new(rx).map(Ok),
+            _guard: guard,
+        };
         Ok(Response::new(Box::pin(stream) as Self::SubscribeCommandsStream))
     }
 
@@ -537,3 +551,34 @@ pub fn spawn_expiry_sweeper(state: AppState) {
     });
 }
 
+/// SubscribeCommands stream 终止时通过 Drop 调 unsubscribe_if,清理 dispatcher
+/// channels 表中的 dead sender。generation 字段保证只清理本次订阅 (并发新订阅替换后,
+/// 旧 guard Drop 不会误删新 entry)。
+struct DispatcherGuard {
+    dispatcher: Arc<CommandDispatcher>,
+    node_id: i64,
+    generation: u64,
+}
+
+impl Drop for DispatcherGuard {
+    fn drop(&mut self) {
+        self.dispatcher.unsubscribe_if(self.node_id, self.generation);
+    }
+}
+
+/// 把一个 stream 与一个 Drop guard 捆绑;stream 被 Box::pin 后随 client cancel /
+/// connection close 一起 drop,guard 随之 drop,执行清理。
+struct GuardedStream<S> {
+    inner: S,
+    _guard: DispatcherGuard,
+}
+
+impl<S> Stream for GuardedStream<S>
+where
+    S: Stream + Unpin,
+{
+    type Item = S::Item;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+}

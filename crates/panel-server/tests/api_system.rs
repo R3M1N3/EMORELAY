@@ -16,6 +16,7 @@ async fn security_info_admin_ok() {
     assert_eq!(body["jwt_expiry_hours"], 24);
     // 测试 Config 未配 TLS,应为 false
     assert_eq!(body["grpc_tls_enabled"], false);
+    assert_eq!(body["grpc_mtls_enabled"], false);
 }
 
 #[tokio::test]

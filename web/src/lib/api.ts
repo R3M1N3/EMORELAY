@@ -282,6 +282,7 @@ export interface SecurityInfo {
   jwt_secret_length: number
   jwt_expiry_hours: number
   grpc_tls_enabled: boolean
+  grpc_mtls_enabled: boolean
 }
 
 // ============ 端点 ============
