@@ -4,7 +4,9 @@ import {
   ApiError,
   formatBytes,
   nodes,
+  renderInstallCommand,
   shortTime,
+  system,
   type CreateNodeRequest,
   type NodeView,
   type UpdateNodeRequest,
@@ -27,11 +29,16 @@ export default function Nodes() {
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<NodeView | null>(null)
-  const [token, setToken] = useState<{ token: string; name: string } | null>(null)
+  const [token, setToken] = useState<{ token: string; name: string; id: number } | null>(null)
+  const [settings, setSettings] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    system.getSettings().then((r) => setSettings(r.settings)).catch(() => {})
+  }, [])
 
   async function reload() {
     setList((s) => ({ ...s, loading: true, error: null }))
@@ -232,6 +239,32 @@ export default function Nodes() {
           <div className="mt-3 rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-xs text-emerald-300 break-all">
             {token.token}
           </div>
+          {(() => {
+            const endpoint = settings.agent_control_endpoint || ''
+            if (!endpoint) {
+              return (
+                <p className="mt-3 text-[11px] text-amber-300">
+                  提示：请先到「设置」配 Agent 上报端点，再回到这里复制安装命令。
+                </p>
+              )
+            }
+            const cmd = renderInstallCommand({ nodeId: token.id, token: token.token })
+            return (
+              <div className="mt-3">
+                <div className="text-[11px] text-zinc-500 mb-1">一键安装命令</div>
+                <div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 break-all">
+                  {cmd}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(cmd).catch(() => {})}
+                  className="mt-2 rounded-md bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-xs"
+                >
+                  复制安装命令
+                </button>
+              </div>
+            )
+          })()}
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
@@ -342,7 +375,7 @@ function NodeForm({
   mode: 'create' | 'edit'
   initial?: NodeView
   onCancel: () => void
-  onSuccess: (createdToken: { token: string; name: string } | null) => void | Promise<void>
+  onSuccess: (createdToken: { token: string; name: string; id: number } | null) => void | Promise<void>
 }) {
   const [form, setForm] = useState<NodeFormState>({
     name: initial?.name ?? '',
@@ -389,7 +422,7 @@ function NodeForm({
           port_pool_max: portMax,
         }
         const r = await nodes.create(payload)
-        await onSuccess({ token: r.agent_token, name: r.node.name })
+        await onSuccess({ token: r.agent_token, name: r.node.name, id: r.node.id })
       } else if (initial) {
         const payload: UpdateNodeRequest = {
           name: form.name.trim() !== initial.name ? form.name.trim() : undefined,

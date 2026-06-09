@@ -348,6 +348,17 @@ export const system = {
     api.patch<SettingsResponse>('/api/system/settings', { settings }),
 }
 
+/**
+ * 生成节点安装命令字符串(用户复制走)。
+ * base URL 取自 window.location.origin —— 生产期需用反代将面板对外 origin 指向 panel-server,
+ * 否则脚本里 curl 不到 /install.sh 与 /dist/*。
+ * token 一次性,UI 仅在创建节点 / 后续轮换凭据 Modal 内可调用。
+ */
+export function renderInstallCommand(opts: { nodeId: number; token: string }): string {
+  const base = window.location.origin
+  return `curl -fsSL ${base}/install.sh?node=${opts.nodeId} | sudo bash -s -- --token=${opts.token}`
+}
+
 export const rules = {
   list: (q: { page?: number; page_size?: number; node_id?: number; protocol?: string; search?: string } = {}) => {
     const sp = new URLSearchParams()

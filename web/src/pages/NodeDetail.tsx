@@ -96,6 +96,10 @@ export default function NodeDetail() {
             <Row k="最后心跳" v={node.last_seen_at ? shortTime(node.last_seen_at) : '从未上线'} />
             <Row k="创建" v={shortTime(node.created_at)} />
           </dl>
+          <div className="text-[11px] text-zinc-500 mt-2">
+            Agent 安装命令需要创建节点时一次性显示的 token；
+            如已遗失，后续（P2 阶段）将提供「轮换 Agent 凭据」入口。
+          </div>
         </section>
 
         <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
