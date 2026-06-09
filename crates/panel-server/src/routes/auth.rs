@@ -80,6 +80,26 @@ pub async fn login(
         return Err(ApiError::Unauthorized);
     }
 
+    // 账号到期拒登录(P2):normalize 后的存储格式可被 parse_sqlite_datetime 解析。
+    if let Some(exp) = user.expires_at.as_deref() {
+        let ts = crate::grpc::commands::parse_sqlite_datetime(exp);
+        if ts > 0 && ts <= chrono::Utc::now().timestamp() {
+            audit::record_with_ip(
+                &state.pool,
+                Some(user.id),
+                actor_ip.as_option(),
+                "auth.login",
+                Some("user"),
+                Some(user.id),
+                None,
+                false,
+                Some("account_expired"),
+            )
+            .await;
+            return Err(ApiError::UnauthorizedMsg("account_expired".into()));
+        }
+    }
+
     let token = encode_jwt(
         &state.config.jwt_secret,
         user.id,

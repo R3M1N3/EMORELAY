@@ -23,6 +23,9 @@ pub enum ApiError {
     #[error("unauthorized")]
     Unauthorized,
 
+    #[error("{0}")]
+    UnauthorizedMsg(String),
+
     #[error("forbidden")]
     Forbidden,
 }
@@ -41,7 +44,9 @@ impl IntoResponse for ApiError {
             }
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            Self::Unauthorized | Self::UnauthorizedMsg(_) => {
+                (StatusCode::UNAUTHORIZED, "unauthorized")
+            }
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
         };
         if status.is_server_error() {

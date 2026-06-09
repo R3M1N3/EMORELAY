@@ -1,6 +1,7 @@
 mod common;
 
-use axum::http::{Method, StatusCode};
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode};
 use common::{auth_req, make_app, send};
 use serde_json::json;
 
@@ -163,4 +164,91 @@ async fn user_with_zero_rules_returns_zero_aggregates() {
         .expect("admin in list");
     assert_eq!(admin["rule_count"], 0);
     assert_eq!(admin["total_traffic_bytes"], 0);
+}
+
+#[tokio::test]
+async fn user_quota_fields_roundtrip() {
+    let app = common::make_app().await.unwrap();
+    // create 带 expires_at + traffic_limit_bytes_30d
+    let req = common::auth_req(
+        Method::POST,
+        "/api/users",
+        &app.admin_token,
+        Some(json!({
+            "username": "quotauser",
+            "password": "password123",
+            "role": "user",
+            "expires_at": "2030-01-01T00:00",
+            "traffic_limit_bytes_30d": 1073741824_i64
+        })),
+    )
+    .unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let uid = body["id"].as_i64().unwrap();
+    // normalize 后统一空格分隔格式
+    assert_eq!(body["expires_at"], "2030-01-01 00:00:00");
+    assert_eq!(body["traffic_limit_bytes_30d"], 1073741824_i64);
+    assert_eq!(body["period_used_bytes_cached"], 0);
+    assert_eq!(body["period_remaining_bytes"], 1073741824_i64);
+
+    // PATCH 置空协议:expires_at="" 清除;limit=0 清除
+    let req = common::auth_req(
+        Method::PATCH,
+        &format!("/api/users/{uid}"),
+        &app.admin_token,
+        Some(json!({ "expires_at": "", "traffic_limit_bytes_30d": 0 })),
+    )
+    .unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["expires_at"].is_null());
+    assert!(body["traffic_limit_bytes_30d"].is_null());
+    assert!(body["period_remaining_bytes"].is_null());
+}
+
+#[tokio::test]
+async fn user_create_rejects_bad_expires_format() {
+    let app = common::make_app().await.unwrap();
+    let req = common::auth_req(
+        Method::POST,
+        "/api/users",
+        &app.admin_token,
+        Some(json!({
+            "username": "badexp", "password": "password123", "role": "user",
+            "expires_at": "not-a-date"
+        })),
+    )
+    .unwrap();
+    let (status, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn expired_user_cannot_login() {
+    let app = common::make_app().await.unwrap();
+    // 直接建一个已过期用户
+    let req = common::auth_req(
+        Method::POST,
+        "/api/users",
+        &app.admin_token,
+        Some(json!({
+            "username": "expired1", "password": "password123", "role": "user",
+            "expires_at": "2020-01-01 00:00:00"
+        })),
+    )
+    .unwrap();
+    let (status, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let login = Request::post("/api/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({ "username": "expired1", "password": "password123" }))
+                .unwrap(),
+        ))
+        .unwrap();
+    let (status, body) = common::send(app.app.clone(), login).await.unwrap();
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["message"], "account_expired");
 }

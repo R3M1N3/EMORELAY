@@ -27,10 +27,22 @@ pub struct UserView {
     pub rule_count: i64,
     /// 累计 rx + tx 字节。同上,From<User> 路径填 0;list 路径走 JOIN 拿实际值。
     pub total_traffic_bytes: i64,
+    pub expires_at: Option<String>,
+    pub traffic_limit_bytes_30d: Option<i64>,
+    pub period_used_bytes_cached: i64,
+    pub period_used_calculated_at: Option<String>,
+    /// 计算字段:max(0, limit - used);limit 为 NULL 时为 None。
+    pub period_remaining_bytes: Option<i64>,
+}
+
+fn remaining(limit: Option<i64>, used: i64) -> Option<i64> {
+    limit.map(|l| (l - used).max(0))
 }
 
 impl From<User> for UserView {
     fn from(u: User) -> Self {
+        let period_remaining_bytes =
+            remaining(u.traffic_limit_bytes_30d, u.period_used_bytes_cached);
         Self {
             id: u.id,
             username: u.username,
@@ -39,6 +51,11 @@ impl From<User> for UserView {
             updated_at: u.updated_at,
             rule_count: 0,
             total_traffic_bytes: 0,
+            expires_at: u.expires_at,
+            traffic_limit_bytes_30d: u.traffic_limit_bytes_30d,
+            period_used_bytes_cached: u.period_used_bytes_cached,
+            period_used_calculated_at: u.period_used_calculated_at,
+            period_remaining_bytes,
         }
     }
 }
@@ -53,10 +70,16 @@ struct UserListRow {
     updated_at: String,
     rule_count: i64,
     total_traffic_bytes: i64,
+    expires_at: Option<String>,
+    traffic_limit_bytes_30d: Option<i64>,
+    period_used_bytes_cached: i64,
+    period_used_calculated_at: Option<String>,
 }
 
 impl From<UserListRow> for UserView {
     fn from(r: UserListRow) -> Self {
+        let period_remaining_bytes =
+            remaining(r.traffic_limit_bytes_30d, r.period_used_bytes_cached);
         Self {
             id: r.id,
             username: r.username,
@@ -65,6 +88,11 @@ impl From<UserListRow> for UserView {
             updated_at: r.updated_at,
             rule_count: r.rule_count,
             total_traffic_bytes: r.total_traffic_bytes,
+            expires_at: r.expires_at,
+            traffic_limit_bytes_30d: r.traffic_limit_bytes_30d,
+            period_used_bytes_cached: r.period_used_bytes_cached,
+            period_used_calculated_at: r.period_used_calculated_at,
+            period_remaining_bytes,
         }
     }
 }
@@ -88,12 +116,18 @@ pub struct CreateUserRequest {
     pub username: String,
     pub password: String,
     pub role: String,
+    pub expires_at: Option<String>,
+    pub traffic_limit_bytes_30d: Option<i64>,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateUserRequest {
     pub password: Option<String>,
     pub role: Option<String>,
+    /// "" = 清除
+    pub expires_at: Option<String>,
+    /// 0 = 清除
+    pub traffic_limit_bytes_30d: Option<i64>,
 }
 
 pub async fn list(
@@ -111,7 +145,9 @@ pub async fn list(
     let rows: Vec<UserListRow> = sqlx::query_as(
         "SELECT u.id, u.username, u.role, u.created_at, u.updated_at, \
                 COALESCE(r.cnt, 0) AS rule_count, \
-                COALESCE(r.tot, 0) AS total_traffic_bytes \
+                COALESCE(r.tot, 0) AS total_traffic_bytes, \
+                u.expires_at, u.traffic_limit_bytes_30d, \
+                u.period_used_bytes_cached, u.period_used_calculated_at \
          FROM users u \
          LEFT JOIN ( \
              SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
@@ -157,11 +193,31 @@ pub async fn create(
     validate_username(username)?;
     validate_password(&req.password)?;
     validate_role(&req.role)?;
+    let normalized_expires = match req.expires_at.as_deref() {
+        None | Some("") => None,
+        Some(s) => Some(crate::util::normalize_datetime(s).ok_or_else(|| {
+            ApiError::BadRequest("expires_at must be YYYY-MM-DDTHH:MM (UTC)".into())
+        })?),
+    };
+    if matches!(req.traffic_limit_bytes_30d, Some(n) if n < 0) {
+        return Err(ApiError::BadRequest(
+            "traffic_limit_bytes_30d must be >= 0".into(),
+        ));
+    }
+    // create 时 0 与 None 等价(都是不限)
+    let limit = req.traffic_limit_bytes_30d.filter(|n| *n > 0);
 
     let hash = hash_password(&req.password).map_err(ApiError::Internal)?;
-    let new_id = User::create(&state.pool, username, &hash, &req.role, None, None)
-        .await
-        .map_err(map_sqlx_to_api)?;
+    let new_id = User::create(
+        &state.pool,
+        username,
+        &hash,
+        &req.role,
+        normalized_expires.as_deref(),
+        limit,
+    )
+    .await
+    .map_err(map_sqlx_to_api)?;
     let user = User::find_by_id(&state.pool, new_id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -217,6 +273,20 @@ pub async fn update(
         }
     }
 
+    // 置空协议:"" 原样传给 model 层(CASE WHEN '' THEN NULL);其余 normalize。
+    let normalized_expires: Option<String> = match req.expires_at.as_deref() {
+        None => None,
+        Some("") => Some(String::new()),
+        Some(s) => Some(crate::util::normalize_datetime(s).ok_or_else(|| {
+            ApiError::BadRequest("expires_at must be YYYY-MM-DDTHH:MM (UTC)".into())
+        })?),
+    };
+    if matches!(req.traffic_limit_bytes_30d, Some(n) if n < 0) {
+        return Err(ApiError::BadRequest(
+            "traffic_limit_bytes_30d must be >= 0".into(),
+        ));
+    }
+
     let new_hash = match req.password.as_deref() {
         Some(p) => Some(hash_password(p).map_err(ApiError::Internal)?),
         None => None,
@@ -226,8 +296,8 @@ pub async fn update(
         id,
         new_hash.as_deref(),
         req.role.as_deref(),
-        None,
-        None,
+        normalized_expires.as_deref(),
+        req.traffic_limit_bytes_30d,
     )
     .await?;
     if rows == 0 {
