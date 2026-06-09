@@ -460,7 +460,8 @@ function RuleForm({
   const [form, setForm] = useState<RuleFormState>({
     node_id: initial ? String(initial.node_id) : nodeList[0] ? String(nodeList[0].id) : '',
     name: initial?.name ?? '',
-    protocol: initial?.protocol ?? 'tcp',
+    // 创建模式默认 TCP+UDP; 编辑模式沿用旧值。
+    protocol: initial?.protocol ?? 'tcp_udp',
     listen_ip: initial?.listen_ip ?? '0.0.0.0',
     listen_port: initial ? String(initial.listen_port) : '',
     target_host: initial?.target_host ?? '',
