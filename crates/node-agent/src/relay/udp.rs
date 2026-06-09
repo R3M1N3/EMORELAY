@@ -276,9 +276,7 @@ mod tests {
             target_host: "127.0.0.1".into(),
             target_port: target_port as u32,
             enabled: true,
-            traffic_limit_bytes: 0,
-            bandwidth_limit_mbps: 0,
-            expires_at_unix: 0,
+            bandwidth_mbps: 0,
         }
     }
 

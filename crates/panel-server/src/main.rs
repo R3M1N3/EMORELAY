@@ -79,10 +79,6 @@ async fn main() -> Result<()> {
     let grpc_state = state.clone();
     let grpc_task = tokio::spawn(async move { grpc::serve(grpc_state, grpc_addr).await });
 
-    // 周期扫 expired 规则 (即使没有 stats 上报也能兜底)。任务在 select! 外 spawn,
-    // 当 http/grpc 任一退出时整个进程关停,sweep task 随 tokio runtime 一起 drop。
-    grpc::service::spawn_expiry_sweeper(state.clone());
-
     tokio::select! {
         res = http_task => match res {
             Ok(Ok(())) => info!("http server stopped"),

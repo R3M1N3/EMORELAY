@@ -183,13 +183,13 @@ async fn agent_e2e_register_dispatch_stats() {
         .unwrap();
     assert_eq!(bucket_count, 1);
 
-    // 12) 防回归: 无 traffic_limit 时 report_rule_stats 不应触发 auto_stop_if_exceeded
+    // 12) 防回归: report_rule_stats 只做统计落库,不得改动规则 enabled 状态
     let enabled: i64 = sqlx::query_scalar("SELECT enabled FROM forward_rules WHERE id = ?")
         .bind(rule_id)
         .fetch_one(&app.state.pool)
         .await
         .unwrap();
-    assert_eq!(enabled, 1, "无 limit 时不应自动停规则");
+    assert_eq!(enabled, 1, "stats 上报后规则应保持 enabled");
 
     server_handle.abort();
 }

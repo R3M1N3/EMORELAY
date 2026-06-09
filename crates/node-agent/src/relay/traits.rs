@@ -1,5 +1,5 @@
 // 限速/配额接口占位。plan §10 "带宽限制后续可用 token bucket 实现"的扩展点。
-// MVP 阶段 Agent 侧不消费 bandwidth_limit_mbps,本 trait 与 NullQuota 是接入位。
+// 当前 Agent 侧不消费 Rule.bandwidth_mbps,本 trait 与 NullQuota 是接入位。
 //
 // 未来在 relay::tcp::bridge() 与 relay::udp::forward() 的 hot path 调用
 //   guard.try_consume(n) 即可接入 token bucket;返回 None 时调用方决定

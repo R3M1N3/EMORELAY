@@ -64,13 +64,14 @@ message Rule {
   string target_host = 5;
   uint32 target_port = 6;
   bool enabled = 7;
-  // limits: DB 端可为 NULL，proto 端用 0 编码 "unlimited"。
-  // panel-server 端 Option<i64>::None → 0；Agent 端 0 → 不启用对应限速 / 配额。
-  int64 traffic_limit_bytes = 8;
-  int64 bandwidth_limit_mbps = 9;
-  // 过期时间（unix 秒）。0 = 永不过期。Agent 在本地定时检查，
-  // 超过即自动停止该规则并通过 Ack/Heartbeat 上报，无需等待 Server 下发 DisableRule。
-  int64 expires_at_unix = 10;
+  // P2 起规则级 traffic_limit_bytes(8) / bandwidth_limit_mbps(9) /
+  // expires_at_unix(10) 下线:到期与流量配额归 users,带宽归 bandwidth_profiles。
+  // 字段号不复用。
+  reserved 8, 9, 10;
+  reserved "traffic_limit_bytes", "bandwidth_limit_mbps", "expires_at_unix";
+  // 关联 bandwidth_profile 的限速值。0 = 无限速。
+  // server dispatch 时由 forward_rules.bandwidth_profile_id 联查得出。
+  int64 bandwidth_mbps = 11;
 }
 
 message ApplyRule { Rule rule = 1; }

@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use crate::{
     audit,
     auth::token::{generate_token, hash_token},
-    grpc::commands::{apply_command, parse_sqlite_datetime},
+    grpc::commands::apply_command,
     grpc::dispatcher::CommandDispatcher,
     grpc::session::SessionInfo,
     grpc::SESSION_METADATA_KEY,
@@ -416,11 +416,6 @@ impl ControlPlane for ControlPlaneImpl {
                     continue;
                 }
                 total_buckets += 1;
-
-                // 累加完成后判断是否触发自动停规则。失败不阻塞后续 bucket。
-                if let Err(e) = auto_stop_if_exceeded(&self.state, bucket.rule_id).await {
-                    warn!(error = ?e, rule_id = bucket.rule_id, "auto_stop_if_exceeded failed");
-                }
             }
         }
         info!(node_id = session_node_id, buckets = total_buckets, "rule stats persisted");
@@ -429,126 +424,6 @@ impl ControlPlane for ControlPlaneImpl {
             error: String::new(),
         }))
     }
-}
-
-/// 检查规则是否触发 traffic_limit 或 expires_at 自动停。
-/// 行为(对应 plan 第十节"超过总流量限制后,Agent 自动停止该规则并上报状态"):
-///   1. SELECT 当前 rule 累计 rx+tx / limit / expires_at / enabled / node_id。
-///   2. 若 enabled=1 且(累计 > limit 或 expires_at < now):
-///      - UPDATE enabled=0(WHERE enabled=1 原子化,防止并发重复触发)
-///      - dispatch ApplyRule(enabled=false) 让 Agent 停 listener。Agent 离线时下次 register reconcile 自动对齐。
-///      - audit 记 `rule.auto_stop`,payload 同时写 reason 与 dispatched 标志,方便事后排查到底是 Agent 真停了还是只是 DB 改了等 reconcile。
-///   3. 已停或不存在则 no-op。
-///
-/// **稳定性**:`pub` 仅为 `report_rule_stats` / `spawn_expiry_sweeper` / integration tests 复用,
-/// 不属于稳定对外 API,请勿在其他模块直接调用。
-pub async fn auto_stop_if_exceeded(
-    state: &AppState,
-    rule_id: i64,
-) -> anyhow::Result<()> {
-    let row: Option<(i64, i64, Option<i64>, Option<String>, i64)> = sqlx::query_as(
-        "SELECT enabled, rx_bytes + tx_bytes, traffic_limit_bytes, expires_at, node_id \
-         FROM forward_rules WHERE id = ? AND deleted_at IS NULL",
-    )
-    .bind(rule_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    let Some((enabled, total, limit, expires_at, node_id)) = row else {
-        return Ok(());
-    };
-    if enabled == 0 {
-        return Ok(());
-    }
-
-    let traffic_exceeded = matches!(limit, Some(l) if l > 0 && total > l);
-    let now_unix = Utc::now().timestamp();
-    let expired = expires_at
-        .as_deref()
-        .map(parse_sqlite_datetime)
-        .is_some_and(|ts| ts > 0 && ts <= now_unix);
-
-    if !traffic_exceeded && !expired {
-        return Ok(());
-    }
-
-    let reason = if traffic_exceeded {
-        "traffic_limit_exceeded"
-    } else {
-        "expired"
-    };
-
-    // 原子化:WHERE enabled = 1 保证并发只触发一次。
-    let rows = sqlx::query(
-        "UPDATE forward_rules SET enabled = 0, updated_at = datetime('now') \
-         WHERE id = ? AND enabled = 1 AND deleted_at IS NULL",
-    )
-    .bind(rule_id)
-    .execute(&state.pool)
-    .await?;
-    if rows.rows_affected() == 0 {
-        // 已被别处停了 / 已删,no-op。
-        return Ok(());
-    }
-
-    // 先 dispatch,再 audit 写入 dispatched 结果,留下"真停 vs 等 reconcile"的可排查痕迹。
-    let dispatched = if let Ok(Some(rule)) = DbRule::find_by_id(&state.pool, rule_id).await {
-        state.dispatcher.dispatch(node_id, apply_command(&rule))
-    } else {
-        false
-    };
-    crate::audit::record(
-        &state.pool,
-        None,
-        "rule.auto_stop",
-        Some("rule"),
-        Some(rule_id),
-        Some(&format!("reason={reason},dispatched={dispatched}")),
-        true,
-        None,
-    )
-    .await;
-    tracing::info!(rule_id, node_id, reason, dispatched, "rule auto-stopped");
-
-    Ok(())
-}
-
-/// 周期扫描已 expires_at < now 但仍 enabled 的规则,把它们 stop 掉。
-/// report_rule_stats 内的 inline 检查只在 stats tick 上报时触发;
-/// 若一条规则到期前后都没有流量(因此 Agent 不会发 stats batch),靠这个 sweep 兜底。
-///
-/// 周期 SWEEP_INTERVAL_SECS 默认 300s,可通过 env `PANEL_EXPIRY_SWEEP_SECS` 覆盖(测试用)。
-pub fn spawn_expiry_sweeper(state: AppState) {
-    use std::time::Duration;
-    let secs: u64 = std::env::var("PANEL_EXPIRY_SWEEP_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(300)
-        .max(10);
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(secs));
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tick.tick().await;
-            match sqlx::query_as::<_, (i64,)>(
-                "SELECT id FROM forward_rules \
-                 WHERE enabled = 1 AND deleted_at IS NULL \
-                   AND expires_at IS NOT NULL \
-                   AND expires_at <= datetime('now')",
-            )
-            .fetch_all(&state.pool)
-            .await
-            {
-                Ok(rows) => {
-                    for (rule_id,) in rows {
-                        if let Err(e) = auto_stop_if_exceeded(&state, rule_id).await {
-                            warn!(error = ?e, rule_id, "expiry sweep auto_stop failed");
-                        }
-                    }
-                }
-                Err(e) => warn!(error = ?e, "expiry sweep query failed"),
-            }
-        }
-    });
 }
 
 /// SubscribeCommands stream 终止时通过 Drop 调 unsubscribe_if,清理 dispatcher

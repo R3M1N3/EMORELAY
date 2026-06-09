@@ -226,8 +226,6 @@ pub async fn update_settings(
     // 已知 key 白名单。未知 key 拒绝(防误植入新 K/V)。
     const ALLOWED: &[&str] = &[
         "reserved_ports",
-        "default_traffic_limit_bytes",
-        "default_bandwidth_limit_mbps",
         "stats_retention_days",
         "agent_control_endpoint",
     ];
@@ -296,18 +294,6 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
                         "reserved_ports element {p} out of range 1-65535"
                     )));
                 }
-            }
-            Ok(())
-        }
-        "default_traffic_limit_bytes" | "default_bandwidth_limit_mbps" => {
-            if value.is_empty() {
-                return Ok(());
-            }
-            let n: i64 = value.parse().map_err(|e| {
-                ApiError::BadRequest(format!("{key} must be a non-negative integer: {e}"))
-            })?;
-            if n < 0 {
-                return Err(ApiError::BadRequest(format!("{key} must be >= 0")));
             }
             Ok(())
         }

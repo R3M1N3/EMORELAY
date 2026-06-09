@@ -12,9 +12,6 @@ pub struct Rule {
     pub target_host: String,
     pub target_port: i64,
     pub enabled: i64,
-    pub expires_at: Option<String>,
-    pub traffic_limit_bytes: Option<i64>,
-    pub bandwidth_limit_mbps: Option<i64>,
     pub rx_bytes: i64,
     pub tx_bytes: i64,
     pub connection_count: i64,
@@ -26,8 +23,8 @@ pub struct Rule {
 }
 
 const RULE_COLUMNS: &str = "id, user_id, node_id, name, protocol, listen_ip, listen_port, \
-    target_host, target_port, enabled, expires_at, traffic_limit_bytes, bandwidth_limit_mbps, \
-    rx_bytes, tx_bytes, connection_count, bandwidth_profile_id, \
+    target_host, target_port, enabled, rx_bytes, tx_bytes, connection_count, \
+    bandwidth_profile_id, \
     (SELECT bp.bandwidth_mbps FROM bandwidth_profiles bp \
         WHERE bp.id = forward_rules.bandwidth_profile_id AND bp.deleted_at IS NULL) AS bandwidth_mbps, \
     created_at, updated_at";
@@ -173,15 +170,13 @@ impl Rule {
         listen_port: i64,
         target_host: &str,
         target_port: i64,
-        expires_at: Option<&str>,
-        traffic_limit_bytes: Option<i64>,
-        bandwidth_limit_mbps: Option<i64>,
+        bandwidth_profile_id: Option<i64>,
     ) -> sqlx::Result<i64> {
         let res = sqlx::query(
             "INSERT INTO forward_rules \
                 (user_id, node_id, name, protocol, listen_ip, listen_port, \
-                 target_host, target_port, expires_at, traffic_limit_bytes, bandwidth_limit_mbps) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 target_host, target_port, bandwidth_profile_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(node_id)
@@ -191,15 +186,13 @@ impl Rule {
         .bind(listen_port)
         .bind(target_host)
         .bind(target_port)
-        .bind(expires_at)
-        .bind(traffic_limit_bytes)
-        .bind(bandwidth_limit_mbps)
+        .bind(bandwidth_profile_id)
         .execute(pool)
         .await?;
         Ok(res.last_insert_rowid())
     }
 
-    /// PATCH 语义：None 字段保留旧值。本 MVP 不支持显式置 NULL；
+    /// PATCH 语义：None 字段保留旧值;bandwidth_profile_id 传 0 = 解除关联。
     /// 改 protocol / node_id 需要 delete+create。
     #[allow(clippy::too_many_arguments)]
     pub async fn update_fields(
@@ -210,31 +203,28 @@ impl Rule {
         listen_port: Option<i64>,
         target_host: Option<&str>,
         target_port: Option<i64>,
-        expires_at: Option<&str>,
-        traffic_limit_bytes: Option<i64>,
-        bandwidth_limit_mbps: Option<i64>,
+        bandwidth_profile_id: Option<i64>,
     ) -> sqlx::Result<u64> {
         let res = sqlx::query(
             "UPDATE forward_rules SET \
-                name = COALESCE(?, name), \
-                listen_ip = COALESCE(?, listen_ip), \
-                listen_port = COALESCE(?, listen_port), \
-                target_host = COALESCE(?, target_host), \
-                target_port = COALESCE(?, target_port), \
-                expires_at = COALESCE(?, expires_at), \
-                traffic_limit_bytes = COALESCE(?, traffic_limit_bytes), \
-                bandwidth_limit_mbps = COALESCE(?, bandwidth_limit_mbps), \
+                name = COALESCE(?1, name), \
+                listen_ip = COALESCE(?2, listen_ip), \
+                listen_port = COALESCE(?3, listen_port), \
+                target_host = COALESCE(?4, target_host), \
+                target_port = COALESCE(?5, target_port), \
+                bandwidth_profile_id = CASE \
+                    WHEN ?6 IS NULL THEN bandwidth_profile_id \
+                    WHEN ?6 = 0 THEN NULL \
+                    ELSE ?6 END, \
                 updated_at = datetime('now') \
-             WHERE id = ? AND deleted_at IS NULL",
+             WHERE id = ?7 AND deleted_at IS NULL",
         )
         .bind(name)
         .bind(listen_ip)
         .bind(listen_port)
         .bind(target_host)
         .bind(target_port)
-        .bind(expires_at)
-        .bind(traffic_limit_bytes)
-        .bind(bandwidth_limit_mbps)
+        .bind(bandwidth_profile_id)
         .bind(id)
         .execute(pool)
         .await?;

@@ -181,10 +181,10 @@ async fn create_rule_outside_port_pool_rejected() {
     assert!(body["message"].as_str().unwrap().contains("port pool"));
 }
 
+// P2: 规则级到期/流量/带宽三个限制字段已下线,对应 auto_stop 测试随之删除;
+// 用户级到期/配额覆盖在 user_quota sweeper 测试(Task 5)。
 #[tokio::test]
-async fn auto_stop_when_traffic_exceeds_limit() {
-    use panel_server::grpc::service::auto_stop_if_exceeded;
-
+async fn create_rule_without_profile_returns_null_bandwidth() {
     let app = make_app().await.unwrap();
     let t = &app.admin_token;
     let node_id = make_node(&app).await;
@@ -195,70 +195,17 @@ async fn auto_stop_when_traffic_exceeds_limit() {
         t,
         Some(json!({
             "node_id": node_id,
-            "name": "limited",
+            "name": "no-profile",
             "protocol": "tcp",
             "listen_port": 30000,
             "target_host": "1.2.3.4",
             "target_port": 80,
-            "traffic_limit_bytes": 100,
-        })),
-    )
-    .unwrap();
-    let (status, body) = send(app.app.clone(), req).await.unwrap();
-    assert_eq!(status, StatusCode::OK);
-    let rule_id = body["id"].as_i64().unwrap();
-    assert_eq!(body["enabled"], true);
-
-    // 模拟流量已累计超 limit(由 report_rule_stats 的 UPDATE 完成,此处直接 UPDATE 模拟)
-    sqlx::query("UPDATE forward_rules SET rx_bytes = 80, tx_bytes = 40 WHERE id = ?")
-        .bind(rule_id)
-        .execute(&app.state.pool)
-        .await
-        .unwrap();
-
-    // 触发自动停判定
-    auto_stop_if_exceeded(&app.state, rule_id).await.unwrap();
-
-    // 验证 enabled=0
-    let req = auth_req(Method::GET, &format!("/api/rules/{rule_id}"), t, None).unwrap();
-    let (_, body) = send(app.app.clone(), req).await.unwrap();
-    assert_eq!(body["enabled"], false);
-
-    // 第二次调用 idempotent — 不报错也不改状态
-    auto_stop_if_exceeded(&app.state, rule_id).await.unwrap();
-}
-
-#[tokio::test]
-async fn auto_stop_when_expires_at_past() {
-    use panel_server::grpc::service::auto_stop_if_exceeded;
-
-    let app = make_app().await.unwrap();
-    let t = &app.admin_token;
-    let node_id = make_node(&app).await;
-
-    let req = auth_req(
-        Method::POST,
-        "/api/rules",
-        t,
-        Some(json!({
-            "node_id": node_id,
-            "name": "expired",
-            "protocol": "tcp",
-            "listen_port": 30001,
-            "target_host": "1.2.3.4",
-            "target_port": 80,
-            "expires_at": "2020-01-01 00:00:00",
         })),
     )
     .unwrap();
     let (status, body) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
-    let rule_id = body["id"].as_i64().unwrap();
     assert_eq!(body["enabled"], true);
-
-    auto_stop_if_exceeded(&app.state, rule_id).await.unwrap();
-
-    let req = auth_req(Method::GET, &format!("/api/rules/{rule_id}"), t, None).unwrap();
-    let (_, body) = send(app.app.clone(), req).await.unwrap();
-    assert_eq!(body["enabled"], false);
+    assert!(body["bandwidth_profile_id"].is_null());
+    assert!(body["bandwidth_mbps"].is_null());
 }

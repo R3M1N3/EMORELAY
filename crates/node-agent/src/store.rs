@@ -16,9 +16,9 @@ struct RuleJson {
     target_host: String,
     target_port: u32,
     enabled: bool,
-    traffic_limit_bytes: i64,
-    bandwidth_limit_mbps: i64,
-    expires_at_unix: i64,
+    /// P2 新增。`#[serde(default)]` 兼容旧版 agent-state.json(缺字段 → 0 = 不限速)。
+    #[serde(default)]
+    bandwidth_mbps: i64,
 }
 
 impl From<&Rule> for RuleJson {
@@ -31,9 +31,7 @@ impl From<&Rule> for RuleJson {
             target_host: r.target_host.clone(),
             target_port: r.target_port,
             enabled: r.enabled,
-            traffic_limit_bytes: r.traffic_limit_bytes,
-            bandwidth_limit_mbps: r.bandwidth_limit_mbps,
-            expires_at_unix: r.expires_at_unix,
+            bandwidth_mbps: r.bandwidth_mbps,
         }
     }
 }
@@ -48,9 +46,7 @@ impl From<RuleJson> for Rule {
             target_host: r.target_host,
             target_port: r.target_port,
             enabled: r.enabled,
-            traffic_limit_bytes: r.traffic_limit_bytes,
-            bandwidth_limit_mbps: r.bandwidth_limit_mbps,
-            expires_at_unix: r.expires_at_unix,
+            bandwidth_mbps: r.bandwidth_mbps,
         }
     }
 }

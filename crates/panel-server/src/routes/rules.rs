@@ -33,12 +33,11 @@ pub struct RuleView {
     pub target_host: String,
     pub target_port: i64,
     pub enabled: bool,
-    pub expires_at: Option<String>,
-    pub traffic_limit_bytes: Option<i64>,
-    pub bandwidth_limit_mbps: Option<i64>,
     pub rx_bytes: i64,
     pub tx_bytes: i64,
     pub connection_count: i64,
+    pub bandwidth_profile_id: Option<i64>,
+    pub bandwidth_mbps: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -56,12 +55,11 @@ impl From<Rule> for RuleView {
             target_host: r.target_host,
             target_port: r.target_port,
             enabled: r.enabled != 0,
-            expires_at: r.expires_at,
-            traffic_limit_bytes: r.traffic_limit_bytes,
-            bandwidth_limit_mbps: r.bandwidth_limit_mbps,
             rx_bytes: r.rx_bytes,
             tx_bytes: r.tx_bytes,
             connection_count: r.connection_count,
+            bandwidth_profile_id: r.bandwidth_profile_id,
+            bandwidth_mbps: r.bandwidth_mbps,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -97,9 +95,7 @@ pub struct CreateRuleRequest {
     pub listen_port: u16,
     pub target_host: String,
     pub target_port: u16,
-    pub expires_at: Option<String>,
-    pub traffic_limit_bytes: Option<i64>,
-    pub bandwidth_limit_mbps: Option<i64>,
+    pub bandwidth_profile_id: Option<i64>,
 }
 
 fn default_listen_ip() -> String {
@@ -113,9 +109,8 @@ pub struct UpdateRuleRequest {
     pub listen_port: Option<u16>,
     pub target_host: Option<String>,
     pub target_port: Option<u16>,
-    pub expires_at: Option<String>,
-    pub traffic_limit_bytes: Option<i64>,
-    pub bandwidth_limit_mbps: Option<i64>,
+    /// 0 = 解除关联
+    pub bandwidth_profile_id: Option<i64>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -258,15 +253,17 @@ pub async fn create(
             "target_host is not a valid IP or hostname".into(),
         ));
     }
-    if let Some(exp) = &req.expires_at {
-        if exp.trim().is_empty() {
-            return Err(ApiError::BadRequest("expires_at is empty".into()));
-        }
-    }
-
     let node = Node::find_by_id(&state.pool, req.node_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("node_id does not exist".into()))?;
+    if let Some(pid) = req.bandwidth_profile_id {
+        if pid <= 0 {
+            return Err(ApiError::BadRequest("bandwidth_profile_id must be > 0".into()));
+        }
+        crate::models::bandwidth_profile::BandwidthProfile::find_by_id(&state.pool, pid)
+            .await?
+            .ok_or_else(|| ApiError::BadRequest("bandwidth_profile_id does not exist".into()))?;
+    }
     let listen_port_i64 = i64::from(req.listen_port);
     if listen_port_i64 < node.port_pool_min || listen_port_i64 > node.port_pool_max {
         return Err(ApiError::BadRequest(format!(
@@ -304,9 +301,7 @@ pub async fn create(
         listen_port_i64,
         req.target_host.trim(),
         i64::from(req.target_port),
-        req.expires_at.as_deref(),
-        req.traffic_limit_bytes,
-        req.bandwidth_limit_mbps,
+        req.bandwidth_profile_id,
     )
     .await
     .map_err(map_sqlx_to_api)?;
@@ -367,6 +362,16 @@ pub async fn update(
     if matches!(req.listen_port, Some(0)) || matches!(req.target_port, Some(0)) {
         return Err(ApiError::BadRequest("ports must be 1-65535".into()));
     }
+    if let Some(pid) = req.bandwidth_profile_id {
+        if pid < 0 {
+            return Err(ApiError::BadRequest("bandwidth_profile_id must be >= 0".into()));
+        }
+        if pid > 0 {
+            crate::models::bandwidth_profile::BandwidthProfile::find_by_id(&state.pool, pid)
+                .await?
+                .ok_or_else(|| ApiError::BadRequest("bandwidth_profile_id does not exist".into()))?;
+        }
+    }
 
     // 端口落入 node port_pool + reserved 校验。
     let effective_port = req.listen_port.map(i64::from).unwrap_or(existing.listen_port);
@@ -406,9 +411,7 @@ pub async fn update(
         req.listen_port.map(i64::from),
         req.target_host.as_deref().map(str::trim),
         req.target_port.map(i64::from),
-        req.expires_at.as_deref(),
-        req.traffic_limit_bytes,
-        req.bandwidth_limit_mbps,
+        req.bandwidth_profile_id,
     )
     .await
     .map_err(map_sqlx_to_api)?;
