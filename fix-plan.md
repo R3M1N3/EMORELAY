@@ -294,4 +294,3 @@ CLAUDE.md / plan 第十五节明确不做的项目,本计划严格不触碰:
 - 优惠码 / 工单 / 复杂订阅
 - 第三方转发核心管理(realm/gost/nftables 作为后续 executor 插件,不在 MVP)
 - Kubernetes / 分布式数据库
-- 任何攻击/扫描/绕过/爆破/DDoS 类功能
