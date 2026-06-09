@@ -1110,6 +1110,10 @@ ALTER TABLE forward_rules DROP COLUMN bandwidth_limit_mbps;
 -- 孤儿配置 key:其语义依附于已删除的规则级字段。
 DELETE FROM system_settings
 WHERE key IN ('default_traffic_limit_bytes', 'default_bandwidth_limit_mbps');
+
+-- 用户级 sweeper(Task 5)按 expires_at 扫描;部分索引只覆盖设了到期的行。
+-- (Task 1 review 建议项,在本 migration 顺手落地。)
+CREATE INDEX idx_users_expires_at ON users (expires_at) WHERE expires_at IS NOT NULL;
 ```
 
 - [ ] **Step 2: proto Rule 重排**
