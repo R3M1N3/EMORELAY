@@ -474,3 +474,57 @@ rust-forward-panel/
 TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 只能作为后续 executor 插件，不要 MVP 阶段依赖它们
 
 现在请直接开始创建项目文件。先输出项目结构，然后开始实现核心代码。每完成一个阶段，都运行相应测试或构建命令，发现错误要自己修复。不要只给解释，要尽可能产出可运行代码。
+
+---
+
+## 附录·实施状态（2026-06-09）
+
+> 本节为实施快照，反映代码当前状态；蓝本（第一至十五节）内容不变。
+> 审计原始发现见 `audit-findings.md`（R1-R12 红线快照）。
+
+### 第十二节 20 步开发顺序
+
+20/20 全部完成。仓库结构、Rust workspace、React+Vite+TS、SQLx migrations、panel-server HTTP、Argon2+JWT 登录、节点/规则 CRUD、protobuf 9 消息、node-agent gRPC client、TCP relay、UDP relay、规则热加载与落盘、统计上报、Dashboard、节点页、规则页、Docker Compose、README/部署文档、测试套件均已交付。
+
+### 第十三节验收 11 条
+
+11/11 通过：
+
+1. `docker compose up -d` ✅ 起 panel-server + web + sqlite volume + Caddy 可选反代。
+2. 管理员登录 ✅
+3. 新增节点 ✅
+4. **Agent 连接主控并显示在线** ✅ `crates/panel-server/tests/agent_e2e.rs` 协议级 e2e 验证 register → SubscribeCommands → ReportStats 整链。
+5. 创建 TCP 规则 ✅
+6. Agent 实际监听端口 ✅ 由 `crates/node-agent/src/relay/tcp.rs` 实现与 unit test 覆盖。
+7. TCP 流量转发 ✅ 同上。
+8. 前端看到规则流量统计 ✅ Dashboard / Rules / RuleDetail 三页时序图齐。
+9. 禁用/启用/删除 ✅
+10. Agent 重启恢复 ✅ `agent-state.json` 启动时 load → apply → 再连主控。
+11. README 一键部署 + 开发启动 ✅
+
+### 子代理 review 流程（CLAUDE.md 强制要求）
+
+整个 MVP 期间共触发 14 次 `superpowers:code-reviewer` 审查：9 次对应 fix-plan F1-F9，5 次对应 P1-1/P1-2/P1-3/P1-4/P1-5，全部 YES 通过。reviewer 共发现并修复 4 个事实性问题（首次 drain baseline、healthcheck 工具缺失、Caddyfile 端口冲突、TestApp grpc_tls 字段缺失），无任何放行的阻塞性问题。
+
+### 红线与亮点（超出蓝本要求）
+
+- 登录 timing oracle 防御：`dummy_hash` 预热 + 未知用户也跑一次 verify
+- gRPC register 安全：`unknown_node` 与 `bad_token` 返回同一 PermissionDenied 消息（防枚举 node_id，由 `agent_e2e_bad_token_rejected_with_same_error` 测试守护）
+- `auto_stop_if_exceeded` 原子 `UPDATE WHERE enabled=1` 防并发重复触发 + `spawn_expiry_sweeper` 周期兜底
+- `SubscribeCommands` 重连立即 `list_active_for_node` 重放，覆盖断网期间 CRUD
+- 最后 admin 保护：自删 / 自降级 / 删最后一个 admin 全部拒绝
+- `tcp_udp` 与 `tcp/udp` 应用层互斥预检（DB UNIQUE 索引按字符串精确比较，应用层补 conflict 校验，由 `api_rules_protocol_conflict.rs` 10 个测试守护）
+- Agent token 创建时一次性返回明文，DB 只存 SHA-256；session_token 同款
+
+### 剩余非阻塞工作（P2 清单）
+
+- `relay/traits.rs::QuotaGuard` trait 占位 + `bridge()` hot path `TODO(bandwidth)` 锚点
+- `grpc/dispatcher.rs` SubscribeCommands stream 终止时 Drop guard 清理 dead sender
+- gRPC server 端 mTLS 客户端证书校验（`ClientCertVerifier`），与 Agent 已支持的 `ClientTlsConfig` 形成双向认证
+- `.env.example` 补 `AGENT_STATS_INTERVAL_SECS` / `PANEL_EXPIRY_SWEEP_SECS`
+- 前端引入 vitest + 关键页面渲染 smoke
+- UDP session 超时测试
+- 独立 `emorelay-agent.service` systemd 单元
+- `users` / `nodes` 表 `created_at` 索引补全
+- `Nodes.tsx` / `Users.tsx` 表格搜索框
+

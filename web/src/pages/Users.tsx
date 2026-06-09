@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
+  formatBytes,
   shortTime,
   users,
   type CreateUserRequest,
@@ -103,6 +104,8 @@ export default function Users() {
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium">用户名</th>
                   <th className="px-4 py-2.5 text-left font-medium">角色</th>
+                  <th className="px-4 py-2.5 text-right font-medium">规则数</th>
+                  <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
                   <th className="px-4 py-2.5 text-left font-medium">创建于</th>
                   <th className="px-4 py-2.5 text-left font-medium">更新于</th>
                   <th className="px-4 py-2.5 text-right font-medium">操作</th>
@@ -207,6 +210,12 @@ function UserRow({
         >
           {user.role}
         </span>
+      </td>
+      <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
+        {user.rule_count}
+      </td>
+      <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
+        {formatBytes(user.total_traffic_bytes)}
       </td>
       <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.created_at)}</td>
       <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.updated_at)}</td>

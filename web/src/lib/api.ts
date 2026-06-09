@@ -222,6 +222,8 @@ export interface UserDetail {
   role: 'admin' | 'user'
   created_at: string
   updated_at: string
+  rule_count: number
+  total_traffic_bytes: number
 }
 
 export interface UserListResponse {
@@ -275,6 +277,13 @@ export interface SettingsResponse {
   settings: Record<string, string>
 }
 
+export interface SecurityInfo {
+  jwt_secret_configured: boolean
+  jwt_secret_length: number
+  jwt_expiry_hours: number
+  grpc_tls_enabled: boolean
+}
+
 // ============ 端点 ============
 
 export const auth = {
@@ -315,6 +324,7 @@ export const users = {
 
 export const system = {
   overview: () => api.get<SystemOverview>('/api/system/overview'),
+  security: () => api.get<SecurityInfo>('/api/system/security'),
   auditLogs: (
     q: {
       page?: number

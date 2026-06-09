@@ -4,6 +4,7 @@ import {
   shortTime,
   system,
   type AuditLogEntry,
+  type SecurityInfo,
 } from '../lib/api'
 import { fieldInputCls, fieldLabelCls } from '../lib/ui'
 
@@ -44,9 +45,19 @@ export default function Settings() {
   const [logs, setLogs] = useState<{ items: AuditLogEntry[]; loading: boolean; error: string | null }>(
     { items: [], loading: true, error: null },
   )
+  const [security, setSecurity] = useState<SecurityInfo | 'loading' | 'error'>('loading')
 
   useEffect(() => {
     let cancelled = false
+    // SecurityInfo 单独拉,失败不阻塞设置表单/审计日志。
+    system
+      .security()
+      .then((info) => {
+        if (!cancelled) setSecurity(info)
+      })
+      .catch(() => {
+        if (!cancelled) setSecurity('error')
+      })
     Promise.all([system.getSettings(), system.auditLogs({ page_size: 50 })])
       .then(([s, l]) => {
         if (cancelled) return
@@ -135,8 +146,10 @@ export default function Settings() {
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold tracking-tight">系统设置</h2>
-        <p className="text-sm text-zinc-400 mt-1">保留端口黑名单与全局默认配置</p>
+        <p className="text-sm text-zinc-400 mt-1">安全状态 / 保留端口黑名单 / 全局默认配置</p>
       </div>
+
+      <SecurityCard data={security} />
 
       <form
         onSubmit={onSubmit}
@@ -276,5 +289,52 @@ export default function Settings() {
         )}
       </section>
     </div>
+  )
+}
+
+// SecurityCard 展示 JWT 配置状态 + Agent 鉴权通道,plan §6 第 7 项前两条。
+// 不展示 secret 内容,仅展示长度供肉眼判断强度。
+function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
+  if (data === 'loading') {
+    return (
+      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 text-sm text-zinc-400">
+        安全状态加载中…
+      </section>
+    )
+  }
+  if (data === 'error') {
+    return (
+      <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-200">
+        安全状态加载失败
+      </section>
+    )
+  }
+  const jwtOk = data.jwt_secret_configured && data.jwt_secret_length >= 32
+  const jwtStatus = !data.jwt_secret_configured
+    ? { text: '未配置', cls: 'text-red-300' }
+    : jwtOk
+    ? { text: '已配置 (强度足够)', cls: 'text-emerald-300' }
+    : { text: '已配置 (强度偏弱)', cls: 'text-amber-300' }
+  const tlsStatus = data.grpc_tls_enabled
+    ? { text: 'Token + TLS', cls: 'text-emerald-300', hint: 'Agent 与主控通过 TLS 加密传输,token 不裸跑' }
+    : { text: 'Token (明文)', cls: 'text-amber-300', hint: '生产建议配置 PANEL_GRPC_TLS_CERT/KEY 启用 TLS' }
+  return (
+    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+      <h3 className="text-sm font-medium text-zinc-200 mb-3">安全状态</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2">
+          <div className="text-[11px] text-zinc-500">JWT 密钥</div>
+          <div className={`text-sm mt-0.5 ${jwtStatus.cls}`}>{jwtStatus.text}</div>
+          <div className="text-[11px] text-zinc-500 mt-0.5">
+            长度 {data.jwt_secret_length} 字节 · 过期 {data.jwt_expiry_hours} 小时
+          </div>
+        </div>
+        <div className="rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2">
+          <div className="text-[11px] text-zinc-500">Agent 鉴权方式</div>
+          <div className={`text-sm mt-0.5 ${tlsStatus.cls}`}>{tlsStatus.text}</div>
+          <div className="text-[11px] text-zinc-500 mt-0.5">{tlsStatus.hint}</div>
+        </div>
+      </div>
+    </section>
   )
 }

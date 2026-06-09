@@ -283,6 +283,17 @@ pub async fn create(
         )));
     }
 
+    // UNIQUE 索引按 protocol 字符串精确匹配,tcp_udp 与 tcp/udp 在 DB 层不互斥;此处补应用层互斥。
+    ensure_no_protocol_conflict(
+        &state.pool,
+        req.node_id,
+        &req.listen_ip,
+        listen_port_i64,
+        &req.protocol,
+        None,
+    )
+    .await?;
+
     let new_id = Rule::create(
         &state.pool,
         auth.0.sub,
@@ -359,6 +370,7 @@ pub async fn update(
 
     // 端口落入 node port_pool + reserved 校验。
     let effective_port = req.listen_port.map(i64::from).unwrap_or(existing.listen_port);
+    let effective_ip = req.listen_ip.as_deref().unwrap_or(&existing.listen_ip);
     let node = Node::find_by_id(&state.pool, existing.node_id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -374,6 +386,17 @@ pub async fn update(
             "listen_port {effective_port} is reserved"
         )));
     }
+
+    // protocol 不可改,沿用 existing.protocol;listen_ip/port 改动需重新做互斥预检并排除自身。
+    ensure_no_protocol_conflict(
+        &state.pool,
+        existing.node_id,
+        effective_ip,
+        effective_port,
+        &existing.protocol,
+        Some(id),
+    )
+    .await?;
 
     let rows = Rule::update_fields(
         &state.pool,
@@ -605,6 +628,51 @@ fn validate_protocol(p: &str) -> ApiResult<()> {
             "protocol must be tcp | udp | tcp_udp".into(),
         ))
     }
+}
+
+/// 新建/改动规则时与同 (node_id, listen_ip, listen_port) 上的活跃规则做协议互斥校验。
+/// UNIQUE 索引按 protocol 字符串严格匹配,所以 tcp_udp 和 tcp/udp 在 DB 层不互斥,但实际 Agent
+/// bind 会冲突。规则: tcp ↔ tcp_udp 冲突, udp ↔ tcp_udp 冲突, tcp ↔ udp 不冲突。
+/// `exclude_id` 用于 update,排除自身。
+async fn ensure_no_protocol_conflict(
+    pool: &sqlx::SqlitePool,
+    node_id: i64,
+    listen_ip: &str,
+    listen_port: i64,
+    new_protocol: &str,
+    exclude_id: Option<i64>,
+) -> ApiResult<()> {
+    let conflicts: &[&str] = match new_protocol {
+        "tcp" => &["tcp_udp"],
+        "udp" => &["tcp_udp"],
+        "tcp_udp" => &["tcp", "udp"],
+        _ => return Ok(()),
+    };
+    let placeholders = vec!["?"; conflicts.len()].join(",");
+    let sql = format!(
+        "SELECT id FROM forward_rules \
+         WHERE node_id = ? AND listen_ip = ? AND listen_port = ? \
+           AND protocol IN ({}) AND deleted_at IS NULL{} LIMIT 1",
+        placeholders,
+        if exclude_id.is_some() { " AND id != ?" } else { "" }
+    );
+    let mut q = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(node_id)
+        .bind(listen_ip)
+        .bind(listen_port);
+    for p in conflicts {
+        q = q.bind(*p);
+    }
+    if let Some(eid) = exclude_id {
+        q = q.bind(eid);
+    }
+    if q.fetch_optional(pool).await?.is_some() {
+        return Err(ApiError::BadRequest(format!(
+            "listen_port {listen_port} on this node conflicts with an existing rule \
+             (tcp_udp mutually excludes tcp/udp on the same port)"
+        )));
+    }
+    Ok(())
 }
 
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {

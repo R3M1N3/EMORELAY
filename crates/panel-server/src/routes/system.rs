@@ -58,6 +58,33 @@ pub async fn overview(
     }))
 }
 
+// ============= security info =============
+
+#[derive(Serialize)]
+pub struct SecurityInfo {
+    /// JWT secret 是否已从环境变量加载(Config::from_env 缺失会直接 fail-fast,所以这里一般为 true)。
+    pub jwt_secret_configured: bool,
+    /// secret 字节长度(String::len),仅供管理员肉眼判断强度,不暴露内容。
+    pub jwt_secret_length: usize,
+    pub jwt_expiry_hours: u64,
+    /// gRPC 控制面是否启用 TLS。false 时 Agent 与 Server 间 token 明文。
+    pub grpc_tls_enabled: bool,
+}
+
+pub async fn security(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> ApiResult<Json<SecurityInfo>> {
+    auth.require_admin()?;
+    let cfg = &state.config;
+    Ok(Json(SecurityInfo {
+        jwt_secret_configured: !cfg.jwt_secret.is_empty(),
+        jwt_secret_length: cfg.jwt_secret.len(),
+        jwt_expiry_hours: cfg.jwt_expiry_hours,
+        grpc_tls_enabled: cfg.grpc_tls_cert.is_some() && cfg.grpc_tls_key.is_some(),
+    }))
+}
+
 // ============= audit logs =============
 
 #[derive(Deserialize)]

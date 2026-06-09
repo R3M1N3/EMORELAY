@@ -14,6 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlx::prelude::FromRow;
 
 #[derive(Serialize)]
 pub struct UserView {
@@ -22,6 +23,10 @@ pub struct UserView {
     pub role: String,
     pub created_at: String,
     pub updated_at: String,
+    /// 该用户名下未软删的规则数。从 User 转换时填 0(create/update/get 路径不查聚合)。
+    pub rule_count: i64,
+    /// 累计 rx + tx 字节。同上,From<User> 路径填 0;list 路径走 JOIN 拿实际值。
+    pub total_traffic_bytes: i64,
 }
 
 impl From<User> for UserView {
@@ -32,6 +37,34 @@ impl From<User> for UserView {
             role: u.role,
             created_at: u.created_at,
             updated_at: u.updated_at,
+            rule_count: 0,
+            total_traffic_bytes: 0,
+        }
+    }
+}
+
+/// 列表 SQL 投影:加上 LEFT JOIN 聚合得到的两个统计字段。
+#[derive(FromRow)]
+struct UserListRow {
+    id: i64,
+    username: String,
+    role: String,
+    created_at: String,
+    updated_at: String,
+    rule_count: i64,
+    total_traffic_bytes: i64,
+}
+
+impl From<UserListRow> for UserView {
+    fn from(r: UserListRow) -> Self {
+        Self {
+            id: r.id,
+            username: r.username,
+            role: r.role,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            rule_count: r.rule_count,
+            total_traffic_bytes: r.total_traffic_bytes,
         }
     }
 }
@@ -73,11 +106,28 @@ pub async fn list(
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = page.saturating_sub(1).saturating_mul(page_size);
 
-    let users = User::list_paged(&state.pool, page_size, offset).await?;
+    // 一次 LEFT JOIN 拿到所有列表字段 + 规则数 + 累计流量。subquery 按 user_id
+    // 预聚合(COUNT / SUM(rx+tx))避免 GROUP BY 在外层引入笛卡尔积。
+    let rows: Vec<UserListRow> = sqlx::query_as(
+        "SELECT u.id, u.username, u.role, u.created_at, u.updated_at, \
+                COALESCE(r.cnt, 0) AS rule_count, \
+                COALESCE(r.tot, 0) AS total_traffic_bytes \
+         FROM users u \
+         LEFT JOIN ( \
+             SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
+             FROM forward_rules WHERE deleted_at IS NULL GROUP BY user_id \
+         ) r ON r.user_id = u.id \
+         WHERE u.deleted_at IS NULL \
+         ORDER BY u.id DESC LIMIT ? OFFSET ?",
+    )
+    .bind(page_size)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await?;
     let total = User::count(&state.pool).await?;
 
     Ok(Json(UserListResponse {
-        items: users.into_iter().map(Into::into).collect(),
+        items: rows.into_iter().map(Into::into).collect(),
         total,
         page,
         page_size,

@@ -39,6 +39,7 @@ pub fn router(state: AppState) -> Router {
             get(users::get).patch(users::update).delete(users::delete),
         )
         .route("/api/system/overview", get(system::overview))
+        .route("/api/system/security", get(system::security))
         .route("/api/system/audit-logs", get(system::audit_logs))
         .route(
             "/api/system/settings",
