@@ -16,6 +16,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# musl 工具链 + 两个 linux target,用于编静态 agent 二进制。
+# musl-tools 提供 x86_64-linux-musl-gcc 链接 amd64；gcc-aarch64-linux-gnu 链接 arm64。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    musl-tools gcc-aarch64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+ENV CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
+
 WORKDIR /build
 
 # 全量拷源(.dockerignore 已剔除 target/、node_modules、文档、本地 db 等)。
@@ -24,6 +35,10 @@ WORKDIR /build
 COPY . .
 
 RUN cargo build --release -p panel-server
+
+# cross-compile node-agent 两个 linux musl target,产物给 /install.sh 端点 serve。
+RUN cargo build --release -p node-agent --target x86_64-unknown-linux-musl
+RUN cargo build --release -p node-agent --target aarch64-unknown-linux-musl
 
 
 FROM debian:bookworm-slim AS runtime
@@ -39,8 +54,19 @@ RUN useradd -r -u 1001 -s /usr/sbin/nologin emorelay
 COPY --from=builder /build/target/release/panel-server /usr/local/bin/panel-server
 COPY --from=builder /build/migrations /app/migrations
 
-# /data 给 sqlite 文件;/app 仅为 migrations 落点。
-RUN mkdir -p /data && chown emorelay:emorelay /data /app
+COPY --from=builder \
+  /build/target/x86_64-unknown-linux-musl/release/node-agent \
+  /var/lib/emorelay/agent-dist/node-agent-linux-amd64
+COPY --from=builder \
+  /build/target/aarch64-unknown-linux-musl/release/node-agent \
+  /var/lib/emorelay/agent-dist/node-agent-linux-arm64
+
+# /var/lib/emorelay 给 sqlite + agent-dist + 未来 TLS 材料;/app 仅为 migrations 落点。
+RUN mkdir -p /var/lib/emorelay/agent-dist && chown -R emorelay:emorelay /var/lib/emorelay /app
+
+RUN chmod 0755 /var/lib/emorelay/agent-dist/node-agent-linux-amd64 \
+               /var/lib/emorelay/agent-dist/node-agent-linux-arm64 \
+    && chown -R emorelay:emorelay /var/lib/emorelay/agent-dist
 
 USER emorelay
 WORKDIR /app

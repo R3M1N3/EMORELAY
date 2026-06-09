@@ -26,7 +26,7 @@ services:
     environment:
       PANEL_BIND_ADDR: 0.0.0.0:8080
       PANEL_GRPC_BIND_ADDR: 0.0.0.0:50051
-      PANEL_DATABASE_URL: sqlite:///data/emorelay.db
+      PANEL_DATABASE_URL: sqlite:///var/lib/emorelay/emorelay.db
       PANEL_JWT_SECRET: ${PANEL_JWT_SECRET:?PANEL_JWT_SECRET is required (>= 32 chars)}
       PANEL_JWT_EXPIRY_HOURS: ${PANEL_JWT_EXPIRY_HOURS:-24}
       # 默认允许 web 自身域;若用 host Caddy 反代到外网域,改成相应 origin。
@@ -34,10 +34,10 @@ services:
       PANEL_BOOTSTRAP_ADMIN_USERNAME: ${PANEL_BOOTSTRAP_ADMIN_USERNAME:-admin}
       PANEL_BOOTSTRAP_ADMIN_PASSWORD: ${PANEL_BOOTSTRAP_ADMIN_PASSWORD:?PANEL_BOOTSTRAP_ADMIN_PASSWORD is required}
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
-      PANEL_DATA_DIR: /data
+      PANEL_DATA_DIR: /var/lib/emorelay
       PANEL_PUBLIC_BASE_URL: ${PANEL_PUBLIC_BASE_URL:-}
     volumes:
-      - sqlite-data:/data
+      - sqlite-data:/var/lib/emorelay
     ports:
       # 8080: 暴露 REST 给本机调试 / 集成测试;生产可只让 web 容器内网访问。
       - "127.0.0.1:8080:8080"
