@@ -235,13 +235,13 @@ WantedBy=multi-user.target
 - **备份**(panel-server runtime 镜像不带 sqlite3 CLI,用 alpine 侧车直接拷文件):
   ```sh
   docker run --rm \
-    -v emorelay_sqlite-data:/data \
+    -v emorelay_sqlite-data:/var/lib/emorelay \
     -v "$PWD/backup":/backup \
-    alpine sh -c 'cp /data/emorelay.db /backup/emorelay-$(date +%F).db'
+    alpine sh -c 'cp /var/lib/emorelay/emorelay.db /backup/emorelay-$(date +%F).db'
   ```
   (compose 项目名默认是目录名,例如 `emorelay_sqlite-data`,用 `docker volume ls` 确认。)
 - **升级**: `docker compose pull && docker compose up -d --build`。Migration 由 panel-server 启动时 `sqlx::migrate!` 自动跑。
-- **回滚**: 备份目录里恢复 db 文件(`docker run --rm -v emorelay_sqlite-data:/data -v "$PWD/backup":/backup alpine cp /backup/<file>.db /data/emorelay.db`),降级镜像 tag。
+- **回滚**: 备份目录里恢复 db 文件(`docker run --rm -v emorelay_sqlite-data:/var/lib/emorelay -v "$PWD/backup":/backup alpine cp /backup/<file>.db /var/lib/emorelay/emorelay.db`),降级镜像 tag。
 
 ---
 
