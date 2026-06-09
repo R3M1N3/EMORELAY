@@ -64,20 +64,26 @@ async fn bandwidth_profile_crud_roundtrip() {
 #[tokio::test]
 async fn bandwidth_profile_rejects_dup_name_and_bad_mbps() {
     let app = common::make_app().await.unwrap();
-    for _ in 0..2 {
-        let req = common::auth_req(
-            Method::POST,
-            "/api/bandwidth-profiles",
-            &app.admin_token,
-            Some(json!({ "name": "dup", "bandwidth_mbps": 10 })),
-        )
-        .unwrap();
-        let (status, _) = common::send(app.app.clone(), req).await.unwrap();
-        if status != StatusCode::OK {
-            assert_eq!(status, StatusCode::BAD_REQUEST);
-            break;
-        }
-    }
+    // 第一次创建必须成功;第二次同名必须 400 —— 两个显式断言,唯一名保护回归时测试必红。
+    let req = common::auth_req(
+        Method::POST,
+        "/api/bandwidth-profiles",
+        &app.admin_token,
+        Some(json!({ "name": "dup", "bandwidth_mbps": 10 })),
+    )
+    .unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let req = common::auth_req(
+        Method::POST,
+        "/api/bandwidth-profiles",
+        &app.admin_token,
+        Some(json!({ "name": "dup", "bandwidth_mbps": 10 })),
+    )
+    .unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let req = common::auth_req(
         Method::POST,
         "/api/bandwidth-profiles",

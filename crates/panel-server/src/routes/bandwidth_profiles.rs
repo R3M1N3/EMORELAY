@@ -227,13 +227,20 @@ pub async fn delete(
 async fn dispatch_referencing_rules(state: &AppState, profile_id: i64) {
     use crate::grpc::commands::apply_command;
     use crate::models::rule::Rule;
-    let ids: Vec<(i64,)> = sqlx::query_as(
+    // best-effort:查询失败只 warn 不阻断主流程(与 audit 写失败、agent 离线分支同一约定)。
+    let ids: Vec<(i64,)> = match sqlx::query_as(
         "SELECT id FROM forward_rules WHERE bandwidth_profile_id = ? AND deleted_at IS NULL",
     )
     .bind(profile_id)
     .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(error = ?e, profile_id, "failed to query referencing rules; skip re-dispatch");
+            return;
+        }
+    };
     for (rule_id,) in ids {
         if let Ok(Some(rule)) = Rule::find_by_id(&state.pool, rule_id).await {
             if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
