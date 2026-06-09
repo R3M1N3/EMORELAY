@@ -75,6 +75,8 @@ pub async fn expiry_tick_once(state: &AppState) -> anyhow::Result<u64> {
 /// 先刷新所有活跃用户的 30 天用量 cache,再停超额用户的规则。返回命中的用户数。
 /// 不变量:必须先刷 cache 再判定,禁止用过期 cache 判断超额。
 pub async fn quota_tick_once(state: &AppState) -> anyhow::Result<u64> {
+    // 注意:下面的 JOIN forward_rules 故意不过滤 fr.deleted_at——删除规则不得清零
+    // 用户 30 天用量(防"删规则重建"规避配额),勿当 bug "修复"。
     sqlx::query(
         "UPDATE users SET \
              period_used_bytes_cached = ( \
@@ -136,20 +138,29 @@ async fn disable_rules_for_user(state: &AppState, user_id: i64, reason: &str) ->
     if ids.is_empty() {
         return Ok(0);
     }
-    // 单次 UPDATE 原子落库;WHERE enabled = 1 防并发重复触发。
-    let rows = sqlx::query(
+    // 单次 UPDATE 原子落库,但只停上面捕获到的 id:SELECT 与 UPDATE 之间新建的规则
+    // 不能被按 user_id 整批误停(否则 dispatch 循环漏发且下个 tick 因 enabled=0 不再命中);
+    // 留给下个 tick 的 EXISTS 重新捕获。WHERE enabled = 1 防并发重复触发。
+    let placeholders = vec!["?"; ids.len()].join(", ");
+    let sql = format!(
         "UPDATE forward_rules SET enabled = 0, updated_at = datetime('now') \
-         WHERE user_id = ? AND enabled = 1 AND deleted_at IS NULL",
-    )
-    .bind(user_id)
-    .execute(&state.pool)
-    .await?
-    .rows_affected();
+         WHERE id IN ({placeholders}) AND enabled = 1 AND deleted_at IS NULL"
+    );
+    let mut q = sqlx::query(&sql);
+    for (id,) in &ids {
+        q = q.bind(id);
+    }
+    let rows = q.execute(&state.pool).await?.rows_affected();
     for (rule_id,) in ids {
-        if let Ok(Some(rule)) = Rule::find_by_id(&state.pool, rule_id).await {
-            if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-                warn!(node_id = rule.node_id, rule_id, reason, "agent offline; disable syncs at next register");
+        match Rule::find_by_id(&state.pool, rule_id).await {
+            Ok(Some(rule)) => {
+                if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
+                    warn!(node_id = rule.node_id, rule_id, reason, "agent offline; disable syncs at next register");
+                }
             }
+            // 窗口内被软删:DB 已是终态,无需下发。
+            Ok(None) => {}
+            Err(e) => warn!(error = ?e, rule_id, "find rule for disable dispatch failed"),
         }
     }
     Ok(rows)
