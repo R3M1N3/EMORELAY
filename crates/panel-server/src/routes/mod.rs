@@ -11,8 +11,27 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use std::sync::Arc;
+use tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+};
 
 pub fn router(state: AppState) -> Router {
+    let install_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(1)
+            .burst_size(60)
+            .key_extractor(SmartIpKeyExtractor)
+            .finish()
+            .expect("install governor config"),
+    );
+
+    let install_routes = Router::new()
+        .route("/install.sh", get(install::install_sh))
+        .route("/dist/{filename}", get(install::dist_binary))
+        .layer(GovernorLayer::new(install_governor))
+        .with_state(state.clone());
+
     Router::new()
         .route("/api/health", get(health::health))
         .route("/api/auth/login", post(auth::login))
@@ -46,7 +65,6 @@ pub fn router(state: AppState) -> Router {
             "/api/system/settings",
             get(system::get_settings).patch(system::update_settings),
         )
-        .route("/install.sh", get(install::install_sh))
-        .route("/dist/{filename}", get(install::dist_binary))
+        .merge(install_routes)
         .with_state(state)
 }

@@ -11,6 +11,7 @@ async fn install_sh_returns_bash_script_with_node_id() {
     let req = Request::builder()
         .method(Method::GET)
         .uri("/install.sh?node=42")
+        .header("x-forwarded-for", "127.0.0.1")
         .body(axum::body::Body::empty())
         .unwrap();
     let resp = app.app.clone().oneshot(req).await.unwrap();
@@ -40,6 +41,7 @@ async fn install_sh_missing_node_returns_400() {
     let req = Request::builder()
         .method(Method::GET)
         .uri("/install.sh")
+        .header("x-forwarded-for", "127.0.0.1")
         .body(axum::body::Body::empty())
         .unwrap();
     let resp = app.app.clone().oneshot(req).await.unwrap();
@@ -65,6 +67,7 @@ async fn install_sh_uses_endpoint_from_settings() {
     let req = Request::builder()
         .method(Method::GET)
         .uri("/install.sh?node=7")
+        .header("x-forwarded-for", "127.0.0.1")
         .body(axum::body::Body::empty())
         .unwrap();
     let resp = app.app.clone().oneshot(req).await.unwrap();
@@ -83,8 +86,40 @@ async fn dist_unknown_arch_returns_404() {
     let req = Request::builder()
         .method(Method::GET)
         .uri("/dist/node-agent-linux-mips")
+        .header("x-forwarded-for", "127.0.0.1")
         .body(axum::body::Body::empty())
         .unwrap();
     let resp = app.app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn install_sh_rate_limited_after_burst() {
+    let app = make_app().await.unwrap();
+    let mut ok_count = 0;
+    let mut rate_limited = false;
+    // 注入 x-forwarded-for 让 SmartIpKeyExtractor 能提取到 IP。
+    // 70 次请求中前 60 次 burst 内应 OK，后续触发 429。
+    for _ in 0..70 {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/install.sh?node=1")
+            .header("x-forwarded-for", "127.0.0.1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.app.clone().oneshot(req).await.unwrap();
+        match resp.status() {
+            StatusCode::OK => ok_count += 1,
+            StatusCode::TOO_MANY_REQUESTS => {
+                rate_limited = true;
+                break;
+            }
+            other => panic!("unexpected status: {other}"),
+        }
+    }
+    assert!(ok_count >= 1, "expected at least 1 OK before 429");
+    assert!(
+        rate_limited,
+        "expected 429 within 70 attempts; ok_count={ok_count}"
+    );
 }
