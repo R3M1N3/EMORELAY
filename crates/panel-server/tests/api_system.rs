@@ -39,3 +39,51 @@ async fn security_info_rejects_non_admin() {
     let (status, _) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn agent_control_endpoint_accepts_https() {
+    let app = make_app().await.unwrap();
+    let req = auth_req(
+        Method::PATCH,
+        "/api/system/settings",
+        &app.admin_token,
+        Some(serde_json::json!({
+            "settings": { "agent_control_endpoint": "https://relay.example.com:50051" }
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn agent_control_endpoint_rejects_bad_scheme() {
+    let app = make_app().await.unwrap();
+    let req = auth_req(
+        Method::PATCH,
+        "/api/system/settings",
+        &app.admin_token,
+        Some(serde_json::json!({
+            "settings": { "agent_control_endpoint": "ftp://x.com" }
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn agent_control_endpoint_empty_accepted() {
+    let app = make_app().await.unwrap();
+    let req = auth_req(
+        Method::PATCH,
+        "/api/system/settings",
+        &app.admin_token,
+        Some(serde_json::json!({
+            "settings": { "agent_control_endpoint": "" }
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+}

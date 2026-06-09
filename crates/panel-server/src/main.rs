@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
     let pool = db::connect(&config.database_url).await?;
     db::run_migrations(&pool).await?;
     bootstrap::ensure_admin_user(&pool).await?;
+    bootstrap::seed_default_settings(&pool).await?;
     let _ = auth::password::dummy_hash();
     info!("database ready");
 

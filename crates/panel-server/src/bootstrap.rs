@@ -29,3 +29,20 @@ pub async fn ensure_admin_user(pool: &SqlitePool) -> Result<()> {
     info!(username = %username, "bootstrap admin user created");
     Ok(())
 }
+
+/// 对历史 DB(在新 key 加入之前迁过)兜底插入默认设置。
+/// 不覆盖管理员已设值,使用 INSERT OR IGNORE。
+pub async fn seed_default_settings(pool: &SqlitePool) -> Result<()> {
+    let defaults: &[(&str, &str)] = &[
+        ("agent_control_endpoint", ""),
+    ];
+    for (k, v) in defaults {
+        sqlx::query("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)")
+            .bind(k)
+            .bind(v)
+            .execute(pool)
+            .await
+            .with_context(|| format!("seed default setting {k}"))?;
+    }
+    Ok(())
+}

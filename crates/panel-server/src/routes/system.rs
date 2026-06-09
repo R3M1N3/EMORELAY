@@ -229,6 +229,7 @@ pub async fn update_settings(
         "default_traffic_limit_bytes",
         "default_bandwidth_limit_mbps",
         "stats_retention_days",
+        "agent_control_endpoint",
     ];
 
     for (k, v) in req.settings.iter() {
@@ -320,6 +321,20 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
                 ));
             }
             Ok(())
+        }
+        "agent_control_endpoint" => {
+            if value.is_empty() {
+                return Ok(()); // 空 = 未配置
+            }
+            let url = url::Url::parse(value).map_err(|e| {
+                ApiError::BadRequest(format!("agent_control_endpoint 必须是合法 URL: {e}"))
+            })?;
+            match url.scheme() {
+                "http" | "https" => Ok(()),
+                s => Err(ApiError::BadRequest(format!(
+                    "agent_control_endpoint scheme 必须是 http/https,得到 {s}"
+                ))),
+            }
         }
         _ => Ok(()),
     }

@@ -172,7 +172,8 @@ INSERT INTO system_settings (key, value) VALUES
     ('reserved_ports',               '[22, 80, 443, 3306, 5432]'),
     ('default_traffic_limit_bytes',  ''),
     ('default_bandwidth_limit_mbps', ''),
-    ('stats_retention_days',         '30');
+    ('stats_retention_days',         '30'),
+    ('agent_control_endpoint',       '');
 
 -- ============================ agent_sessions ============================
 -- 每条 Agent gRPC 会话一行；session_token_hash 是该会话临时凭据的哈希。
