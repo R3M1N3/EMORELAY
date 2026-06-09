@@ -9,6 +9,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
+use crate::limit::TokenBucket;
 use crate::stats::{RuleCounter, StatsCollector};
 
 pub struct TcpRelayHandle {
@@ -24,7 +25,11 @@ impl TcpRelayHandle {
     }
 }
 
-pub async fn start(rule: Rule, stats: Arc<StatsCollector>) -> Result<TcpRelayHandle> {
+pub async fn start(
+    rule: Rule,
+    stats: Arc<StatsCollector>,
+    bucket: Option<Arc<TokenBucket>>,
+) -> Result<TcpRelayHandle> {
     // 直接 (IpAddr, port) 构造 SocketAddr，避免 IPv6 字符串拼接歧义（"::1:8080" 不是合法 SocketAddr）。
     let listen_ip: IpAddr = rule
         .listen_ip
@@ -58,8 +63,9 @@ pub async fn start(rule: Rule, stats: Arc<StatsCollector>) -> Result<TcpRelayHan
                             counter.connection_count.fetch_add(1, Ordering::Relaxed);
                             let target_host = target_host.clone();
                             let counter = counter.clone();
+                            let bucket = bucket.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = bridge(client, target_host, target_port, counter.clone()).await {
+                                if let Err(e) = bridge(client, target_host, target_port, counter.clone(), bucket).await {
                                     counter.error_count.fetch_add(1, Ordering::Relaxed);
                                     warn!(rule_id, %peer, error = ?e, "tcp bridge error");
                                 }
@@ -85,6 +91,7 @@ async fn bridge(
     target_host: String,
     target_port: u16,
     counter: Arc<RuleCounter>,
+    bucket: Option<Arc<TokenBucket>>,
 ) -> Result<()> {
     let mut server = TcpStream::connect((target_host.as_str(), target_port))
         .await
@@ -94,26 +101,60 @@ async fn bridge(
     let (mut s_r, mut s_w) = server.split();
 
     // 与 plan.md 字段命名对齐：tx = client → target（发送出去），rx = target → client。
-    // TODO(bandwidth): 接入 traits::QuotaGuard,在 fetch_add 之前/之后做 token bucket
-    //   限速 (plan §10);MVP 用 NullQuota 占位,不限速。
-    let tx_counter = counter.clone();
-    let c2s = async {
-        let n = tokio::io::copy(&mut c_r, &mut s_w).await?;
-        tx_counter.tx_bytes.fetch_add(n as i64, Ordering::Relaxed);
-        let _ = s_w.shutdown().await;
-        Ok::<u64, std::io::Error>(n)
-    };
-
-    let rx_counter = counter.clone();
-    let s2c = async {
-        let n = tokio::io::copy(&mut s_r, &mut c_w).await?;
-        rx_counter.rx_bytes.fetch_add(n as i64, Ordering::Relaxed);
-        let _ = c_w.shutdown().await;
-        Ok::<u64, std::io::Error>(n)
-    };
-
-    tokio::try_join!(c2s, s2c)?;
+    match bucket {
+        // 限速:手动 chunk 循环,每块写前向共享桶取配额(rx+tx 同桶)。
+        Some(bucket) => {
+            let c2s = copy_limited(&mut c_r, &mut s_w, &bucket, &counter.tx_bytes);
+            let s2c = copy_limited(&mut s_r, &mut c_w, &bucket, &counter.rx_bytes);
+            tokio::try_join!(c2s, s2c)?;
+        }
+        // 不限速:维持 tokio::io::copy 快路径。
+        None => {
+            let tx_counter = counter.clone();
+            let c2s = async {
+                let n = tokio::io::copy(&mut c_r, &mut s_w).await?;
+                tx_counter.tx_bytes.fetch_add(n as i64, Ordering::Relaxed);
+                let _ = s_w.shutdown().await;
+                Ok::<u64, std::io::Error>(n)
+            };
+            let rx_counter = counter.clone();
+            let s2c = async {
+                let n = tokio::io::copy(&mut s_r, &mut c_w).await?;
+                rx_counter.rx_bytes.fetch_add(n as i64, Ordering::Relaxed);
+                let _ = c_w.shutdown().await;
+                Ok::<u64, std::io::Error>(n)
+            };
+            tokio::try_join!(c2s, s2c)?;
+        }
+    }
     Ok(())
+}
+
+/// 8KB chunk 复制:读 → acquire 配额 → 写 → 计数。EOF 时半关写端。
+async fn copy_limited<R, W>(
+    r: &mut R,
+    w: &mut W,
+    bucket: &TokenBucket,
+    counted: &std::sync::atomic::AtomicI64,
+) -> std::io::Result<u64>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buf = [0u8; 8192];
+    let mut total = 0u64;
+    loop {
+        let n = r.read(&mut buf).await?;
+        if n == 0 {
+            let _ = w.shutdown().await;
+            return Ok(total);
+        }
+        bucket.acquire(n).await;
+        w.write_all(&buf[..n]).await?;
+        counted.fetch_add(n as i64, Ordering::Relaxed);
+        total += n as u64;
+    }
 }
 
 #[cfg(test)]
@@ -172,7 +213,7 @@ mod tests {
         let listen_port = ephemeral_port();
         let stats = Arc::new(StatsCollector::new());
 
-        let handle = start(rule_for(listen_port, echo_port), stats.clone())
+        let handle = start(rule_for(listen_port, echo_port), stats.clone(), None)
             .await
             .expect("relay start");
         // 给 listener 几十毫秒就绪。
@@ -205,7 +246,7 @@ mod tests {
         let echo_port = spawn_echo_server().await;
         let listen_port = ephemeral_port();
         let stats = Arc::new(StatsCollector::new());
-        let handle = start(rule_for(listen_port, echo_port), stats.clone())
+        let handle = start(rule_for(listen_port, echo_port), stats.clone(), None)
             .await
             .expect("relay start");
         tokio::time::sleep(Duration::from_millis(30)).await;
@@ -215,5 +256,43 @@ mod tests {
         let _retake = TcpListener::bind(("127.0.0.1", listen_port))
             .await
             .expect("port should be released after stop");
+    }
+
+    /// 限速生效:2 MB @ 40 Mbps(5 MB/s, burst 1 MB)理论 ≥(2MB-1MB)/5MB/s = 0.2s。
+    /// 只断言下限(慢 CI 不误报);同时校验数据完整性。
+    #[tokio::test]
+    async fn tcp_relay_throttles_when_bucket_set() {
+        use crate::limit::TokenBucket;
+        let echo_port = spawn_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let mut rule = rule_for(listen_port, echo_port);
+        rule.bandwidth_mbps = 40;
+        let bucket = TokenBucket::from_mbps(rule.bandwidth_mbps);
+        let handle = start(rule, stats.clone(), bucket).await.expect("relay start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let payload = vec![0xAB_u8; 2 * 1024 * 1024];
+        let started = std::time::Instant::now();
+        let mut conn = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        let writer = {
+            let payload = payload.clone();
+            async move {
+                let (mut r, mut w) = conn.split();
+                w.write_all(&payload).await.unwrap();
+                w.shutdown().await.unwrap();
+                let mut buf = Vec::with_capacity(payload.len());
+                r.read_to_end(&mut buf).await.unwrap();
+                buf
+            }
+        };
+        let echoed = writer.await;
+        let elapsed = started.elapsed();
+        assert_eq!(echoed.len(), payload.len(), "数据必须完整");
+        assert!(
+            elapsed >= Duration::from_millis(180),
+            "40Mbps 下 2MB 往返应明显被限速, got {elapsed:?}"
+        );
+        handle.stop().await;
     }
 }

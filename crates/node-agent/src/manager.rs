@@ -55,17 +55,22 @@ impl RuleManager {
             rule: Some(rule.clone()),
             ..Default::default()
         };
+        // P2 限速:per-rule 桶;tcp_udp 两个 listener 共享同一实例(rx+tx 合并计)。
+        let bucket = crate::limit::TokenBucket::from_mbps(rule.bandwidth_mbps);
         match rule.protocol.as_str() {
             "tcp" => {
-                bundle.tcp = Some(tcp::start(rule.clone(), self.stats.clone()).await?);
+                bundle.tcp =
+                    Some(tcp::start(rule.clone(), self.stats.clone(), bucket.clone()).await?);
             }
             "udp" => {
-                bundle.udp = Some(udp::start(rule.clone(), self.stats.clone()).await?);
+                bundle.udp =
+                    Some(udp::start(rule.clone(), self.stats.clone(), bucket.clone()).await?);
             }
             "tcp_udp" => {
-                bundle.tcp = Some(tcp::start(rule.clone(), self.stats.clone()).await?);
+                bundle.tcp =
+                    Some(tcp::start(rule.clone(), self.stats.clone(), bucket.clone()).await?);
                 // 若 UDP start 失败，必须主动 stop 已启动的 TCP，否则 listener task 泄漏。
-                match udp::start(rule.clone(), self.stats.clone()).await {
+                match udp::start(rule.clone(), self.stats.clone(), bucket.clone()).await {
                     Ok(h) => bundle.udp = Some(h),
                     Err(e) => {
                         if let Some(h) = bundle.tcp.take() {

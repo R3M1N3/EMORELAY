@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{error, info, warn};
 
+use crate::limit::TokenBucket;
 use crate::stats::{RuleCounter, StatsCollector};
 
 /// 客户端空闲多久后清理 NAT session。
@@ -38,8 +39,12 @@ struct Session {
     upstream_task: JoinHandle<()>,
 }
 
-pub async fn start(rule: Rule, stats: Arc<StatsCollector>) -> Result<UdpRelayHandle> {
-    start_inner(rule, stats, SESSION_TIMEOUT, SWEEP_INTERVAL).await
+pub async fn start(
+    rule: Rule,
+    stats: Arc<StatsCollector>,
+    bucket: Option<Arc<TokenBucket>>,
+) -> Result<UdpRelayHandle> {
+    start_inner(rule, stats, SESSION_TIMEOUT, SWEEP_INTERVAL, bucket).await
 }
 
 async fn start_inner(
@@ -47,6 +52,7 @@ async fn start_inner(
     stats: Arc<StatsCollector>,
     session_timeout: Duration,
     sweep_interval: Duration,
+    bucket: Option<Arc<TokenBucket>>,
 ) -> Result<UdpRelayHandle> {
     let listen_ip: IpAddr = rule
         .listen_ip
@@ -86,6 +92,7 @@ async fn start_inner(
                 res = listener.recv_from(&mut buf) => {
                     match res {
                         Ok((n, client_addr)) => {
+                            // recv 即计 tx_bytes:限速丢掉的包仍算"收到过"的流量。
                             counter.tx_bytes.fetch_add(n as i64, Ordering::Relaxed);
                             if let Err(e) = forward(
                                 rule_id,
@@ -96,6 +103,7 @@ async fn start_inner(
                                 &target_host,
                                 target_port,
                                 &counter,
+                                &bucket,
                             ).await {
                                 counter.error_count.fetch_add(1, Ordering::Relaxed);
                                 warn!(rule_id, %client_addr, error = ?e, "udp forward error");
@@ -133,9 +141,15 @@ async fn forward(
     target_host: &str,
     target_port: u16,
     counter: &Arc<RuleCounter>,
+    bucket: &Option<Arc<TokenBucket>>,
 ) -> Result<()> {
-    // TODO(bandwidth): 在 send / fetch_add 之前接入 traits::QuotaGuard 做 token bucket
-    //   限速 (plan §10);MVP 用 NullQuota 占位,不限速。
+    // 限速:配额不足直接丢包(UDP 语义,不阻塞事件循环)。
+    if let Some(b) = bucket {
+        if !b.try_acquire(data.len()) {
+            counter.error_count.fetch_add(1, Ordering::Relaxed);
+            return Ok(());
+        }
+    }
     let mut map = sessions.lock().await;
     if let Some(s) = map.get_mut(&client_addr) {
         s.last_seen = Instant::now();
@@ -162,12 +176,20 @@ async fn forward(
     let listener_clone = listener.clone();
     let upstream_clone = upstream.clone();
     let counter_clone = counter.clone();
+    let bucket_back = bucket.clone();
     let upstream_task = tokio::spawn(async move {
         let mut buf = vec![0u8; MAX_PACKET];
         loop {
             match upstream_clone.recv(&mut buf).await {
                 Ok(n) => {
+                    // recv 即计 rx_bytes:被限速丢弃的响应包同样计入收到的流量。
                     counter_clone.rx_bytes.fetch_add(n as i64, Ordering::Relaxed);
+                    if let Some(b) = &bucket_back {
+                        if !b.try_acquire(n) {
+                            counter_clone.error_count.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                    }
                     if let Err(e) = listener_clone.send_to(&buf[..n], client_addr).await {
                         warn!(rule_id, %client_addr, error = ?e, "udp send_to client error");
                         counter_clone.error_count.fetch_add(1, Ordering::Relaxed);
@@ -230,8 +252,9 @@ async fn start_with(
     stats: Arc<StatsCollector>,
     session_timeout: Duration,
     sweep_interval: Duration,
+    bucket: Option<Arc<TokenBucket>>,
 ) -> Result<UdpRelayHandle> {
-    start_inner(rule, stats, session_timeout, sweep_interval).await
+    start_inner(rule, stats, session_timeout, sweep_interval, bucket).await
 }
 
 #[cfg(test)]
@@ -286,7 +309,7 @@ mod tests {
         let listen_port = ephemeral_port();
         let stats = Arc::new(StatsCollector::new());
 
-        let handle = start(rule_for(listen_port, echo_port), stats.clone())
+        let handle = start(rule_for(listen_port, echo_port), stats.clone(), None)
             .await
             .expect("relay start");
         tokio::time::sleep(Duration::from_millis(30)).await;
@@ -332,6 +355,7 @@ mod tests {
             stats.clone(),
             Duration::from_millis(200), // session_timeout
             Duration::from_millis(50),  // sweep_interval
+            None,
         )
         .await
         .expect("relay start");
