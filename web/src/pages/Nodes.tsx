@@ -11,6 +11,7 @@ import {
 } from '../lib/api'
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
+import { useToast } from '../lib/use-toast'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; node: NodeView } | null
 
@@ -22,6 +23,7 @@ interface ListState {
 }
 
 export default function Nodes() {
+  const toast = useToast()
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<NodeView | null>(null)
@@ -65,10 +67,11 @@ export default function Nodes() {
     try {
       await nodes.del(node.id)
       setConfirming(null)
+      toast.success(`节点 ${node.name} 已删除`)
       await reload()
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '删除失败'
-      setList((s) => ({ ...s, error: msg }))
+      toast.error(msg)
       setConfirming(null)
     } finally {
       setBusy(false)
