@@ -1,0 +1,156 @@
+//! 用户级到期 / 滚动 30 天流量配额 sweeper(P2)。
+//! 取代已退役的规则级 expiry sweeper:一个 tokio task 内两个独立 interval,
+//! expiry 默认 60s(PANEL_USER_EXPIRY_SWEEP_SECS),quota 默认 300s(PANEL_USER_QUOTA_SWEEP_SECS)。
+use crate::{audit, grpc::commands::apply_command, models::rule::Rule, state::AppState};
+use std::time::Duration;
+use tracing::{info, warn};
+
+fn env_secs(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+        .max(5)
+}
+
+pub fn spawn_user_quota_sweeper(state: AppState) {
+    let expiry_secs = env_secs("PANEL_USER_EXPIRY_SWEEP_SECS", 60);
+    let quota_secs = env_secs("PANEL_USER_QUOTA_SWEEP_SECS", 300);
+    tokio::spawn(async move {
+        let mut expiry_tick = tokio::time::interval(Duration::from_secs(expiry_secs));
+        let mut quota_tick = tokio::time::interval(Duration::from_secs(quota_secs));
+        expiry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        quota_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = expiry_tick.tick() => {
+                    if let Err(e) = expiry_tick_once(&state).await {
+                        warn!(error = ?e, "user expiry sweep failed");
+                    }
+                }
+                _ = quota_tick.tick() => {
+                    if let Err(e) = quota_tick_once(&state).await {
+                        warn!(error = ?e, "user quota sweep failed");
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// 扫已过期用户,停其名下 enabled 规则。返回命中的用户数。
+/// pub 供 integration tests 直接调用(确定性,不等 interval)。
+pub async fn expiry_tick_once(state: &AppState) -> anyhow::Result<u64> {
+    let users: Vec<(i64,)> = sqlx::query_as(
+        "SELECT u.id FROM users u \
+         WHERE u.expires_at IS NOT NULL AND u.expires_at <= datetime('now') \
+           AND u.deleted_at IS NULL \
+           AND EXISTS (SELECT 1 FROM forward_rules fr \
+                       WHERE fr.user_id = u.id AND fr.enabled = 1 AND fr.deleted_at IS NULL)",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut hit = 0u64;
+    for (user_id,) in users {
+        let disabled = disable_rules_for_user(state, user_id, "expired").await?;
+        if disabled > 0 {
+            audit::record(
+                &state.pool,
+                None,
+                "user.expired_auto_disable_rules",
+                Some("user"),
+                Some(user_id),
+                Some(&format!("user_id={user_id},disabled_rule_count={disabled},reason=expired")),
+                true,
+                None,
+            )
+            .await;
+            info!(user_id, disabled, "expired user rules auto-disabled");
+            hit += 1;
+        }
+    }
+    Ok(hit)
+}
+
+/// 先刷新所有活跃用户的 30 天用量 cache,再停超额用户的规则。返回命中的用户数。
+/// 不变量:必须先刷 cache 再判定,禁止用过期 cache 判断超额。
+pub async fn quota_tick_once(state: &AppState) -> anyhow::Result<u64> {
+    sqlx::query(
+        "UPDATE users SET \
+             period_used_bytes_cached = ( \
+                 SELECT COALESCE(SUM(rs.rx_bytes + rs.tx_bytes), 0) \
+                 FROM rule_stats rs \
+                 JOIN forward_rules fr ON rs.rule_id = fr.id \
+                 WHERE fr.user_id = users.id \
+                   AND rs.bucket_at >= datetime('now', '-30 days') \
+             ), \
+             period_used_calculated_at = datetime('now') \
+         WHERE deleted_at IS NULL",
+    )
+    .execute(&state.pool)
+    .await?;
+
+    let users: Vec<(i64,)> = sqlx::query_as(
+        "SELECT u.id FROM users u \
+         WHERE u.traffic_limit_bytes_30d IS NOT NULL \
+           AND u.period_used_bytes_cached > u.traffic_limit_bytes_30d \
+           AND u.deleted_at IS NULL \
+           AND EXISTS (SELECT 1 FROM forward_rules fr \
+                       WHERE fr.user_id = u.id AND fr.enabled = 1 AND fr.deleted_at IS NULL)",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut hit = 0u64;
+    for (user_id,) in users {
+        let disabled = disable_rules_for_user(state, user_id, "quota_exceeded").await?;
+        if disabled > 0 {
+            audit::record(
+                &state.pool,
+                None,
+                "user.quota_exceeded_auto_disable_rules",
+                Some("user"),
+                Some(user_id),
+                Some(&format!(
+                    "user_id={user_id},disabled_rule_count={disabled},reason=quota_exceeded"
+                )),
+                true,
+                None,
+            )
+            .await;
+            info!(user_id, disabled, "over-quota user rules auto-disabled");
+            hit += 1;
+        }
+    }
+    Ok(hit)
+}
+
+/// 原子停用某用户全部 enabled 规则并逐条 dispatch ApplyRule(enabled=false)。
+/// 返回实际停掉的行数。Agent 离线时静默(下次 register reconcile 对齐)。
+async fn disable_rules_for_user(state: &AppState, user_id: i64, reason: &str) -> anyhow::Result<u64> {
+    let ids: Vec<(i64,)> = sqlx::query_as(
+        "SELECT id FROM forward_rules WHERE user_id = ? AND enabled = 1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_all(&state.pool)
+    .await?;
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    // 单次 UPDATE 原子落库;WHERE enabled = 1 防并发重复触发。
+    let rows = sqlx::query(
+        "UPDATE forward_rules SET enabled = 0, updated_at = datetime('now') \
+         WHERE user_id = ? AND enabled = 1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    for (rule_id,) in ids {
+        if let Ok(Some(rule)) = Rule::find_by_id(&state.pool, rule_id).await {
+            if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
+                warn!(node_id = rule.node_id, rule_id, reason, "agent offline; disable syncs at next register");
+            }
+        }
+    }
+    Ok(rows)
+}

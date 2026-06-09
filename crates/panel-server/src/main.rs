@@ -79,6 +79,9 @@ async fn main() -> Result<()> {
     let grpc_state = state.clone();
     let grpc_task = tokio::spawn(async move { grpc::serve(grpc_state, grpc_addr).await });
 
+    // 用户级到期(60s)与 30 天配额(300s)双 tick sweeper;随 tokio runtime 一起 drop。
+    panel_server::sweeper::user_quota::spawn_user_quota_sweeper(state.clone());
+
     tokio::select! {
         res = http_task => match res {
             Ok(Ok(())) => info!("http server stopped"),
