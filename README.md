@@ -1,0 +1,102 @@
+# EMORELAY
+
+开源流量转发管理面板。管理员在 Web 面板创建 TCP/UDP 端口转发规则,由分布在各节点上的 Rust Agent 实际执行转发并回报流量统计。设计与开发计划见 [`plan.md`](./plan.md)。
+
+参考形态:Flux-panel / Nyanpass / ForwardX / Aurora。
+
+## 特性
+
+- **panel-server**(Rust + Axum + SQLx)REST API + gRPC 控制面,SQLite 优先(兼容 PostgreSQL 迁移)。
+- **node-agent**(Rust + Tokio)TCP/UDP relay,本地规则落盘,断开主控后继续运行。
+- **web**(React 19 + Vite + TS + Tailwind 4)深色现代控制台,登录 / 概览 / 节点 / 规则 / 用户 / 设置。
+- 鉴权:Argon2 密码哈希,JWT;Agent 注册 token DB 内只存 SHA-256 哈希。
+- 审计:所有写操作落 `audit_logs`;面板「设置」页可查最近 50 条。
+- 流量统计:60s 桶聚合,server 端事务 UPSERT,Dashboard 显示过去 24h 流量。
+- 一键编排:`docker compose up -d`(panel-server + web + sqlite volume)。
+
+## 一键启动
+
+```sh
+cp .env.example .env
+# 编辑 .env,设置 PANEL_JWT_SECRET 与 PANEL_BOOTSTRAP_ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+打开 `http://localhost`,用 `.env` 里的 admin 凭据登录。详见 [`docs/deployment.md`](./docs/deployment.md)。
+
+## 开发模式
+
+```sh
+# 1. 后端
+cp .env.example .env
+# 编辑 .env(同上)
+cargo run -p panel-server
+
+# 2. 前端(另一窗口)
+cd web
+npm install
+npm run dev   # vite dev server: http://localhost:5173
+              # vite.config.ts 已把 /api 反代到 :8080
+
+# 3. Agent(另一窗口,可选)
+# 先在 Web 面板创建节点,复制返回的 agent_token
+AGENT_NODE_ID=1 \
+AGENT_TOKEN=<上一步的 token> \
+AGENT_CONTROL_ENDPOINT=http://127.0.0.1:50051 \
+cargo run -p node-agent
+```
+
+## 仓库结构
+
+```
+EMORELAY/
+  Cargo.toml              Rust workspace 根
+  crates/
+    panel-server/         主控 HTTP + gRPC(Axum + SQLx + tonic)
+    node-agent/           节点代理(Tokio TCP/UDP relay + tonic + sysinfo)
+    common/               共享 protobuf 生成代码
+  web/                    React + Vite + TS + Tailwind 前端
+  migrations/             SQLx 迁移
+  docker/                 Dockerfile + nginx + Caddy 反代示例
+  docs/                   部署与 API 文档
+  scripts/                辅助脚本(echo server 等)
+  docker-compose.yml      一键编排
+```
+
+## 文档索引
+
+- [`plan.md`](./plan.md) — MVP 设计蓝本
+- [`audit-findings.md`](./audit-findings.md) — 全量审计快照(2026-06-09)
+- [`fix-plan.md`](./fix-plan.md) — 剩余工作清单与执行追踪
+- [`docs/deployment.md`](./docs/deployment.md) — 部署与运维
+- [`docs/api.md`](./docs/api.md) — REST + gRPC API 参考
+
+## 验收状态(plan 第十三节,2026-06-09)
+
+| # | 验收项 | 状态 |
+|---|---|---|
+| 1 | `docker compose up -d` 启动 panel-server + web + sqlite | ✅ |
+| 2 | 管理员能登录 Web 面板 | ✅ |
+| 3 | 能新增节点 | ✅ |
+| 4 | Agent 连接主控并显示在线 | ⚠ 代码就绪,端到端实跑 Agent 验证留作 manual smoke |
+| 5 | 能创建 TCP 转发规则 | ✅ |
+| 6 | Agent 实际监听对应端口 | ✅(`cargo test -p node-agent` 含 TCP/UDP loopback) |
+| 7 | TCP 流量能成功转发 | ✅(同上,TCP echo round-trip 验证) |
+| 8 | 前端能看到规则流量统计 | ✅ 行内累计 + Dashboard 24h 聚合 + 规则/节点详情页时序 svg |
+| 9 | 能禁用/启用/删除规则 | ✅ |
+| 10 | Agent 重启恢复已有规则 | ✅(`agent-state.json` + `store.rs`) |
+| 11 | README 一键部署 + 开发启动步骤 | ✅ |
+
+完整后续工作见 [`fix-plan.md`](./fix-plan.md)。
+
+## 安全
+
+- 密码 Argon2 哈希;JWT secret 强制环境变量。
+- Agent token DB 内只存 SHA-256 哈希,创建节点时面板**仅显示一次**明文。
+- 保留端口默认 22/80/443/3306/5432,可在「设置」页改。
+- 后端不拼 shell;Agent 只接受白名单 RPC(`ApplyRule`/`RemoveRule`/`EnableRule`/`DisableRule`/`RestartRule`)。
+- gRPC 通道支持 TLS — 用 `scripts/gen-dev-tls.sh` 生成自签证书,或用真实证书,配置见 [`docs/deployment.md` §4.3](./docs/deployment.md)。两个 `PANEL_GRPC_TLS_*` 都为空时退回 plaintext 并 warn(仅供 dev)。
+
+## License
+
+MIT(占位)。

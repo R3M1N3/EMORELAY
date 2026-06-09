@@ -1,0 +1,31 @@
+# Rust build artifacts
+target/
+**/target/
+
+# Node
+web/node_modules/
+web/dist/
+
+# 本地状态/数据库
+data/
+*.db
+*.db-shm
+*.db-wal
+agent-state.json
+
+# 凭据/环境
+.env
+.env.local
+
+# Git / IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# 文档/规划(不参与运行时)
+docs/
+*.md
+audit-findings.md
+fix-plan.md
+plan.md

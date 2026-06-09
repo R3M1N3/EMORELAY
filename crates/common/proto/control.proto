@@ -1,0 +1,136 @@
+syntax = "proto3";
+
+package emorelay.control.v1;
+
+// ============================================================================
+// EMORELAY 主控 <-> Agent 控制平面协议。
+//
+// 通信模型：
+//   * Agent 主动连入 panel-server gRPC 端点（PANEL_GRPC_BIND_ADDR）。
+//   * Agent 先 Register（agent_token 明文，依赖 TLS 通道保密；主控用 SHA256 比对
+//     nodes.agent_token_hash，不落盘明文）。生产环境必须配 TLS。
+//   * RegisterResponse 颁发 session_token；后续所有 RPC 通过 gRPC metadata
+//     "x-emorelay-session" 携带该 token 鉴权。
+//   * Agent 通过 SubscribeCommands 订阅命令流（server-streaming）。
+//   * Agent 通过 Heartbeat / ReportNodeStats / ReportRuleStats 上报。
+//
+// plan.md 第五节命名映射：
+//   * AgentRegister / AgentHeartbeat → 这里的 Register / Heartbeat。
+//   * GetRuleStats（Pull 模型）→ ReportRuleStats（client-stream Push 模型）。
+//     Push 降低 Server 轮询开销；若未来需要 Pull 单条规则状态，可加
+//     GetRuleStat(rule_id) 一元 RPC。
+//   * CommandResponse → Ack { ok, error }，作为所有上报 / 命令确认的统一返回。
+// ============================================================================
+
+// gRPC metadata key for session_token 鉴权（panel-server 与 node-agent 必须用同名）。
+// 见 panel-server::grpc 与 node-agent::control 中的常量映射。
+
+service ControlPlane {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  rpc SubscribeCommands(SubscribeRequest) returns (stream Command);
+
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  rpc ReportNodeStats(stream NodeStatsBatch) returns (Ack);
+
+  rpc ReportRuleStats(stream RuleStatsBatch) returns (Ack);
+}
+
+// ============= Auth =============
+
+message RegisterRequest {
+  int64 node_id = 1;
+  string agent_token = 2;
+  string version = 3;
+}
+
+message RegisterResponse {
+  string session_token = 1;
+  int64 expires_at_unix = 2;
+}
+
+message SubscribeRequest {
+  int64 node_id = 1;
+}
+
+// ============= Commands (Server -> Agent) =============
+
+message Rule {
+  int64 id = 1;
+  string protocol = 2;          // tcp / udp / tcp_udp
+  string listen_ip = 3;
+  uint32 listen_port = 4;
+  string target_host = 5;
+  uint32 target_port = 6;
+  bool enabled = 7;
+  // limits: DB 端可为 NULL，proto 端用 0 编码 "unlimited"。
+  // panel-server 端 Option<i64>::None → 0；Agent 端 0 → 不启用对应限速 / 配额。
+  int64 traffic_limit_bytes = 8;
+  int64 bandwidth_limit_mbps = 9;
+  // 过期时间（unix 秒）。0 = 永不过期。Agent 在本地定时检查，
+  // 超过即自动停止该规则并通过 Ack/Heartbeat 上报，无需等待 Server 下发 DisableRule。
+  int64 expires_at_unix = 10;
+}
+
+message ApplyRule { Rule rule = 1; }
+message RemoveRule { int64 rule_id = 1; }
+message EnableRule { int64 rule_id = 1; }
+message DisableRule { int64 rule_id = 1; }
+message RestartRule { int64 rule_id = 1; }
+
+message Command {
+  oneof body {
+    ApplyRule apply_rule = 1;
+    RemoveRule remove_rule = 2;
+    EnableRule enable_rule = 3;
+    DisableRule disable_rule = 4;
+    RestartRule restart_rule = 5;
+  }
+}
+
+// ============= Heartbeat & Stats (Agent -> Server) =============
+
+message HeartbeatRequest {
+  int64 node_id = 1;
+  double cpu_usage = 2;
+  double memory_usage = 3;
+  double load_average = 4;
+}
+
+message HeartbeatResponse {
+  int64 server_time_unix = 1;
+}
+
+message NodeStatsBucket {
+  int64 bucket_at_unix = 1;
+  double cpu_usage = 2;
+  double memory_usage = 3;
+  double load_average = 4;
+  int64 rx_bytes = 5;
+  int64 tx_bytes = 6;
+}
+
+message NodeStatsBatch {
+  int64 node_id = 1;
+  repeated NodeStatsBucket buckets = 2;
+}
+
+message RuleStatsBucket {
+  int64 rule_id = 1;
+  int64 bucket_at_unix = 2;
+  int64 rx_bytes = 3;
+  int64 tx_bytes = 4;
+  int64 connection_count = 5;
+  int64 error_count = 6;
+}
+
+message RuleStatsBatch {
+  int64 node_id = 1;
+  repeated RuleStatsBucket buckets = 2;
+}
+
+message Ack {
+  bool ok = 1;
+  string error = 2;
+}

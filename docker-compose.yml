@@ -1,0 +1,69 @@
+# EMORELAY MVP 一键编排。
+#
+# 用法:
+#   1. 复制 .env.example 为 .env(`cp .env.example .env`)。
+#   2. 编辑 .env,**必填** PANEL_JWT_SECRET 与 PANEL_BOOTSTRAP_ADMIN_PASSWORD。
+#   3. `docker compose up -d --build`
+#
+# 服务拓扑:
+#   web (nginx)  ──/api/* 反代──>  panel-server (Axum + tonic)
+#                                 ├── REST 8080
+#                                 └── gRPC 50051 (Agent 连入)
+#   sqlite-data (named volume) 挂在 panel-server:/data
+#
+# 反代 / TLS:
+#   生产可选 docker/Caddyfile.example 在 host 上拉起 Caddy,反代到本编排暴露的端口。
+#   也可在 compose 中追加 caddy 服务(见 docs/deployment.md)。
+#
+# plan 第十三节验收第 1 条:`docker compose up -d 启动 panel-server、web、sqlite volume` ── 由本文件实现。
+
+services:
+  panel-server:
+    build:
+      context: .
+      dockerfile: docker/panel-server.Dockerfile
+    image: emorelay/panel-server:dev
+    environment:
+      PANEL_BIND_ADDR: 0.0.0.0:8080
+      PANEL_GRPC_BIND_ADDR: 0.0.0.0:50051
+      PANEL_DATABASE_URL: sqlite:///data/emorelay.db
+      PANEL_JWT_SECRET: ${PANEL_JWT_SECRET:?PANEL_JWT_SECRET is required (>= 32 chars)}
+      PANEL_JWT_EXPIRY_HOURS: ${PANEL_JWT_EXPIRY_HOURS:-24}
+      # 默认允许 web 自身域;若用 host Caddy 反代到外网域,改成相应 origin。
+      PANEL_CORS_ORIGIN: ${PANEL_CORS_ORIGIN:-http://localhost}
+      PANEL_BOOTSTRAP_ADMIN_USERNAME: ${PANEL_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      PANEL_BOOTSTRAP_ADMIN_PASSWORD: ${PANEL_BOOTSTRAP_ADMIN_PASSWORD:?PANEL_BOOTSTRAP_ADMIN_PASSWORD is required}
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+    volumes:
+      - sqlite-data:/data
+    ports:
+      # 8080: 暴露 REST 给本机调试 / 集成测试;生产可只让 web 容器内网访问。
+      - "127.0.0.1:8080:8080"
+      # 50051: Agent 连接入口,通常需要对外可达。
+      - "50051:50051"
+    restart: unless-stopped
+    healthcheck:
+      # curl 在 panel-server runtime 镜像里已显式安装(见 docker/panel-server.Dockerfile)。
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    image: emorelay/web:dev
+    ports:
+      # 默认占用 host:80 方便直接 http://localhost 访问。
+      # 若 Host 上还要跑 Caddy/Nginx 反代(见 docker/Caddyfile.example),
+      # 改成 "127.0.0.1:8081:80" 避让 Caddy 监听 :80/:443。
+      - "80:80"
+    depends_on:
+      panel-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sqlite-data:

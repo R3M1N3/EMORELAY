@@ -1,0 +1,18 @@
+[package]
+name = "emorelay-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tonic = "0.12"
+prost = "0.13"
+
+[build-dependencies]
+tonic-build = "0.12"
+# 用 vendored 预编译 protoc 二进制（按平台自动拉对应 protoc.exe），
+# 避免要求开发者本地安装 protoc / cmake。
+protoc-bin-vendored = "3"

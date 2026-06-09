@@ -1,0 +1,42 @@
+# EMORELAY Caddy 反代示例(放在 host 上,不在 docker compose 内)。
+#
+# **前置条件:** Host 上的 Caddy 要监听 :80/:443,所以 docker-compose 中的 web
+# 不能再占用 host:80。使用本 Caddyfile 前请按 docs/deployment.md §4.1 修改 web 端口:
+#
+#   web:
+#     ports:
+#       - "127.0.0.1:8081:80"   # 只对本机开 :8081,由 Host 上 Caddy 反代
+#
+# 同时把 .env 中 PANEL_CORS_ORIGIN 改为面向用户的最终域名,例如:
+#   PANEL_CORS_ORIGIN=https://emorelay.example.com
+#
+# Caddy 会自动申请并续期 TLS 证书(把域名 A 记录指向本机即可)。
+
+emorelay.example.com {
+    encode gzip zstd
+
+    # /api/* 走 panel-server REST(compose 中已绑 127.0.0.1:8080)。
+    handle_path /api/* {
+        reverse_proxy localhost:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # 其他全部交给 web 前端(nginx 已包含 SPA fallback 与缓存策略)。
+    # 与「前置条件」段对齐使用 :8081。
+    handle {
+        reverse_proxy localhost:8081
+    }
+
+    log {
+        output file /var/log/caddy/emorelay.log
+        format console
+    }
+}
+
+# gRPC 控制面用独立子域名(自动 TLS),Agent 连此处。
+# Caddy 2.7+ 支持 h2c upstream;tonic 默认监听 h2c(F7 完成 TLS 后可改 https://)。
+agent.emorelay.example.com {
+    reverse_proxy h2c://localhost:50051
+}
