@@ -304,6 +304,40 @@ pub async fn delete(
     Path(id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
     auth.require_admin()?;
+
+    // 防呆：节点上仍有活跃规则时拒绝删除(plan §2.3 P1)。
+    #[derive(FromRow)]
+    struct ConflictRule {
+        id: i64,
+        name: String,
+    }
+
+    let conflicts: Vec<ConflictRule> = sqlx::query_as(
+        "SELECT id, name FROM forward_rules \
+         WHERE node_id = ? AND deleted_at IS NULL \
+         ORDER BY id LIMIT 4",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    if !conflicts.is_empty() {
+        let shown = conflicts
+            .iter()
+            .take(3)
+            .map(|r| format!("#{}({})", r.id, r.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if conflicts.len() > 3 {
+            format!("...还有 {} 条", conflicts.len() - 3)
+        } else {
+            String::new()
+        };
+        return Err(ApiError::BadRequest(format!(
+            "节点上仍有活跃规则,请先删除: {shown}{suffix}"
+        )));
+    }
+
     let rows = Node::soft_delete(&state.pool, id).await?;
     if rows == 0 {
         return Err(ApiError::NotFound);
