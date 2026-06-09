@@ -34,6 +34,8 @@ services:
       PANEL_BOOTSTRAP_ADMIN_USERNAME: ${PANEL_BOOTSTRAP_ADMIN_USERNAME:-admin}
       PANEL_BOOTSTRAP_ADMIN_PASSWORD: ${PANEL_BOOTSTRAP_ADMIN_PASSWORD:?PANEL_BOOTSTRAP_ADMIN_PASSWORD is required}
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+      PANEL_DATA_DIR: /data
+      PANEL_PUBLIC_BASE_URL: ${PANEL_PUBLIC_BASE_URL:-}
     volumes:
       - sqlite-data:/data
     ports:

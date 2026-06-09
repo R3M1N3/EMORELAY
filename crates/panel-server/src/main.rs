@@ -29,6 +29,11 @@ async fn main() -> Result<()> {
     let _ = auth::password::dummy_hash();
     info!("database ready");
 
+    let dist_dir = std::path::PathBuf::from(&config.panel_data_dir).join("agent-dist");
+    if let Err(e) = tokio::fs::create_dir_all(&dist_dir).await {
+        tracing::warn!(error = ?e, path = ?dist_dir, "failed to ensure agent-dist dir");
+    }
+
     let state = AppState {
         config: config.clone(),
         pool,

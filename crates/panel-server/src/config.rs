@@ -16,6 +16,11 @@ pub struct Config {
     /// None → 仅 server-side TLS;Some → 强制 mTLS,Agent 必须提供 trusted client cert。
     /// 要求 grpc_tls_cert/key 已配置(单向 TLS 是 mTLS 前置)。
     pub grpc_tls_client_ca: Option<String>,
+    /// Agent 二进制 + install.sh 存放根目录。默认 /data(docker)或 ./data(本地)。
+    pub panel_data_dir: String,
+    /// 面板对外可访问的 base URL,用于生成安装命令(install.sh 自身从这里拉二进制)。
+    /// 留空 → 节点详情页隐藏「复制安装命令」按钮。
+    pub panel_public_base_url: Option<String>,
 }
 
 impl Config {
@@ -41,6 +46,11 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty()),
             grpc_tls_client_ca: env::var("PANEL_GRPC_TLS_CLIENT_CA")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            panel_data_dir: env::var("PANEL_DATA_DIR")
+                .unwrap_or_else(|_| "/data".into()),
+            panel_public_base_url: env::var("PANEL_PUBLIC_BASE_URL")
                 .ok()
                 .filter(|s| !s.is_empty()),
         })

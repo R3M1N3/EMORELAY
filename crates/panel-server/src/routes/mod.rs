@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod health;
+pub mod install;
 pub mod nodes;
 pub mod rules;
 pub mod system;
@@ -45,5 +46,7 @@ pub fn router(state: AppState) -> Router {
             "/api/system/settings",
             get(system::get_settings).patch(system::update_settings),
         )
+        .route("/install.sh", get(install::install_sh))
+        .route("/dist/{filename}", get(install::dist_binary))
         .with_state(state)
 }
