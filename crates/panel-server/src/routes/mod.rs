@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bandwidth_profiles;
 pub mod health;
 pub mod install;
 pub mod nodes;
@@ -57,6 +58,16 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/users/{id}",
             get(users::get).patch(users::update).delete(users::delete),
+        )
+        .route(
+            "/api/bandwidth-profiles",
+            get(bandwidth_profiles::list).post(bandwidth_profiles::create),
+        )
+        .route(
+            "/api/bandwidth-profiles/{id}",
+            get(bandwidth_profiles::get)
+                .patch(bandwidth_profiles::update)
+                .delete(bandwidth_profiles::delete),
         )
         .route("/api/system/overview", get(system::overview))
         .route("/api/system/security", get(system::security))
