@@ -268,3 +268,35 @@ WantedBy=multi-user.target
 - [ ] gRPC 50051 与 REST 8080 不直接对外暴露(走 Caddy/Nginx 反代)
 - [ ] Agent token 在面板创建节点时复制后立即清屏,DB 内仅存哈希
 - [ ] 系统设置中的 `reserved_ports` 已根据机器实际占用调整
+
+---
+
+## 九、Rate limit 与反代 header
+
+`/install.sh` 与 `/dist/*` 端点带 IP 维度 rate limit（60 req/min）。生产部署时 panel-server 通常在反向代理（Caddy / Nginx）之后，**反代必须传递 `X-Forwarded-For` 或 `X-Real-IP` 头部**，否则 rate limit 中间件取不到客户端 IP，请求会返回 500。
+
+Caddy 默认会自动添加；Nginx 需要显式：
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+---
+
+## 十、一键安装节点（P1）
+
+前置：在 Web 面板「设置」页填 **Agent 上报端点**（如 `https://relay.example.com:50051`），并确保 `PANEL_PUBLIC_BASE_URL` env 配为面板对外可访问的 origin（如 `https://relay.example.com`）。
+
+步骤：
+
+1. 面板「节点」页点「新增节点」，提交后弹出 Modal 显示 Agent token + 一键安装命令。
+2. 复制命令（形如 `curl -fsSL https://relay.example.com/install.sh?node=42 | sudo bash -s -- --token=<明文>`）。
+3. 在目标机以 root 执行该命令。脚本会：
+   - 下载 `/dist/node-agent-linux-<amd64|arm64>` 到 `/usr/local/bin/emorelay-agent`
+   - 写 `/etc/emorelay/agent.env`（权限 0600）
+   - 写 `/etc/systemd/system/emorelay-agent.service`
+   - `systemctl enable --now emorelay-agent`
+4. 回到面板「节点」页，节点状态在 1-2 分钟内变 `online`。
+
+token 仅创建时显示一次；丢失只能（P2 阶段）走「轮换凭据」入口。

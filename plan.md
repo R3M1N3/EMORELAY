@@ -528,3 +528,14 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 - `users` / `nodes` 表 `created_at` 索引补全
 - `Nodes.tsx` / `Users.tsx` 表格搜索框
 
+### Phase 1（2026-06-10 启动）
+
+(7) 全局 Toast、(8) 防删节点、(11) 创建规则默认 TCP+UDP、(2) Settings 加 Agent 上报端点、(1) 一键安装 URL —— 全部交付。
+
+- Spec: `docs/superpowers/specs/2026-06-10-mvp-followups-design.md` §2
+- Plan: `docs/superpowers/plans/2026-06-10-mvp-followups-phase-1.md`
+- 12 个 Task 全部 spec ✅ + code quality ✅（subagent-driven flow）
+- 测试: `cargo test --workspace` 47 PASS（含 3 个 nodes-delete-protection + 5 个 install）；`web` vitest 15 PASS
+- 关键 commit 区间: 基线 `18bb54f` → P1 收尾（待 phase-end commit）
+- 后续 P2/P3 见同名 plan-2 / plan-3 文件
+

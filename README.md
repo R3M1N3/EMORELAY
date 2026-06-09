@@ -12,6 +12,9 @@
 - 鉴权:Argon2 密码哈希,JWT;Agent 注册 token DB 内只存 SHA-256 哈希。
 - 审计:所有写操作落 `audit_logs`;面板「设置」页可查最近 50 条。
 - 流量统计:60s 桶聚合,server 端事务 UPSERT,Dashboard 显示过去 24h 流量。
+- 通知：右上角全局 Toast 反馈所有写操作。
+- 节点安装：「设置」配 Agent 上报端点后，新建节点 Modal 一键复制安装命令，目标机 `curl ... | sudo bash` 完成接入。
+- 防呆：节点上仍有活跃规则时拒绝删除。
 - 一键编排:`docker compose up -d`(panel-server + web + sqlite volume)。
 
 ## 一键启动

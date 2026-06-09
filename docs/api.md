@@ -156,3 +156,23 @@ REST 之外,panel-server 同时监听 gRPC `:50051` 用于 Agent。协议见 `cr
 - `ReportRuleStats(stream)` — 60s 上报 RuleStatsBatch
 
 session_token 通过 gRPC metadata `x-emorelay-session` 携带。
+
+---
+
+## 七、安装相关（公开，带 rate limit）
+
+### `GET /install.sh?node=<id>`
+
+返回参数化 bash 脚本，Content-Type `text/x-shellscript`。需要调用时附加 `--token=<明文>`：
+
+```sh
+curl -fsSL https://relay.example.com/install.sh?node=42 | sudo bash -s -- --token=<明文>
+```
+
+依赖 `system_settings.agent_control_endpoint` 已配 + `PANEL_PUBLIC_BASE_URL` env 已配。
+
+Rate limit：60 req/分钟/IP（看 §"Rate limit 与反代 header"）。
+
+### `GET /dist/node-agent-linux-{amd64,arm64}`
+
+提供预编译 agent 二进制下载（musl 静态链接）。文件名严格白名单，其他文件名 → 404。Rate limit 同上。
