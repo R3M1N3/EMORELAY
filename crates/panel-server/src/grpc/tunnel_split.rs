@@ -44,6 +44,7 @@ pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, Pro
             next_hop_inter_port: next.and_then(|h| h.inter_port).unwrap_or(0) as u32,
             self_inter_port: hop.inter_port.unwrap_or(0) as u32,
             transport: input.transport.clone(),
+            self_ordinal: i as u32,
         };
         let proto = ProtoRule {
             id: input.rule_id,

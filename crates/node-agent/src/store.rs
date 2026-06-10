@@ -7,7 +7,20 @@ use tracing::info;
 
 /// JSON 镜像 prost Rule，因为 prost 生成的类型未派生 Serialize。
 /// 字段集与 proto Rule 严格一一对应；新增字段时两侧必须同步。
-/// （P3b 的 tunnel 上下文是有意例外:Agent 持久化暂不含隧道,数据面落地后再同步。）
+/// P3b 数据面起 tunnel 上下文随规则持久化,断网重启恢复隧道角色。
+/// 镜像 proto TunnelContext(prost 类型未派生 Serialize)。
+#[derive(Serialize, Deserialize, Clone)]
+struct TunnelJson {
+    tunnel_id: i64,
+    role: i32,
+    next_hop_addr: String,
+    next_hop_inter_port: u32,
+    self_inter_port: u32,
+    transport: String,
+    #[serde(default)]
+    self_ordinal: u32,
+}
+
 #[derive(Serialize, Deserialize)]
 struct RuleJson {
     id: i64,
@@ -20,6 +33,9 @@ struct RuleJson {
     /// P2 新增。`#[serde(default)]` 兼容旧版 agent-state.json(缺字段 → 0 = 不限速)。
     #[serde(default)]
     bandwidth_mbps: i64,
+    /// P3b 数据面新增。`#[serde(default)]` 兼容旧版 agent-state.json(缺字段 → 非隧道规则)。
+    #[serde(default)]
+    tunnel: Option<TunnelJson>,
 }
 
 impl From<&Rule> for RuleJson {
@@ -33,6 +49,15 @@ impl From<&Rule> for RuleJson {
             target_port: r.target_port,
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
+            tunnel: r.tunnel.as_ref().map(|t| TunnelJson {
+                tunnel_id: t.tunnel_id,
+                role: t.role,
+                next_hop_addr: t.next_hop_addr.clone(),
+                next_hop_inter_port: t.next_hop_inter_port,
+                self_inter_port: t.self_inter_port,
+                transport: t.transport.clone(),
+                self_ordinal: t.self_ordinal,
+            }),
         }
     }
 }
@@ -48,8 +73,15 @@ impl From<RuleJson> for Rule {
             target_port: r.target_port,
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
-            // RuleJson 不携带隧道上下文(数据面尚未持久化隧道);重建 Rule 时置 None。
-            tunnel: None,
+            tunnel: r.tunnel.map(|t| emorelay_common::control::v1::TunnelContext {
+                tunnel_id: t.tunnel_id,
+                role: t.role,
+                next_hop_addr: t.next_hop_addr,
+                next_hop_inter_port: t.next_hop_inter_port,
+                self_inter_port: t.self_inter_port,
+                transport: t.transport,
+                self_ordinal: t.self_ordinal,
+            }),
         }
     }
 }
@@ -103,5 +135,60 @@ impl ConfigStore {
             .await
             .with_context(|| format!("rename tmp -> {}", self.path.display()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use emorelay_common::control::v1::{TunnelContext, TunnelRole};
+
+    /// save → load 后 tunnel 上下文必须完整还原(P3b 数据面:Agent 断网重启要能恢复隧道角色)。
+    #[tokio::test]
+    async fn save_load_round_trips_tunnel_context() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("state.json");
+        let store = ConfigStore::new(path);
+
+        let rule = Rule {
+            id: 5,
+            protocol: "tcp".into(),
+            listen_ip: "0.0.0.0".into(),
+            listen_port: 20000,
+            target_host: "9.9.9.9".into(),
+            target_port: 443,
+            enabled: true,
+            bandwidth_mbps: 30,
+            tunnel: Some(TunnelContext {
+                tunnel_id: 7,
+                role: TunnelRole::Mid as i32,
+                next_hop_addr: "10.0.0.3".into(),
+                next_hop_inter_port: 30002,
+                self_inter_port: 30001,
+                transport: "tls".into(),
+                self_ordinal: 1,
+            }),
+        };
+        store.save(&[rule.clone()]).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].tunnel, rule.tunnel, "tunnel 上下文必须持久化");
+    }
+
+    /// 旧版 agent-state.json(无 tunnel 字段)必须能加载(serde default 兼容)。
+    #[tokio::test]
+    async fn load_legacy_state_without_tunnel_field() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("state.json");
+        tokio::fs::write(
+            &path,
+            r#"[{"id":1,"protocol":"tcp","listen_ip":"0.0.0.0","listen_port":1000,
+                "target_host":"1.1.1.1","target_port":80,"enabled":true,"bandwidth_mbps":0}]"#,
+        )
+        .await
+        .unwrap();
+        let loaded = ConfigStore::new(path).load().await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded[0].tunnel.is_none());
     }
 }

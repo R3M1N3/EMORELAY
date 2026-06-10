@@ -24,3 +24,4 @@ sysinfo = { version = "0.32", default-features = false, features = ["system", "n
 [dev-dependencies]
 # token bucket 测试用 start_paused 虚拟时钟(tokio::time::advance)。
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"

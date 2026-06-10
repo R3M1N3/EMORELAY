@@ -84,6 +84,8 @@ message TunnelContext {
   uint32 next_hop_inter_port = 4;  // 下一跳监听的 inter_port(自己 dial 的目标)
   uint32 self_inter_port = 5;      // 本跳监听端口(mid/exit 用;entry 监听业务 listen_port,置 0)
   string transport = 6;            // tcp / tls / wss(全链路统一)
+  // 本跳在链中的序号(0=entry)。TLS/WSS 凭据目录与 dial SNI(下一跳 = self_ordinal+1)推导用。
+  uint32 self_ordinal = 7;
 }
 
 enum TunnelRole {
@@ -102,6 +104,8 @@ message TunnelCredentials {
   string server_key_pem = 4;
   string client_cert_pem = 5;
   string client_key_pem = 6;
+  // 验证链根(面板内置 CA 公钥)。随凭据自包含下发,不依赖控制面 mTLS 是否启用/落盘。
+  string ca_pem = 7;
 }
 
 message RevokeTunnelCredentials {

@@ -7,6 +7,9 @@ pub struct Config {
     pub control_endpoint: String,
     pub token: String,
     pub state_path: String,
+    /// Agent 本地数据目录(隧道 TLS 凭据等)。隧道凭据落
+    /// `${AGENT_DATA_DIR}/tunnels/<id>/hop-<ordinal>/`。
+    pub data_dir: String,
     /// 自签 CA 路径(PEM)。endpoint 是 https:// 时:
     /// - Some → 用它验证 server cert(开发模式 + 自签 CA)
     /// - None → 走系统根证书(生产 + 真实证书,需 tonic tls-roots feature)
@@ -35,6 +38,7 @@ impl Config {
         }
         let state_path =
             env::var("AGENT_STATE_PATH").unwrap_or_else(|_| "./agent-state.json".into());
+        let data_dir = env::var("AGENT_DATA_DIR").unwrap_or_else(|_| "./agent-data".into());
         let grpc_ca_cert = env::var("AGENT_GRPC_CA_CERT").ok().filter(|s| !s.is_empty());
         let grpc_client_cert = env::var("AGENT_GRPC_CLIENT_CERT")
             .ok()
@@ -54,6 +58,7 @@ impl Config {
             control_endpoint,
             token,
             state_path,
+            data_dir,
             grpc_ca_cert,
             grpc_client_cert,
             grpc_client_key,

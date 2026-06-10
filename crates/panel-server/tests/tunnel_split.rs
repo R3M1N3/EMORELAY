@@ -35,6 +35,7 @@ fn two_hop_split_entry_and_exit() {
     assert_eq!(t0.transport, "tls");
     assert_eq!(r0.listen_port, 20000);
     assert_eq!(r0.bandwidth_mbps, 50);
+    assert_eq!(t0.self_ordinal, 0);
 
     let (n1, r1) = &out[1];
     assert_eq!(*n1, 2);
@@ -44,6 +45,7 @@ fn two_hop_split_entry_and_exit() {
     assert_eq!(t1.next_hop_inter_port, 0);
     assert_eq!(r1.target_host, "9.9.9.9");
     assert_eq!(r1.bandwidth_mbps, 0);
+    assert_eq!(t1.self_ordinal, 1);
 }
 
 #[test]
@@ -62,4 +64,6 @@ fn three_hop_split_has_mid() {
     assert_eq!(t_mid.next_hop_inter_port, 30002);
     assert_eq!(out[1].1.bandwidth_mbps, 0);
     assert_eq!(out[2].1.tunnel.as_ref().unwrap().role, TunnelRole::Exit as i32);
+    assert_eq!(t_mid.self_ordinal, 1);
+    assert_eq!(out[2].1.tunnel.as_ref().unwrap().self_ordinal, 2);
 }

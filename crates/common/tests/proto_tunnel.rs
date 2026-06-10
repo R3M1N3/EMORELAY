@@ -22,10 +22,12 @@ fn rule_carries_tunnel_context() {
             next_hop_inter_port: 30001,
             self_inter_port: 0,
             transport: "tcp".into(),
+            self_ordinal: 0,
         }),
     };
     assert_eq!(r.tunnel.as_ref().unwrap().tunnel_id, 7);
     assert_eq!(r.tunnel.as_ref().unwrap().role, TunnelRole::Entry as i32);
+    assert_eq!(r.tunnel.as_ref().unwrap().self_ordinal, 0);
 }
 
 #[test]
@@ -38,9 +40,15 @@ fn command_oneof_has_tunnel_credentials() {
             server_key_pem: "SK".into(),
             client_cert_pem: "C".into(),
             client_key_pem: "CK".into(),
+            ca_pem: "CA".into(),
         })),
     };
     assert!(matches!(c.body, Some(Body::TunnelCredentials(_))));
+    if let Some(Body::TunnelCredentials(ref tc)) = c.body {
+        assert_eq!(tc.ca_pem, "CA");
+    } else {
+        panic!("expected TunnelCredentials body");
+    }
 
     let r = Command {
         body: Some(Body::RevokeTunnelCredentials(RevokeTunnelCredentials {
