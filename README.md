@@ -14,6 +14,10 @@
 - 流量统计:60s 桶聚合,server 端事务 UPSERT,Dashboard 显示过去 24h 流量。
 - 通知：右上角全局 Toast 反馈所有写操作。
 - 节点安装：「设置」配 Agent 上报端点后，新建节点 Modal 一键复制安装命令，目标机 `curl ... | sudo bash` 完成接入。
+- 限速：带宽模板（bandwidth profiles）关联到规则，Agent 端 token bucket 实际执行限速。
+- 用户到期 / 滚动 30 天流量配额：到期或超额自动停用名下全部规则，到期账号登录直接拒绝。
+- 规则导入导出：JSON 导出（按名称跨实例映射）+ 导入 dry-run 预览（skip/overwrite 策略）。
+- 端口自动分配：创建规则不填监听端口时自动取节点池内最小可用端口。
 - 防呆：节点上仍有活跃规则时拒绝删除。
 - 一键编排:`docker compose up -d`(panel-server + web + sqlite volume)。
 

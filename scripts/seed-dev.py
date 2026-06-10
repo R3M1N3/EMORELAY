@@ -76,25 +76,21 @@ def main():
     print("  alice / bob created + token 拿到")
 
     print("=== 4. create rules ===")
-    # (node_idx, name, protocol, listen_port, target_host, target_port, owner_token, traffic_limit, bw, expires)
-    MB = 1024 * 1024
+    # (node_idx, name, protocol, listen_port, target_host, target_port, owner_token)
     rules_def = [
-        (0, "game-jp-route",   "tcp",     20001, "game-us.example.com",   443,   admin_token, None,        None, None),
-        (0, "voice-hk-route",  "udp",     20002, "voice-us.example.com",  8888,  admin_token, 500 * MB,    None, None),
-        (1, "alice-web-proxy", "tcp_udp", 20003, "203.0.113.45",          443,   alice_token, None,        None, None),
-        (1, "bob-ssh-jump",    "tcp",     20004, "198.51.100.22",         22,    bob_token,   None,        None, "2027-01-01 00:00:00"),
-        (2, "game-sg-route",   "tcp",     30001, "game-eu.example.com",   25565, admin_token, None,         50, None),
-        (2, "alice-stream",    "udp",     30002, "stream-eu.example.com", 1935,  alice_token, None,        None, None),
+        (0, "game-jp-route",   "tcp",     20001, "game-us.example.com",   443,   admin_token),
+        (0, "voice-hk-route",  "udp",     20002, "voice-us.example.com",  8888,  admin_token),
+        (1, "alice-web-proxy", "tcp_udp", 20003, "203.0.113.45",          443,   alice_token),
+        (1, "bob-ssh-jump",    "tcp",     20004, "198.51.100.22",         22,    bob_token),
+        (2, "game-sg-route",   "tcp",     30001, "game-eu.example.com",   25565, admin_token),
+        (2, "alice-stream",    "udp",     30002, "stream-eu.example.com", 1935,  alice_token),
     ]
     rule_ids = []
-    for ni, name, proto, lp, th, tp, owner, tl, bl, exp in rules_def:
+    for ni, name, proto, lp, th, tp, owner in rules_def:
         body = {
             "node_id": node_ids[ni], "name": name, "protocol": proto,
             "listen_port": lp, "target_host": th, "target_port": tp,
         }
-        if tl is not None: body["traffic_limit_bytes"] = tl
-        if bl is not None: body["bandwidth_limit_mbps"] = bl
-        if exp is not None: body["expires_at"] = exp
         resp = call("POST", "/api/rules", body, token=owner)
         rule_ids.append(resp["id"])
         print(f"  rule #{resp['id']} {name}  ({proto} {lp}→{th}:{tp})")
@@ -185,7 +181,7 @@ def main():
     print()
     print("额外可登录:")
     print("   alice / alice12345 (普通用户,只看到 alice-web-proxy + alice-stream)")
-    print("   bob   / bob12345   (只看到 bob-ssh-jump,带 2027-01-01 到期)")
+    print("   bob   / bob12345   (只看到 bob-ssh-jump)")
 
 
 if __name__ == "__main__":

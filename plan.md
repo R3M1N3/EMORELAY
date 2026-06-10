@@ -518,10 +518,10 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 
 ### 剩余非阻塞工作（P2 清单）
 
-- `relay/traits.rs::QuotaGuard` trait 占位 + `bridge()` hot path `TODO(bandwidth)` 锚点
+- ~~`relay/traits.rs::QuotaGuard` trait 占位 + `bridge()` hot path `TODO(bandwidth)` 锚点~~（Phase 2 token bucket 取代）
 - `grpc/dispatcher.rs` SubscribeCommands stream 终止时 Drop guard 清理 dead sender
 - gRPC server 端 mTLS 客户端证书校验（`ClientCertVerifier`），与 Agent 已支持的 `ClientTlsConfig` 形成双向认证
-- `.env.example` 补 `AGENT_STATS_INTERVAL_SECS` / `PANEL_EXPIRY_SWEEP_SECS`
+- ~~`.env.example` 补 `AGENT_STATS_INTERVAL_SECS` / `PANEL_EXPIRY_SWEEP_SECS`~~（Phase 2 已完成;后者退役,换为 PANEL_USER_EXPIRY/QUOTA_SWEEP_SECS）
 - 前端引入 vitest + 关键页面渲染 smoke
 - UDP session 超时测试
 - 独立 `emorelay-agent.service` systemd 单元
@@ -538,4 +538,15 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 - 测试: `cargo test --workspace` 47 PASS（含 3 个 nodes-delete-protection + 5 个 install）；`web` vitest 15 PASS
 - 关键 commit 区间: 基线 `18bb54f` → P1 收尾（待 phase-end commit）
 - 后续 P2/P3 见同名 plan-2 / plan-3 文件
+
+### Phase 2（2026-06-10 启动,同日交付）
+
+(6) 端口自动分配、(10) 到期搬用户、(13) 流量配额滚动 30 天、(9) 限速独立路由 + Agent token bucket、(12) 规则导入导出 —— 全部交付。
+
+- Spec: `docs/superpowers/specs/2026-06-10-mvp-followups-design.md` §3
+- Plan: `docs/superpowers/plans/2026-06-10-mvp-followups-phase-2.md`
+- 12 个 Task 全部 spec ✅ + code quality ✅（subagent-driven flow,每 Task 双重审查）
+- 规则级 expires/traffic/bandwidth 全链路退役(migration 0004 + proto reserved 8-10)
+- 测试: `cargo test --workspace` 全绿(新增 bandwidth_profiles / port_alloc / rules_io / user_quota_sweeper / token_bucket);web vitest 全绿
+- 注意:Phase 2 的 commit 区间须整体部署(中间 commit 存在「规则级执法已删、用户级 sweeper 未上」的过渡态);限速变更对存量 TCP 连接延迟生效(新连接即时)
 
