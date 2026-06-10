@@ -182,3 +182,58 @@ async fn tunnel_hop_inter_port_unique_per_node() {
     sqlx::query("INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (1, 3, ?, NULL)")
         .bind(n).execute(&app.state.pool).await.unwrap();
 }
+
+#[tokio::test]
+async fn delete_node_blocked_when_in_tunnel() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, _b) = common::send(app.app.clone(), req).await.unwrap();
+    let req = common::auth_req(Method::DELETE, &format!("/api/nodes/{}", nodes[1]), &app.admin_token, None).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("隧道") || body["message"].as_str().unwrap().contains("tunnel"));
+}
+
+#[tokio::test]
+async fn rule_tunnel_id_must_match_entry_node() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({ "node_id": nodes[0], "name": "ok", "protocol": "tcp", "listen_port": 20000,
+                     "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["tunnel_id"], tid);
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({ "node_id": nodes[1], "name": "bad", "protocol": "tcp", "listen_port": 20001,
+                     "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("entry"));
+}
+
+#[tokio::test]
+async fn rule_auto_alloc_skips_tunnel_inter_port() {
+    let app = common::make_app().await.unwrap();
+    // 节点 port_pool 收窄到 [30000, 30001];建 2-hop 隧道把入口节点 ... 实际 inter_port 在 ordinal1 节点。
+    // 为测试规则分配排除 tunnel inter_port,在 nodes[0](入口)上人工塞一条 tunnel_hop 占 30000,
+    // 再让规则在 nodes[0] 自动分配 → 必须跳到 30001。
+    let n0 = sqlx::query("INSERT INTO nodes (name, agent_token_hash, status, port_pool_min, port_pool_max) VALUES ('a','x','online',30000,30001)")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    sqlx::query("INSERT INTO tunnels (name, transport) VALUES ('tt','tcp')").execute(&app.state.pool).await.unwrap();
+    // 直接塞一个占用 30000 的 hop(mid 角色,inter_port=30000)在 n0 上。
+    sqlx::query("INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (1, 1, ?, 30000)")
+        .bind(n0).execute(&app.state.pool).await.unwrap();
+    // 规则在 n0 自动分配 listen_port(省略 listen_port)→ 应跳过 30000(被 tunnel 占),拿 30001。
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({ "node_id": n0, "name": "r", "protocol": "tcp", "target_host": "1.2.3.4", "target_port": 443 }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["listen_port"], 30001, "规则自动分配必须跳过 tunnel 占用的 inter_port 30000");
+}

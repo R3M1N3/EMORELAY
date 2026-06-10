@@ -350,6 +350,12 @@ pub async fn delete(
         )));
     }
 
+    // 节点参与任一活跃隧道 → 拒删(P3b)。
+    if crate::models::tunnel::TunnelHop::node_in_active_tunnel(&state.pool, id).await? {
+        return Err(ApiError::BadRequest(
+            "节点正参与活跃隧道,请先删除相关隧道 (node is part of an active tunnel)".into()));
+    }
+
     let rows = Node::soft_delete(&state.pool, id).await?;
     if rows == 0 {
         return Err(ApiError::NotFound);

@@ -18,6 +18,7 @@ pub struct Rule {
     pub bandwidth_profile_id: Option<i64>,
     /// 派生列:关联 profile 的 Mbps(活跃 profile);无关联/已删 → None。
     pub bandwidth_mbps: Option<i64>,
+    pub tunnel_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -27,7 +28,7 @@ const RULE_COLUMNS: &str = "id, user_id, node_id, name, protocol, listen_ip, lis
     bandwidth_profile_id, \
     (SELECT bp.bandwidth_mbps FROM bandwidth_profiles bp \
         WHERE bp.id = forward_rules.bandwidth_profile_id AND bp.deleted_at IS NULL) AS bandwidth_mbps, \
-    created_at, updated_at";
+    tunnel_id, created_at, updated_at";
 
 /// 允许的排序字段白名单。值必须为 schema 真实列名且非敏感字段；
 /// SQL 拼接前必须经此过滤。
@@ -171,12 +172,13 @@ impl Rule {
         target_host: &str,
         target_port: i64,
         bandwidth_profile_id: Option<i64>,
+        tunnel_id: Option<i64>,
     ) -> sqlx::Result<i64> {
         let res = sqlx::query(
             "INSERT INTO forward_rules \
                 (user_id, node_id, name, protocol, listen_ip, listen_port, \
-                 target_host, target_port, bandwidth_profile_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 target_host, target_port, bandwidth_profile_id, tunnel_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(node_id)
@@ -187,6 +189,7 @@ impl Rule {
         .bind(target_host)
         .bind(target_port)
         .bind(bandwidth_profile_id)
+        .bind(tunnel_id)
         .execute(pool)
         .await?;
         Ok(res.last_insert_rowid())

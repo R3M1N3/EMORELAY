@@ -38,6 +38,7 @@ pub struct RuleView {
     pub connection_count: i64,
     pub bandwidth_profile_id: Option<i64>,
     pub bandwidth_mbps: Option<i64>,
+    pub tunnel_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -60,6 +61,7 @@ impl From<Rule> for RuleView {
             connection_count: r.connection_count,
             bandwidth_profile_id: r.bandwidth_profile_id,
             bandwidth_mbps: r.bandwidth_mbps,
+            tunnel_id: r.tunnel_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -96,6 +98,7 @@ pub struct CreateRuleRequest {
     pub target_host: String,
     pub target_port: u16,
     pub bandwidth_profile_id: Option<i64>,
+    pub tunnel_id: Option<i64>,
 }
 
 fn default_listen_ip() -> String {
@@ -256,6 +259,17 @@ pub async fn create(
     let node = Node::find_by_id(&state.pool, req.node_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("node_id does not exist".into()))?;
+    // 关联隧道:tunnel_id 给定时,node_id 必须 = 隧道入口(ordinal 0)节点。
+    if let Some(tid) = req.tunnel_id {
+        use crate::models::tunnel::TunnelHop;
+        let hops = TunnelHop::list_for_tunnel(&state.pool, tid).await?;
+        let entry = hops.iter().find(|h| h.ordinal == 0)
+            .ok_or_else(|| ApiError::BadRequest("tunnel_id does not exist".into()))?;
+        if entry.node_id != req.node_id {
+            return Err(ApiError::BadRequest(
+                "rule.node_id must equal the tunnel entry (ordinal 0) node".into()));
+        }
+    }
     if let Some(pid) = req.bandwidth_profile_id {
         if pid <= 0 {
             return Err(ApiError::BadRequest("bandwidth_profile_id must be > 0".into()));
@@ -266,6 +280,8 @@ pub async fn create(
     }
     let reserved = settings::reserved_ports(&state.pool).await;
     let listen_port_i64 = match req.listen_port {
+        // 隧道入口规则的 listen_port 是隧道 ingress,不受节点常规转发端口池/保留端口约束。
+        Some(p) if req.tunnel_id.is_some() => i64::from(p),
         Some(p) => {
             let p = i64::from(p);
             if p < node.port_pool_min || p > node.port_pool_max {
@@ -305,6 +321,7 @@ pub async fn create(
         req.target_host.trim(),
         i64::from(req.target_port),
         req.bandwidth_profile_id,
+        req.tunnel_id,
     )
     .await
     .map_err(map_sqlx_to_api)?;
@@ -712,11 +729,23 @@ async fn allocate_port(
             _ => true, // tcp_udp 与所有协议互斥
         }
     };
-    let blocked: std::collections::HashSet<i64> = taken
+    let mut blocked: std::collections::HashSet<i64> = taken
         .iter()
         .filter(|(_, proto)| conflicts(proto))
         .map(|(port, _)| *port)
         .collect();
+
+    // 活跃隧道在本节点占用的 inter_port 一律阻塞(它绑 0.0.0.0,不分协议),
+    // 与 tunnels.rs 排除 forward_rules.listen_port 对称。
+    let tunnel_ports: Vec<i64> = sqlx::query_scalar(
+        "SELECT th.inter_port FROM tunnel_hops th \
+         JOIN tunnels t ON t.id = th.tunnel_id \
+         WHERE th.node_id = ? AND th.inter_port IS NOT NULL AND t.deleted_at IS NULL",
+    )
+    .bind(node.id)
+    .fetch_all(pool)
+    .await?;
+    blocked.extend(tunnel_ports);
 
     for port in node.port_pool_min..=node.port_pool_max {
         if !reserved.contains(&port) && !blocked.contains(&port) {
