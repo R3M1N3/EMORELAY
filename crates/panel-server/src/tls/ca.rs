@@ -15,6 +15,10 @@ use rcgen::{
 };
 use time::{Duration, OffsetDateTime};
 
+/// CA 证书的 CommonName。签发 Agent client 证书时(issue.rs)需重建相同 DN 的 issuer,
+/// 故抽为常量两处共用,避免漂移。
+pub const CA_COMMON_NAME: &str = "EMORELAY Internal CA";
+
 /// CA + server 叶子的 PEM 四件套,常驻内存供 gRPC TLS 配置与签发 Agent 证书(Task 2)复用。
 pub struct CaBundle {
     /// CA 证书 PEM(自签根,信任锚)。
@@ -63,7 +67,7 @@ pub fn bootstrap_ca(tls_dir: &str, public_host: Option<&str>) -> Result<Arc<CaBu
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     ca_params
         .distinguished_name
-        .push(DnType::CommonName, "EMORELAY Internal CA");
+        .push(DnType::CommonName, CA_COMMON_NAME);
     ca_params.key_usages.push(KeyUsagePurpose::DigitalSignature);
     ca_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
     ca_params.key_usages.push(KeyUsagePurpose::CrlSign);

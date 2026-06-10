@@ -1,2 +1,96 @@
-#![allow(dead_code)]
-// 实体在 Task 2 实现。
+//! 为节点签发 mTLS client 证书(P3a)。SAN = node-<id>.emorelay.internal,
+//! EKU = ClientAuth,由内置 CA 签名。返回明文 cert+key(一次性下发)+ serial + fingerprint(落 DB)。
+use crate::tls::ca::{CaBundle, CA_COMMON_NAME};
+use anyhow::{Context, Result};
+use rcgen::{
+    BasicConstraints, Certificate, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, SerialNumber,
+};
+use sha2::{Digest, Sha256};
+use time::{Duration, OffsetDateTime};
+
+pub struct IssuedCert {
+    pub cert_pem: String,
+    pub key_pem: String,
+    /// 证书 serial,十六进制串(落 nodes.cert_serial)。
+    pub serial: String,
+    /// 证书 DER 的 SHA-256,64 位十六进制(落 nodes.cert_fingerprint;CRL 比对用)。
+    pub fingerprint: String,
+}
+
+/// 由内置 CA 签发一张节点 client 叶子证书。
+///
+/// CaBundle 只存 PEM 字符串(无内存态 rcgen 对象),故每次签发都从 PEM 重建 issuer。
+/// 注:rcgen 0.13 的 `CertificateParams::from_ca_cert_pem` 被 `x509-parser` feature 门控,
+/// 本项目未启用该 feature(避免新增依赖),因此改为**确定性重建** issuer 参数:
+/// - `issuer_key`:从 `ca.key` PEM 重建的 CA 私钥,是叶子签名的实际产生者 → 链可被原始
+///   `ca.pem` 验证;且其公钥与原 CA 一致 → SKI 一致 → 叶子的 AKI 与 CA 的 SKI 对齐。
+/// - `issuer_cert`:用与 `bootstrap_ca` **完全相同**的 DN/扩展重建 CA 参数,再以该 CA 私钥
+///   重新自签。`signed_by` 仅从中取 issuer 的 DN 与 key_identifier_method 写入叶子的
+///   issuer 字段与 AKI(见 rcgen certificate.rs::signed_by),故只要 DN 与 CA 一致即可。
+///
+/// 低频操作(创建/轮换节点),毫秒级开销可接受。
+pub fn issue_client_cert(ca: &CaBundle, node_id: i64) -> Result<IssuedCert> {
+    let san = format!("node-{node_id}.emorelay.internal");
+
+    // 从 PEM 重建 CA 私钥;并据其重建 issuer 证书(DN/扩展与 bootstrap 对齐)。
+    let issuer_key =
+        KeyPair::from_pem(&ca.ca_key_pem).context("从 PEM 重建 CA 私钥失败")?;
+    let issuer_cert = rebuild_issuer_cert(&issuer_key).context("重建 issuer 证书失败")?;
+
+    // 叶子私钥(ECDSA P-256)。
+    let child_key = KeyPair::generate().context("生成节点密钥对失败")?;
+
+    let now = OffsetDateTime::now_utc();
+    // 随机非零 serial(| 1 保证最低位置 1,绝不为 0)。
+    let serial_u64 = rand::random::<u64>() | 1;
+
+    let mut params =
+        CertificateParams::new(vec![san]).context("构造节点 CertificateParams 失败")?;
+    params.is_ca = IsCa::NoCa;
+    params
+        .distinguished_name
+        .push(DnType::CommonName, format!("node-{node_id}"));
+    params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+    params
+        .extended_key_usages
+        .push(ExtendedKeyUsagePurpose::ClientAuth);
+    params.serial_number = Some(SerialNumber::from(serial_u64));
+    params.use_authority_key_identifier_extension = true;
+    params.not_before = now - Duration::days(1);
+    params.not_after = now + Duration::days(1825); // 5 年
+
+    // signed_by:叶子公钥 + issuer 证书 + issuer 私钥(CA 私钥)。
+    // 签名由 CA 私钥产生 → 可被原始 ca.pem 验证。
+    let child = params
+        .signed_by(&child_key, &issuer_cert, &issuer_key)
+        .context("CA 签发节点 client 叶子失败")?;
+
+    let cert_pem = child.pem();
+    let key_pem = child_key.serialize_pem();
+    let fingerprint = hex::encode(Sha256::digest(child.der()));
+
+    Ok(IssuedCert {
+        cert_pem,
+        key_pem,
+        serial: format!("{serial_u64:016x}"),
+        fingerprint,
+    })
+}
+
+/// 用与 `bootstrap_ca` 一致的 DN/扩展重建 CA 证书,并以传入的 CA 私钥重新自签。
+/// 仅用于给 `signed_by` 提供 issuer 的 DN 与 key_identifier_method;签名仍由 CA 私钥产生。
+fn rebuild_issuer_cert(issuer_key: &KeyPair) -> Result<Certificate> {
+    let mut ca_params = CertificateParams::new(Vec::new())
+        .context("重建 CA CertificateParams 失败")?;
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, CA_COMMON_NAME);
+    ca_params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+    ca_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
+    ca_params.key_usages.push(KeyUsagePurpose::CrlSign);
+    ca_params
+        .self_signed(issuer_key)
+        .context("重建 issuer 证书自签失败")
+}

@@ -1,5 +1,6 @@
 //! CA bootstrap 与证书签发的链路测试。用临时目录,不污染真实 data dir。
 use panel_server::tls::ca::{bootstrap_ca, CaBundle};
+use panel_server::tls::issue::issue_client_cert;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -31,4 +32,23 @@ fn issued_server_cert_chains_to_ca() {
     assert!(bundle.server_key_pem.contains("BEGIN PRIVATE KEY")
         || bundle.server_key_pem.contains("BEGIN EC PRIVATE KEY"));
     assert_ne!(bundle.ca_pem, bundle.server_cert_pem);
+}
+
+#[test]
+fn issue_client_cert_chains_and_has_stable_fingerprint() {
+    let dir = TempDir::new().unwrap();
+    let ca = bootstrap_ca(&tls_dir(&dir), None).unwrap();
+
+    let issued = issue_client_cert(&ca, 42).expect("issue");
+    assert!(issued.cert_pem.contains("BEGIN CERTIFICATE"));
+    assert!(
+        issued.key_pem.contains("BEGIN PRIVATE KEY")
+            || issued.key_pem.contains("BEGIN EC PRIVATE KEY")
+    );
+    assert!(!issued.serial.is_empty() && issued.serial.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(issued.fingerprint.len(), 64, "SHA-256 hex = 64 chars");
+    assert!(issued.fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
+
+    let issued2 = issue_client_cert(&ca, 42).expect("issue2");
+    assert_ne!(issued.fingerprint, issued2.fingerprint);
 }

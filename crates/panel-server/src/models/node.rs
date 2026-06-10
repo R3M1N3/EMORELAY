@@ -148,4 +148,32 @@ impl Node {
         .await?;
         Ok(res.rows_affected())
     }
+
+    /// 写入证书元数据(创建/轮换后)。
+    pub async fn set_cert_meta(
+        pool: &SqlitePool,
+        id: i64,
+        serial: &str,
+        fingerprint: &str,
+    ) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE nodes SET cert_serial = ?, cert_fingerprint = ?, updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(serial)
+        .bind(fingerprint)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// 活跃但尚无证书的节点 id 列表(P3a 启动迁移用)。
+    pub async fn find_active_without_cert(pool: &SqlitePool) -> sqlx::Result<Vec<i64>> {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM nodes WHERE deleted_at IS NULL AND cert_serial IS NULL ORDER BY id",
+        )
+        .fetch_all(pool)
+        .await
+    }
 }
