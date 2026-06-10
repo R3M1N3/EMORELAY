@@ -1,5 +1,7 @@
 //! 多跳隧道数据面(P3b)。模块边界:transport(链路) / task(角色编排) /
 //! frame(线协议) / creds(凭据落盘)。RuleManager 是唯一调用入口。
+pub mod frame;
+pub mod task;
 pub mod tcp_transport;
 pub mod transport;
 

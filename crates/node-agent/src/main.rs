@@ -5,8 +5,8 @@ mod manager;
 mod relay;
 mod stats;
 mod store;
-mod tunnel;
 mod system;
+mod tunnel;
 
 use anyhow::Result;
 use std::sync::Arc;
