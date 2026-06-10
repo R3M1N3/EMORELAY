@@ -519,14 +519,14 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 ### 剩余非阻塞工作（P2 清单）
 
 - ~~`relay/traits.rs::QuotaGuard` trait 占位 + `bridge()` hot path `TODO(bandwidth)` 锚点~~（Phase 2 token bucket 取代）
-- `grpc/dispatcher.rs` SubscribeCommands stream 终止时 Drop guard 清理 dead sender
-- gRPC server 端 mTLS 客户端证书校验（`ClientCertVerifier`），与 Agent 已支持的 `ClientTlsConfig` 形成双向认证
+- ~~`grpc/dispatcher.rs` SubscribeCommands stream 终止时 Drop guard 清理 dead sender~~ → 已于 d519172 交付（`grpc/service.rs` GuardedStream）
+- ~~gRPC server 端 mTLS 客户端证书校验（`ClientCertVerifier`），与 Agent 已支持的 `ClientTlsConfig` 形成双向认证~~ → 已于 d519172 交付（`PANEL_GRPC_TLS_CLIENT_CA`）
 - ~~`.env.example` 补 `AGENT_STATS_INTERVAL_SECS` / `PANEL_EXPIRY_SWEEP_SECS`~~（Phase 2 已完成;后者退役,换为 PANEL_USER_EXPIRY/QUOTA_SWEEP_SECS）
-- 前端引入 vitest + 关键页面渲染 smoke
-- UDP session 超时测试
-- 独立 `emorelay-agent.service` systemd 单元
-- `users` / `nodes` 表 `created_at` 索引补全
-- `Nodes.tsx` / `Users.tsx` 表格搜索框
+- ~~前端引入 vitest + 关键页面渲染 smoke~~ → 已于 d519172 交付
+- ~~UDP session 超时测试~~ → 已于 MVP 交付（`udp_session_expires_after_timeout`）
+- ~~独立 `emorelay-agent.service` systemd 单元~~ → 已于 d519172 交付（`scripts/emorelay-agent.service`）
+- ~~`users` / `nodes` 表 `created_at` 索引补全~~ → 已于 d519172 交付（migration 0002）
+- ~~`Nodes.tsx` / `Users.tsx` 表格搜索框~~ → 已于 d519172 交付
 
 ### Phase 1（2026-06-10 启动）
 

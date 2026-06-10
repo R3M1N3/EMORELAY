@@ -7,10 +7,10 @@
 ## 一、鉴权
 
 - 登录:`POST /api/auth/login` → `{ token, user }`,服务器使用 HS256 JWT。
-- 登录 401 的 `message` 有两种:`invalid username or password`(常规失败)与 `account_expired`(密码正确但账号已过 `expires_at`)。
+- 登录 401 的 `message` 有两种:`unauthorized`(常规失败)与 `account_expired`(密码正确但账号到期)。
 - 后续请求:`Authorization: Bearer <token>`。
 - 401 自动让前端清 token 并跳登录(`web/src/lib/api.ts`)。
-- 当前所有写操作 + 大多数读操作要求 `role=admin`;普通用户路径(`role=user`)规划中 — 见 `fix-plan.md` F8。
+- 权限:`rules` 资源对普通用户(`role=user`)开放,但仅能操作自己名下规则;`users` / `nodes` / `bandwidth-profiles` / `settings` / `export` / `import` 为 admin only。
 
 ---
 
@@ -51,7 +51,7 @@
 | DELETE | `/api/nodes/{id}` | 软删 |
 | GET    | `/api/nodes/{id}/stats` | 当前状态 + node_stats 时序 |
 
-### 转发规则 `rules` (admin only)
+### 转发规则 `rules` (普通用户可用,仅限自己名下规则;export/import 除外)
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -81,7 +81,7 @@
 | GET    | `/api/users` | 分页 |
 | POST   | `/api/users` | 创建,密码必须 ≥8 字符 |
 | GET    | `/api/users/{id}` | 详情 |
-| PATCH  | `/api/users/{id}` | 改密码 / 改角色 / 改到期与配额,禁止自降级,禁止删最后一个 admin |
+| PATCH  | `/api/users/{id}` | 改密码 / 改角色 / 改到期与配额,禁止自降级,禁止降级最后一个 admin |
 | DELETE | `/api/users/{id}` | 软删,禁止删自己,禁止删最后一个 admin |
 
 到期与流量配额字段(创建/PATCH 均可设):
