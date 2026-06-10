@@ -237,3 +237,20 @@ async fn rule_auto_alloc_skips_tunnel_inter_port() {
     assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(body["listen_port"], 30001, "规则自动分配必须跳过 tunnel 占用的 inter_port 30000");
 }
+
+#[tokio::test]
+async fn tunnel_rule_still_barred_from_reserved_port() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    // 隧道入口规则监听保留端口 22 → 必须 400(红线对隧道规则同样生效)。
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({ "node_id": nodes[0], "name": "x", "protocol": "tcp", "listen_port": 22,
+                     "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("reserved"));
+}

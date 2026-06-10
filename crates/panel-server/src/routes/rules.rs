@@ -280,8 +280,15 @@ pub async fn create(
     }
     let reserved = settings::reserved_ports(&state.pool).await;
     let listen_port_i64 = match req.listen_port {
-        // 隧道入口规则的 listen_port 是隧道 ingress,不受节点常规转发端口池/保留端口约束。
-        Some(p) if req.tunnel_id.is_some() => i64::from(p),
+        // 隧道入口规则的 listen_port 是隧道 ingress 业务端口,不受节点转发端口池范围约束;
+        // 但保留端口红线对它同样生效(不能监听 22/80/443 等)。
+        Some(p) if req.tunnel_id.is_some() => {
+            let p = i64::from(p);
+            if reserved.contains(&p) {
+                return Err(ApiError::BadRequest(format!("listen_port {p} is reserved")));
+            }
+            p
+        }
         Some(p) => {
             let p = i64::from(p);
             if p < node.port_pool_min || p > node.port_pool_max {
