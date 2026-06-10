@@ -565,3 +565,18 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 - 已知留置:register 拒吊销的真链路 + 「裸连接(无 client cert)被拒」负向断言留 P3c e2e;CRL 损坏当前 fail-open(loud error),强场景可升级 boot-blocking。
 - P3b(多跳隧道)/P3c(隧道前端 + e2e)待展开。
 
+### Phase 3b 控制面（2026-06-10 启动,同日交付）
+
+多跳隧道控制面 —— DB(tunnels/tunnel_hops + forward_rules.tunnel_id) + proto(Rule.tunnel=12 + TunnelContext + Command oneof 6/7) + 隧道 REST CRUD + 节点删除保护扩展 + 按 hop 拆 Rule 纯函数,全部交付。
+
+- Spec: `docs/superpowers/specs/2026-06-10-mvp-followups-design.md` §4.2/4.3/4.5
+- Plan: `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`（P3b 控制面段,6 Task）
+- migration 0006(tunnels/tunnel_hops/forward_rules.tunnel_id)+ 0007(inter_port 并发兜底唯一索引)。
+- proto Rule.tunnel 用字段号 12(11 已被 P2 bandwidth_mbps 占);Command oneof 6/7 = TunnelCredentials/RevokeTunnelCredentials(Agent 暂 log-only no-op)。
+- inter_port:ordinal≥1 的 hop 从其节点 port_pool 分配(排除 reserved + 占用),entry=NULL。
+- 隧道全链路统一 transport;创建校验 ≥2 节点全 online + 不重复。
+- 删除保护:删隧道(有规则引用)/删节点(参与隧道)均 400。
+- 规则关联隧道:tunnel_id 创建时设定(不可 PATCH 改),node_id 必须=入口节点;入口规则 listen_port 免节点池范围检查但仍守保留端口红线;规则自动分配排除隧道 inter_port。
+- `split_tunnel_rule` 纯函数就绪(entry/mid/exit + 限速只 entry),实际 dispatch 接入留数据面。
+- **待 P3b-数据面**:Agent tunnel 模块(transport trait + TCP/TLS/WSS + TunnelTask)+ 真实下发(split+dispatch)+ 隧道证书签发下发(TunnelCredentials)+ status 心跳。控制面阶段:隧道可定义/管理,转发未生效。
+
