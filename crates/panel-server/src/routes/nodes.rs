@@ -93,6 +93,10 @@ pub struct CreateNodeResponse {
     pub node: NodeView,
     /// 仅在创建时返回一次的明文 token；之后只能轮换重新发放。
     pub agent_token: String,
+    /// mTLS 四件套(一次性):CA 公钥 / 该节点 client 证书 / client 私钥。
+    pub ca_pem: String,
+    pub client_cert_pem: String,
+    pub client_key_pem: String,
 }
 
 #[derive(Deserialize)]
@@ -225,9 +229,17 @@ pub async fn create(
     )
     .await;
 
+    // 为新节点签发 mTLS client 证书(四件套之三);DB 只存 serial/fingerprint。
+    let issued = crate::tls::issue::issue_client_cert(&state.ca, id)
+        .map_err(ApiError::Internal)?;
+    Node::set_cert_meta(&state.pool, id, &issued.serial, &issued.fingerprint).await?;
+
     Ok(Json(CreateNodeResponse {
         node: node.into(),
         agent_token: token,
+        ca_pem: state.ca.ca_pem.clone(),
+        client_cert_pem: issued.cert_pem,
+        client_key_pem: issued.key_pem,
     }))
 }
 
