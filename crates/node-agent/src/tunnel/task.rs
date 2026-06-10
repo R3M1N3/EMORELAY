@@ -201,6 +201,8 @@ where
             b.acquire(n).await;
         }
         w.write_all(&buf[..n]).await?;
+        // WSS 等消息缓冲 transport 需要逐块 flush 推出数据(tcp/tls 上是 no-op),否则小请求滞留缓冲死锁。
+        w.flush().await?;
         counted.fetch_add(n as i64, Ordering::Relaxed);
         total += n as u64;
     }

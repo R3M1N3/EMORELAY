@@ -217,6 +217,40 @@ mod tests {
         server.await.unwrap();
     }
 
+    /// 16 字节消息用 4 字节缓冲读四次,覆盖 WsByteStream read_pos 跨 poll 部分消费路径。
+    #[tokio::test]
+    async fn ws_byte_stream_partial_read_drains_across_polls() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let data_dir = dir.path().display().to_string();
+        write_hop_creds_pair(&data_dir, 9, 0, 1).await;
+
+        let server_t = WssTransport::load(&data_dir, &ctx(1)).expect("server load");
+        let client_t = WssTransport::load(&data_dir, &ctx(0)).expect("client load");
+
+        let mut listener = server_t.bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().unwrap();
+
+        // 服务端:写一条 16 字节消息后关闭连接。
+        let server = tokio::spawn(async move {
+            let mut conn = listener.accept().await.expect("wss accept");
+            conn.write_all(&[1u8; 16]).await.unwrap();
+            conn.flush().await.unwrap();
+            conn.shutdown().await.unwrap();
+        });
+
+        // 客户端:用 4 字节缓冲分四次 read_exact,验证 partial-drain 路径正确拼接。
+        let mut conn = client_t.dial(&addr.to_string()).await.expect("wss dial");
+        let mut collected = Vec::new();
+        for _ in 0..4 {
+            let mut chunk = [0u8; 4];
+            conn.read_exact(&mut chunk).await.unwrap();
+            collected.extend_from_slice(&chunk);
+        }
+        assert_eq!(collected, vec![1u8; 16]);
+
+        server.await.unwrap();
+    }
+
     /// 大 payload(单次 write_all → 单条大 Binary 消息)完整往返;
     /// tungstenite 默认 max_message_size(64MB)远大于 256KB。
     #[tokio::test]
