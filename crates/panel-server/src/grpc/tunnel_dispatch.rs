@@ -15,8 +15,7 @@ use crate::models::tunnel::{Tunnel, TunnelHop};
 use crate::state::AppState;
 
 /// 把关联隧道的 DB 规则拆成 (node_id, proto Rule) 列表。
-/// 隧道已删/无 hop → Ok(None),调用方按非隧道规则 fallback(防御:正常流程不会出现,
-/// 删除保护拦截了「规则还引用、隧道先删」)。
+/// 隧道已删/无 hop → Ok(None);dispatch_rule_apply 对此 fail-closed(不下发,绝不退化成明文直连)。正常流程不可达(删除保护拦截)。
 async fn split_for(
     state: &AppState,
     rule: &DbRule,
@@ -160,7 +159,7 @@ pub async fn dispatch_tunnel_credentials(state: &AppState, tunnel: &Tunnel) -> s
 }
 
 /// 删隧道后通知各 hop 清理凭据目录。
-pub async fn dispatch_revoke_tunnel_credentials(
+pub fn dispatch_revoke_tunnel_credentials(
     state: &AppState,
     tunnel_id: i64,
     hop_node_ids: &[i64],

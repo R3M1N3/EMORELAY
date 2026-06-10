@@ -161,9 +161,9 @@ pub async fn create(
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.create", Some("tunnel"), Some(tid), Some(name), true, None).await;
 
-    // 数据面:tls/wss 隧道即时签发 hop 凭据下发(Agent 离线 → reconcile 兜底)。
+    // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
     if let Some(t) = Tunnel::find_by_id(&state.pool, tid).await? {
-        crate::grpc::tunnel_dispatch::dispatch_tunnel_credentials(&state, &t).await?;
+        let _ = crate::grpc::tunnel_dispatch::dispatch_tunnel_credentials(&state, &t).await;
     }
 
     Ok(Json(json!({ "id": tid })))
@@ -209,7 +209,7 @@ pub async fn delete(
             .await?;
     let rows = Tunnel::soft_delete(&state.pool, id).await?;
     if rows == 0 { return Err(ApiError::NotFound); }
-    crate::grpc::tunnel_dispatch::dispatch_revoke_tunnel_credentials(&state, id, &hop_nodes).await;
+    crate::grpc::tunnel_dispatch::dispatch_revoke_tunnel_credentials(&state, id, &hop_nodes);
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.delete", Some("tunnel"), Some(id), None, true, None).await;
     Ok(Json(json!({ "ok": true })))

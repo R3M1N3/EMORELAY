@@ -349,7 +349,8 @@ pub async fn create(
     )
     .await;
 
-    crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await?;
+    // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
+    let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
 
     Ok(Json(rule.into()))
 }
@@ -458,7 +459,8 @@ pub async fn update(
     )
     .await;
 
-    crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await?;
+    // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
+    let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
 
     Ok(Json(rule.into()))
 }
@@ -492,7 +494,8 @@ pub async fn delete(
     )
     .await;
 
-    crate::grpc::tunnel_dispatch::dispatch_rule_remove(&state, &existing).await?;
+    // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
+    let _ = crate::grpc::tunnel_dispatch::dispatch_rule_remove(&state, &existing).await;
 
     Ok(Json(json!({ "ok": true })))
 }
