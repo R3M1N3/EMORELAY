@@ -138,6 +138,9 @@ export interface CreateNodeRequest {
 export interface CreateNodeResponse {
   node: NodeView
   agent_token: string
+  ca_pem: string
+  client_cert_pem: string
+  client_key_pem: string
 }
 
 export type UpdateNodeRequest = Partial<CreateNodeRequest>
@@ -416,9 +419,21 @@ export const system = {
  * 否则脚本里 curl 不到 /install.sh 与 /dist/*。
  * token 一次性,UI 仅在创建节点 / 后续轮换凭据 Modal 内可调用。
  */
-export function renderInstallCommand(opts: { nodeId: number; token: string }): string {
+export function renderInstallCommand(opts: {
+  nodeId: number
+  token: string
+  caPem?: string
+  clientCertPem?: string
+  clientKeyPem?: string
+}): string {
   const base = window.location.origin
-  return `curl -fsSL ${base}/install.sh?node=${opts.nodeId} | sudo bash -s -- --token=${opts.token}`
+  let cmd = `curl -fsSL ${base}/install.sh?node=${opts.nodeId} | sudo bash -s -- --token=${opts.token}`
+  if (opts.caPem && opts.clientCertPem && opts.clientKeyPem) {
+    cmd += ` --ca-pem-b64=${btoa(opts.caPem)}`
+    cmd += ` --client-cert-pem-b64=${btoa(opts.clientCertPem)}`
+    cmd += ` --client-key-pem-b64=${btoa(opts.clientKeyPem)}`
+  }
+  return cmd
 }
 
 export const rules = {

@@ -17,6 +17,16 @@ import { useToast } from '../lib/use-toast'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; node: NodeView } | null
 
+// 创建节点后一次性返回的 Agent 接入凭据(token + mTLS 三件套)。
+type CreatedCreds = {
+  token: string
+  name: string
+  id: number
+  caPem: string
+  clientCertPem: string
+  clientKeyPem: string
+}
+
 interface ListState {
   items: NodeView[]
   total: number
@@ -29,7 +39,7 @@ export default function Nodes() {
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<NodeView | null>(null)
-  const [token, setToken] = useState<{ token: string; name: string; id: number } | null>(null)
+  const [token, setToken] = useState<CreatedCreds | null>(null)
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
@@ -68,6 +78,13 @@ export default function Nodes() {
       cancelled = true
     }
   }, [page, pageSize])
+
+  function copyCred(value: string, label: string) {
+    navigator.clipboard
+      ?.writeText(value)
+      .then(() => toast.success(`已复制${label}`))
+      .catch(() => toast.error('复制失败，请手动选择'))
+  }
 
   async function doDelete(node: NodeView) {
     setBusy(true)
@@ -231,14 +248,13 @@ export default function Nodes() {
       )}
 
       {token && (
-        <Modal title="Agent 接入凭据" onClose={() => setToken(null)} size="sm">
+        <Modal title="Agent 接入凭据" onClose={() => setToken(null)} size="md">
           <p className="text-sm text-zinc-300">
-            节点 <span className="font-medium text-white">{token.name}</span> 的 Agent token，
-            <span className="text-amber-300">仅此一次显示</span>，请立即妥善保存：
+            节点 <span className="font-medium text-white">{token.name}</span> 的 Agent 接入凭据。
           </p>
-          <div className="mt-3 rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-xs text-emerald-300 break-all">
-            {token.token}
-          </div>
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+            私钥仅此一次显示，丢失需轮换凭据。请立即妥善保存以下全部内容。
+          </p>
           {(() => {
             const endpoint = settings.agent_control_endpoint || ''
             if (!endpoint) {
@@ -248,16 +264,24 @@ export default function Nodes() {
                 </p>
               )
             }
-            const cmd = renderInstallCommand({ nodeId: token.id, token: token.token })
+            const cmd = renderInstallCommand({
+              nodeId: token.id,
+              token: token.token,
+              caPem: token.caPem,
+              clientCertPem: token.clientCertPem,
+              clientKeyPem: token.clientKeyPem,
+            })
             return (
               <div className="mt-3">
-                <div className="text-[11px] text-zinc-500 mb-1">一键安装命令</div>
-                <div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 break-all">
+                <div className="text-[11px] text-zinc-500 mb-1">
+                  一键安装命令（已内嵌 mTLS 凭据）
+                </div>
+                <div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 break-all max-h-32 overflow-auto">
                   {cmd}
                 </div>
                 <button
                   type="button"
-                  onClick={() => navigator.clipboard?.writeText(cmd).catch(() => {})}
+                  onClick={() => copyCred(cmd, '安装命令')}
                   className="mt-2 rounded-md bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-xs"
                 >
                   复制安装命令
@@ -265,16 +289,26 @@ export default function Nodes() {
               </div>
             )
           })()}
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard?.writeText(token.token).catch(() => {})
-              }}
-              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-xs"
-            >
-              复制
-            </button>
+
+          <div className="mt-4 space-y-2">
+            <div className="text-[11px] text-zinc-500">
+              或手动分发以下各项（与安装命令二选一）：
+            </div>
+            <CredBlock label="Agent Token" value={token.token} onCopy={copyCred} defaultOpen />
+            <CredBlock label="CA 证书 (ca.pem)" value={token.caPem} onCopy={copyCred} />
+            <CredBlock
+              label="客户端证书 (client.pem)"
+              value={token.clientCertPem}
+              onCopy={copyCred}
+            />
+            <CredBlock
+              label="客户端私钥 (client-key.pem)"
+              value={token.clientKeyPem}
+              onCopy={copyCred}
+            />
+          </div>
+
+          <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setToken(null)}
@@ -357,6 +391,40 @@ function NodeRow({
   )
 }
 
+// 单条凭据展示块：可折叠 + 一键复制。私钥默认折叠，token 默认展开。
+function CredBlock({
+  label,
+  value,
+  onCopy,
+  defaultOpen = false,
+}: {
+  label: string
+  value: string
+  onCopy: (value: string, label: string) => void
+  defaultOpen?: boolean
+}) {
+  return (
+    <details open={defaultOpen} className="rounded-lg border border-white/10 bg-zinc-950">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-[11px] text-zinc-400 select-none">
+        <span>{label}</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            onCopy(value, label)
+          }}
+          className="rounded-md bg-zinc-800 hover:bg-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200"
+        >
+          复制
+        </button>
+      </summary>
+      <pre className="max-h-40 overflow-auto border-t border-white/5 px-3 py-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap break-all">
+        {value}
+      </pre>
+    </details>
+  )
+}
+
 interface NodeFormState {
   name: string
   region: string
@@ -375,7 +443,7 @@ function NodeForm({
   mode: 'create' | 'edit'
   initial?: NodeView
   onCancel: () => void
-  onSuccess: (createdToken: { token: string; name: string; id: number } | null) => void | Promise<void>
+  onSuccess: (createdCreds: CreatedCreds | null) => void | Promise<void>
 }) {
   const [form, setForm] = useState<NodeFormState>({
     name: initial?.name ?? '',
@@ -422,7 +490,14 @@ function NodeForm({
           port_pool_max: portMax,
         }
         const r = await nodes.create(payload)
-        await onSuccess({ token: r.agent_token, name: r.node.name, id: r.node.id })
+        await onSuccess({
+          token: r.agent_token,
+          name: r.node.name,
+          id: r.node.id,
+          caPem: r.ca_pem,
+          clientCertPem: r.client_cert_pem,
+          clientKeyPem: r.client_key_pem,
+        })
       } else if (initial) {
         const payload: UpdateNodeRequest = {
           name: form.name.trim() !== initial.name ? form.name.trim() : undefined,

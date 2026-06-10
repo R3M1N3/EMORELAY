@@ -36,6 +36,51 @@ async fn install_sh_returns_bash_script_with_node_id() {
 }
 
 #[tokio::test]
+async fn install_script_parses_tls_pem_args() {
+    let app = make_app().await.unwrap();
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/install.sh?node=7")
+        .header("x-forwarded-for", "127.0.0.1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let body = std::str::from_utf8(&bytes).unwrap();
+    assert!(body.contains("--ca-pem-b64"), "missing --ca-pem-b64 arg parse");
+    assert!(
+        body.contains("--client-cert-pem-b64"),
+        "missing --client-cert-pem-b64 arg parse"
+    );
+    assert!(
+        body.contains("--client-key-pem-b64"),
+        "missing --client-key-pem-b64 arg parse"
+    );
+    assert!(
+        body.contains("/etc/emorelay/tls/ca.pem"),
+        "missing ca.pem write path"
+    );
+    assert!(
+        body.contains("AGENT_GRPC_CA_CERT"),
+        "missing AGENT_GRPC_CA_CERT env"
+    );
+    assert!(
+        body.contains("AGENT_GRPC_CLIENT_CERT"),
+        "missing AGENT_GRPC_CLIENT_CERT env"
+    );
+    assert!(
+        body.contains("AGENT_GRPC_CLIENT_KEY"),
+        "missing AGENT_GRPC_CLIENT_KEY env"
+    );
+    // cert-less 重跑保留分支:避免把已在线节点降级。
+    assert!(
+        body.contains("节点已装过"),
+        "missing mTLS preserve-on-rerun branch"
+    );
+}
+
+#[tokio::test]
 async fn install_sh_missing_node_returns_400() {
     let app = make_app().await.unwrap();
     let req = Request::builder()

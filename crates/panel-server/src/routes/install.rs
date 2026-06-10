@@ -58,10 +58,14 @@ fn render_install_sh(node_id: i64, control_endpoint: &str, base_url: &str) -> St
 set -euo pipefail
 
 TOKEN=""
+CA_B64="" CERT_B64="" KEY_B64=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --token=*) TOKEN="${{1#*=}}"; shift ;;
     --token)   TOKEN="$2"; shift 2 ;;
+    --ca-pem-b64=*)          CA_B64="${{1#*=}}"; shift ;;
+    --client-cert-pem-b64=*) CERT_B64="${{1#*=}}"; shift ;;
+    --client-key-pem-b64=*)  KEY_B64="${{1#*=}}"; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
@@ -92,12 +96,29 @@ install -m 0755 "$TMP/node-agent" /usr/local/bin/emorelay-agent
 
 # 2. 写 env 文件
 install -d -m 0755 /etc/emorelay
+
+# 2.5 写 mTLS 凭据(若提供)。三者必须同时给。
+if [[ -n "$CA_B64" && -n "$CERT_B64" && -n "$KEY_B64" ]]; then
+  install -d -m 0700 /etc/emorelay/tls
+  echo "$CA_B64"   | base64 -d > /etc/emorelay/tls/ca.pem
+  echo "$CERT_B64" | base64 -d > /etc/emorelay/tls/client.pem
+  echo "$KEY_B64"  | base64 -d > /etc/emorelay/tls/client-key.pem
+  chmod 0600 /etc/emorelay/tls/*.pem
+  TLS_ENV=$'AGENT_GRPC_CA_CERT=/etc/emorelay/tls/ca.pem\nAGENT_GRPC_CLIENT_CERT=/etc/emorelay/tls/client.pem\nAGENT_GRPC_CLIENT_KEY=/etc/emorelay/tls/client-key.pem'
+elif [[ -f /etc/emorelay/tls/ca.pem && -f /etc/emorelay/tls/client.pem && -f /etc/emorelay/tls/client-key.pem ]]; then
+  # 本次未带 cert,但节点已装过 mTLS 凭据 → 保留,避免重跑脚本把已在线节点降级。
+  TLS_ENV=$'AGENT_GRPC_CA_CERT=/etc/emorelay/tls/ca.pem\nAGENT_GRPC_CLIENT_CERT=/etc/emorelay/tls/client.pem\nAGENT_GRPC_CLIENT_KEY=/etc/emorelay/tls/client-key.pem'
+else
+  TLS_ENV=""
+fi
+
 cat > /etc/emorelay/agent.env <<EOF
 AGENT_NODE_ID={node_id}
 AGENT_TOKEN=$TOKEN
 AGENT_CONTROL_ENDPOINT={control_endpoint}
 AGENT_STATE_PATH=/var/lib/emorelay/agent-state.json
 EOF
+if [[ -n "$TLS_ENV" ]]; then printf '%s\n' "$TLS_ENV" >> /etc/emorelay/agent.env; fi
 chmod 0600 /etc/emorelay/agent.env
 install -d -m 0755 /var/lib/emorelay
 
