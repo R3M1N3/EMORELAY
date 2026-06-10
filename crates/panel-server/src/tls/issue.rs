@@ -78,8 +78,16 @@ pub fn issue_client_cert(ca: &CaBundle, node_id: i64) -> Result<IssuedCert> {
     })
 }
 
-/// 用与 `bootstrap_ca` 一致的 DN/扩展重建 CA 证书,并以传入的 CA 私钥重新自签。
-/// 仅用于给 `signed_by` 提供 issuer 的 DN 与 key_identifier_method;签名仍由 CA 私钥产生。
+/// 重建 issuer 证书,仅供 `signed_by` 取用。
+///
+/// **签发不变式(改 `bootstrap_ca` 前必读)**:叶子要链到本 CA,靠两点对齐——
+/// (1) issuer 的 DN(`CA_COMMON_NAME`)与 CA 一致;(2) 默认 `KeyIdMethod::Sha256`
+/// (本函数与 `bootstrap_ca` 都不显式设 `key_identifier_method`)。叶子 AKI 由 CA 公钥经
+/// 该 Sha256 方法推导,链到 CA 的 SKI。若 `bootstrap_ca` 改了 CA 的 DN 或设了非默认
+/// `key_identifier_method`,这里必须同步,否则 AKI↔SKI 链**静默断裂**(签发不报错,mTLS 失败)。
+///
+/// 另:rcgen 0.13.2 的 `signed_by`(certificate.rs)只从 issuer 证书读 `distinguished_name`
+/// 与 `key_identifier_method`,**不读 issuer 的 key_usages**,故这里无需设 key_usages。
 fn rebuild_issuer_cert(issuer_key: &KeyPair) -> Result<Certificate> {
     let mut ca_params = CertificateParams::new(Vec::new())
         .context("重建 CA CertificateParams 失败")?;
@@ -87,10 +95,28 @@ fn rebuild_issuer_cert(issuer_key: &KeyPair) -> Result<Certificate> {
     ca_params
         .distinguished_name
         .push(DnType::CommonName, CA_COMMON_NAME);
-    ca_params.key_usages.push(KeyUsagePurpose::DigitalSignature);
-    ca_params.key_usages.push(KeyUsagePurpose::KeyCertSign);
-    ca_params.key_usages.push(KeyUsagePurpose::CrlSign);
     ca_params
         .self_signed(issuer_key)
         .context("重建 issuer 证书自签失败")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcgen::DnValue;
+
+    /// 钉死「重建 issuer 的 DN CommonName == CA subject DN」这条签发不变式:
+    /// 若日后改了 `bootstrap_ca` 的 CA DN 而忘了同步 `rebuild_issuer_cert`,CI 立刻报错
+    /// (无需 openssl)。注:`DistinguishedName::push(CommonName, &str)` 存为 `Utf8String`。
+    #[test]
+    fn rebuilt_issuer_dn_matches_ca_common_name() {
+        let ca_key = KeyPair::generate().expect("ca key");
+        let issuer = rebuild_issuer_cert(&ca_key).expect("rebuild issuer");
+        let cn = issuer
+            .params()
+            .distinguished_name
+            .get(&DnType::CommonName)
+            .expect("issuer 缺 CommonName");
+        assert_eq!(cn, &DnValue::Utf8String(CA_COMMON_NAME.to_string()));
+    }
 }
