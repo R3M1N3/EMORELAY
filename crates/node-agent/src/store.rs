@@ -47,6 +47,8 @@ impl From<RuleJson> for Rule {
             target_port: r.target_port,
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
+            // RuleJson 不携带隧道上下文(数据面尚未持久化隧道);重建 Rule 时置 None。
+            tunnel: None,
         }
     }
 }

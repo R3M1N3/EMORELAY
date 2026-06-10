@@ -14,6 +14,7 @@ pub fn rule_to_proto(rule: &DbRule) -> ProtoRule {
         target_port: rule.target_port as u32,
         enabled: rule.enabled != 0,
         bandwidth_mbps: rule.bandwidth_mbps.unwrap_or(0),
+        tunnel: None,
     }
 }
 

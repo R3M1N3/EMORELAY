@@ -284,6 +284,20 @@ async fn handle_command(
                 info!(rule_id = r.rule_id, "restart rule");
                 mgr.restart(r.rule_id).await?;
             }
+            Body::TunnelCredentials(c) => {
+                // P3b 数据面尚未落地隧道凭据处理(后续任务);先确认收到,不改规则状态。
+                info!(
+                    tunnel_id = c.tunnel_id,
+                    ordinal = c.ordinal,
+                    "tunnel credentials received (data plane pending)"
+                );
+            }
+            Body::RevokeTunnelCredentials(c) => {
+                info!(
+                    tunnel_id = c.tunnel_id,
+                    "tunnel credentials revoke received (data plane pending)"
+                );
+            }
         }
         mgr.current_rules()
     };

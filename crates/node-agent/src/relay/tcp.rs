@@ -205,6 +205,7 @@ mod tests {
             target_port: target_port as u32,
             enabled: true,
             bandwidth_mbps: 0,
+            tunnel: None,
         }
     }
 
