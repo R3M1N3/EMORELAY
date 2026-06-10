@@ -2,6 +2,7 @@ pub mod commands;
 pub mod dispatcher;
 pub mod service;
 pub mod session;
+pub mod tunnel_split;
 
 use anyhow::{Context, Result};
 use emorelay_common::control::v1::control_plane_server::ControlPlaneServer;
