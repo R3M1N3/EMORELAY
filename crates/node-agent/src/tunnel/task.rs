@@ -209,7 +209,20 @@ where
 struct UdpTunnelSession {
     /// 主 loop → writer task 的入站包通道;drop 即关闭隧道连接(写半 shutdown)。
     frame_tx: mpsc::Sender<Vec<u8>>,
+    /// 回程 reader,持 listen socket 的 Arc;Drop 时 abort,见下。
+    reader_task: JoinHandle<()>,
     last_seen: Instant,
+}
+
+/// reader 阻塞在 read_frame 且持有 listen socket 引用;若只靠对端关连接触发 EOF,
+/// 对端迟迟不关(或正常 restart 的 FIN 竞态)会让 UDP listen 端口迟迟不释放,
+/// 同端口 rebind 报 AddrInUse。Drop-abort 覆盖三条移除路径:sweep retain 淘汰、
+/// Closed 移除、entry stop 时整个 sessions map 随 udp_loop drop。
+/// writer 仍走 channel close 优雅退出(shutdown 写半通知 exit 端)。
+impl Drop for UdpTunnelSession {
+    fn drop(&mut self) {
+        self.reader_task.abort();
+    }
 }
 
 /// per client_addr 一条隧道连接(NAT session 语义)。sessions 由本 loop 独占,无锁;
@@ -242,27 +255,47 @@ async fn entry_udp_loop(
                     }
                     if let Some(s) = sessions.get_mut(&client_addr) {
                         s.last_seen = Instant::now();
-                        // writer 背压满 → 丢包计 error,不阻塞事件循环。
-                        if s.frame_tx.try_send(buf[..n].to_vec()).is_err() {
-                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                        // 失败分两种语义:Full = writer 背压(连接仍活),丢这一包即可;
+                        // Closed = writer 已退出(隧道连接死亡),必须移除 session——
+                        // 否则持续来包会不断刷 last_seen,retain 永不淘汰,永久黑洞。
+                        match s.frame_tx.try_send(buf[..n].to_vec()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                counter.error_count.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                counter.error_count.fetch_add(1, Ordering::Relaxed);
+                                // 本包丢弃;下一包走新建 session 路径。
+                                sessions.remove(&client_addr);
+                            }
                         }
                         continue;
                     }
-                    match open_udp_session(
+                    // dial 限时:下一跳不可达时 TCP connect 可挂数十秒,而本 await 在主
+                    // 事件循环内,会停摆该规则全部 UDP 流量与 sweep。彻底方案是 spawn
+                    // 建联(但破坏 sessions 无锁设计),MVP 先用超时兜底。
+                    match tokio::time::timeout(Duration::from_secs(5), open_udp_session(
                         rule_id, transport, next_hop, socket.clone(),
                         client_addr, counter.clone(), bucket.clone(),
-                    ).await {
-                        Ok(frame_tx) => {
+                    )).await {
+                        Ok(Ok((frame_tx, reader_task))) => {
                             counter.connection_count.fetch_add(1, Ordering::Relaxed);
-                            let _ = frame_tx.try_send(buf[..n].to_vec());
+                            if frame_tx.try_send(buf[..n].to_vec()).is_err() {
+                                counter.error_count.fetch_add(1, Ordering::Relaxed);
+                            }
                             sessions.insert(client_addr, UdpTunnelSession {
                                 frame_tx,
+                                reader_task,
                                 last_seen: Instant::now(),
                             });
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                             warn!(rule_id, %client_addr, error = ?e, "open udp tunnel session failed");
+                        }
+                        Err(_) => {
+                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                            warn!(rule_id, %client_addr, "open udp tunnel session timed out");
                         }
                     }
                 }
@@ -281,6 +314,7 @@ async fn entry_udp_loop(
 
 /// 建 session:dial → preamble 0x02 → split。writer:mpsc → write_frame;
 /// reader:read_frame → send_to(client) + rx 计数(回程同样过桶,不足丢弃)。
+/// 返回 (frame_tx, reader JoinHandle):后者交给 UdpTunnelSession,Drop 时 abort。
 async fn open_udp_session(
     rule_id: i64,
     transport: &Arc<dyn TunnelTransport>,
@@ -289,7 +323,7 @@ async fn open_udp_session(
     client_addr: SocketAddr,
     counter: Arc<RuleCounter>,
     bucket: Option<Arc<TokenBucket>>,
-) -> Result<mpsc::Sender<Vec<u8>>> {
+) -> Result<(mpsc::Sender<Vec<u8>>, JoinHandle<()>)> {
     let mut tunnel = transport.dial(next_hop).await?;
     tunnel.write_all(&[STREAM_UDP]).await.context("write stream preamble")?;
     tunnel.flush().await.context("flush stream preamble")?;
@@ -306,7 +340,7 @@ async fn open_udp_session(
         let _ = t_w.shutdown().await;
     });
 
-    tokio::spawn(async move {
+    let reader_task = tokio::spawn(async move {
         let mut fbuf = Vec::new();
         loop {
             match read_frame(&mut t_r, &mut fbuf).await {
@@ -329,7 +363,7 @@ async fn open_udp_session(
         }
     });
 
-    Ok(frame_tx)
+    Ok((frame_tx, reader_task))
 }
 
 // ============= mid / exit =============
