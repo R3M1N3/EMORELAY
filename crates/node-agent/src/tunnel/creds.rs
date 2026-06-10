@@ -19,6 +19,14 @@ pub async fn store(data_dir: &str, c: &TunnelCredentials) -> Result<()> {
     tokio::fs::create_dir_all(&dir)
         .await
         .with_context(|| format!("create {}", dir.display()))?;
+    // hop 目录先收紧到 0700:堵住 per-file 0600 chmod 落地前的 world-readable 窗口。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .await
+            .with_context(|| format!("chmod 0700 {}", dir.display()))?;
+    }
     for (name, content) in [
         ("server.pem", &c.server_cert_pem),
         ("server.key", &c.server_key_pem),

@@ -8,6 +8,7 @@ pub mod tcp_transport;
 pub mod testutil;
 pub mod tls_transport;
 pub mod transport;
+pub mod wss_transport;
 
 use anyhow::Result;
 use emorelay_common::control::v1::TunnelContext;
@@ -21,7 +22,7 @@ pub fn make_transport(ctx: &TunnelContext, data_dir: &str) -> Result<Arc<dyn Tun
     match ctx.transport.as_str() {
         "tcp" => Ok(Arc::new(TcpTransport)),
         "tls" => Ok(Arc::new(tls_transport::TlsTransport::load(data_dir, ctx)?)),
-        "wss" => anyhow::bail!("wss tunnel transport not implemented yet (later task)"),
+        "wss" => Ok(Arc::new(wss_transport::WssTransport::load(data_dir, ctx)?)),
         other => anyhow::bail!("unknown tunnel transport: {other}"),
     }
 }

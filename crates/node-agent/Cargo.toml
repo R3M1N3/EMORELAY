@@ -23,6 +23,9 @@ sysinfo = { version = "0.32", default-features = false, features = ["system", "n
 # P3b 隧道 TLS/WSS transport。ring provider 与 tonic 0.12 tls 栈对齐。
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 rustls-pemfile = "2"
+# P3b WSS transport:ws 协议层 over 自管 TLS 流(不用 tungstenite 的 tls feature)。
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [dev-dependencies]
 # token bucket 测试用 start_paused 虚拟时钟(tokio::time::advance)。
