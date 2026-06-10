@@ -450,6 +450,7 @@ export const rules = {
     })
     if (!res.ok) {
       const err = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+      if (res.status === 401) clearToken()
       throw new ApiError(res.status, err?.error ?? 'unknown', err?.message ?? res.statusText)
     }
     const blob = await res.blob()

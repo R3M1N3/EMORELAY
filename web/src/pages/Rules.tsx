@@ -47,6 +47,8 @@ export default function Rules() {
     strategy: 'skip' | 'overwrite'
     submitting: boolean
   } | null>(null)
+  // 策略切换重跑 dry-run 期间为 true,禁用 radio 与确认按钮,防止用旧策略提交。
+  const [refreshing, setRefreshing] = useState(false)
   const [actingId, setActingId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
@@ -188,6 +190,10 @@ export default function Rules() {
       toast.error('文件不是合法的规则导出 JSON')
       return
     }
+    if (items.length === 0) {
+      toast.error('文件为空')
+      return
+    }
     try {
       const report = await rules.importRules(items, 'skip', true)
       setImporting({ items, report, strategy: 'skip', submitting: false })
@@ -197,12 +203,15 @@ export default function Rules() {
   }
 
   async function changeStrategy(strategy: 'skip' | 'overwrite') {
-    if (!importing) return
+    if (!importing || refreshing) return
+    setRefreshing(true)
     try {
       const report = await rules.importRules(importing.items, strategy, true)
       setImporting({ ...importing, strategy, report })
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '预检失败')
+    } finally {
+      setRefreshing(false)
     }
   }
 
@@ -219,6 +228,8 @@ export default function Rules() {
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '导入失败')
       setImporting(null)
+      // 后端逐项写入,无全局事务;失败也可能已部分落库,刷新列表以反映实况。
+      await reload()
     }
   }
 
@@ -236,7 +247,7 @@ export default function Rules() {
                 await rules.exportDownload({
                   node_id: filters.node_id ? Number(filters.node_id) : undefined,
                 })
-                toast.success('已导出当前筛选规则')
+                toast.success('已导出（按节点筛选）')
               } catch (e) {
                 toast.error(e instanceof ApiError ? e.message : '导出失败')
               }
@@ -450,11 +461,13 @@ export default function Rules() {
                   type="radio"
                   name="import-strategy"
                   checked={importing.strategy === s}
+                  disabled={refreshing}
                   onChange={() => void changeStrategy(s)}
                 />
                 {s === 'skip' ? '跳过 (skip)' : '覆盖 (overwrite)'}
               </label>
             ))}
+            {refreshing && <span className="text-zinc-500 text-xs">刷新中…</span>}
           </div>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
@@ -504,10 +517,10 @@ export default function Rules() {
             <button
               type="button"
               onClick={() => void confirmImport()}
-              disabled={importing.submitting}
+              disabled={importing.submitting || refreshing}
               className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
             >
-              {importing.submitting ? '导入中…' : '确认导入'}
+              {importing.submitting ? '导入中…' : refreshing ? '刷新中…' : '确认导入'}
             </button>
           </div>
         </Modal>
