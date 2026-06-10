@@ -12,4 +12,6 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub sessions: Arc<SessionRegistry>,
     pub dispatcher: Arc<CommandDispatcher>,
+    pub ca: std::sync::Arc<crate::tls::ca::CaBundle>,
+    pub crl: std::sync::Arc<crate::tls::crl::Crl>,
 }

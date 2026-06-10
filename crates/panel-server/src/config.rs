@@ -9,6 +9,7 @@ pub struct Config {
     pub jwt_expiry_hours: u64,
     pub cors_origin: String,
     pub grpc_bind_addr: String,
+    // P3a 起 gRPC TLS 走内置 CA;以下三个 env 仅保留兼容,已弃用
     /// gRPC TLS server cert(PEM)。`None` → 走 plaintext。生产强烈建议配。
     pub grpc_tls_cert: Option<String>,
     pub grpc_tls_key: Option<String>,

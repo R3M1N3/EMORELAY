@@ -34,11 +34,22 @@ async fn main() -> Result<()> {
         tracing::warn!(error = ?e, path = ?dist_dir, "failed to ensure agent-dist dir");
     }
 
+    let tls_dir = std::path::PathBuf::from(&config.panel_data_dir)
+        .join("tls")
+        .display()
+        .to_string();
+    let ca = panel_server::tls::ca::bootstrap_ca(&tls_dir, config.panel_public_host.as_deref())?;
+    let crl_path = format!("{tls_dir}/crl.json");
+    let crl = std::sync::Arc::new(panel_server::tls::crl::Crl::load(&crl_path));
+    info!(mtls = !config.dev_disable_mtls, "tls ready");
+
     let state = AppState {
         config: config.clone(),
         pool,
         sessions: Arc::new(SessionRegistry::new()),
         dispatcher: Arc::new(CommandDispatcher::new()),
+        ca,
+        crl,
     };
 
     let cors_origin: HeaderValue = config

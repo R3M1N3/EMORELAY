@@ -52,3 +52,17 @@ fn issue_client_cert_chains_and_has_stable_fingerprint() {
     let issued2 = issue_client_cert(&ca, 42).expect("issue2");
     assert_ne!(issued.fingerprint, issued2.fingerprint);
 }
+
+use panel_server::grpc::{tls_mode_for, GrpcTlsMode};
+
+#[test]
+fn dev_disable_mtls_yields_plaintext() {
+    assert!(matches!(tls_mode_for(true), GrpcTlsMode::Plaintext));
+    assert!(matches!(tls_mode_for(false), GrpcTlsMode::Mtls));
+}
+
+#[test]
+fn crl_load_missing_file_is_empty() {
+    let crl = panel_server::tls::crl::Crl::load("/nonexistent/crl.json");
+    assert!(!crl.is_revoked("deadbeef"));
+}

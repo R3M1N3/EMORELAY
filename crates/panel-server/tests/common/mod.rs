@@ -56,11 +56,16 @@ pub async fn make_app() -> Result<TestApp> {
         dev_disable_mtls: true,
         panel_public_host: None,
     };
+    let tls_dir = format!("{}/tls", temp.path().display().to_string().replace('\\', "/"));
+    let ca = panel_server::tls::ca::bootstrap_ca(&tls_dir, None)?;
+    let crl = std::sync::Arc::new(panel_server::tls::crl::Crl::new());
     let state = AppState {
         config,
         pool: pool.clone(),
         sessions: Arc::new(SessionRegistry::new()),
         dispatcher: Arc::new(CommandDispatcher::new()),
+        ca,
+        crl,
     };
 
     // 直接创建 admin(跳过 bootstrap 的 env 依赖)。
