@@ -67,10 +67,11 @@ pub struct SecurityInfo {
     /// secret 字节长度(String::len),仅供管理员肉眼判断强度,不暴露内容。
     pub jwt_secret_length: usize,
     pub jwt_expiry_hours: u64,
-    /// gRPC 控制面是否启用 TLS。false 时 Agent 与 Server 间 token 明文。
+    /// gRPC 控制面是否启用 TLS。P3a 起走内置 CA:默认强制 mTLS,
+    /// PANEL_DEV_DISABLE_MTLS=1 才退 plaintext(此时为 false,token 明文)。
     pub grpc_tls_enabled: bool,
-    /// 是否启用 mTLS (Server 校验 client cert + Agent 同时启用 cert 才生效)。
-    /// 仅反映 Server 端 PANEL_GRPC_TLS_CLIENT_CA 是否配置,Agent 端是否带 client cert 不在此判断。
+    /// 是否强制 mTLS。内置 CA 模式下与 grpc_tls_enabled 同启同停(强制 mTLS = server TLS + 校验 client cert)。
+    /// 默认强制;PANEL_DEV_DISABLE_MTLS=1 退 plaintext 时为 false。
     pub grpc_mtls_enabled: bool,
 }
 
@@ -80,13 +81,15 @@ pub async fn security(
 ) -> ApiResult<Json<SecurityInfo>> {
     auth.require_admin()?;
     let cfg = &state.config;
-    let tls_on = cfg.grpc_tls_cert.is_some() && cfg.grpc_tls_key.is_some();
+    // P3a 起 gRPC 控制面走内置 CA:默认强制 mTLS,PANEL_DEV_DISABLE_MTLS=1 才退 plaintext。
+    // TLS 与 mTLS 在内置 CA 模式同启同停(强制 mTLS = server TLS + 校验 client cert)。
+    let mtls_on = !cfg.dev_disable_mtls;
     Ok(Json(SecurityInfo {
         jwt_secret_configured: !cfg.jwt_secret.is_empty(),
         jwt_secret_length: cfg.jwt_secret.len(),
         jwt_expiry_hours: cfg.jwt_expiry_hours,
-        grpc_tls_enabled: tls_on,
-        grpc_mtls_enabled: tls_on && cfg.grpc_tls_client_ca.is_some(),
+        grpc_tls_enabled: mtls_on,
+        grpc_mtls_enabled: mtls_on,
     }))
 }
 

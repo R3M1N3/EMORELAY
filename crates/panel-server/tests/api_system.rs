@@ -14,9 +14,26 @@ async fn security_info_admin_ok() {
     // tests/common/mod.rs 设置的 jwt_secret 长度 = 46
     assert!(body["jwt_secret_length"].as_i64().unwrap() >= 32);
     assert_eq!(body["jwt_expiry_hours"], 24);
-    // 测试 Config 未配 TLS,应为 false
+    // P3a:测试 Config dev_disable_mtls=true(plaintext),TLS/mTLS 都应报 false。
     assert_eq!(body["grpc_tls_enabled"], false);
     assert_eq!(body["grpc_mtls_enabled"], false);
+}
+
+#[tokio::test]
+async fn security_info_reports_mtls_when_enforced() {
+    // P3a:内置 CA 默认强制 mTLS。这里克隆 make_app 的 state、把 dev_disable_mtls 翻成 false,
+    // 复用同一 pool/jwt_secret 重建一个 router(无需重新 bootstrap CA / DB / admin),
+    // 验证 security 端点据此报 TLS=mTLS=true。
+    let app = make_app().await.unwrap();
+    let mut state = app.state.clone();
+    state.config.dev_disable_mtls = false;
+    let enforced_app = panel_server::routes::router(state);
+
+    let req = auth_req(Method::GET, "/api/system/security", &app.admin_token, None).unwrap();
+    let (status, body) = send(enforced_app, req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["grpc_tls_enabled"], true);
+    assert_eq!(body["grpc_mtls_enabled"], true);
 }
 
 #[tokio::test]

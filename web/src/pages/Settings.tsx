@@ -308,18 +308,18 @@ function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
     ? {
         text: 'Token + mTLS',
         cls: 'text-emerald-300',
-        hint: '双向证书认证 + 加密传输;请同时确认 Agent 端配置 AGENT_GRPC_CLIENT_CERT/KEY,否则 TLS 握手会失败导致 Agent 离线',
+        hint: '内置 CA 强制双向证书认证 + 加密传输;Agent 须携带「安装命令四件套」里签发的 client cert,否则握手失败导致离线',
       }
     : data.grpc_tls_enabled
     ? {
         text: 'Token + TLS',
         cls: 'text-emerald-300',
-        hint: 'TLS 加密传输,token 不裸跑;配 PANEL_GRPC_TLS_CLIENT_CA 可升级 mTLS',
+        hint: 'TLS 加密传输,token 不裸跑(内置 CA 模式下一般直接强制 mTLS)',
       }
     : {
         text: 'Token (明文)',
         cls: 'text-amber-300',
-        hint: '生产建议配置 PANEL_GRPC_TLS_CERT/KEY 启用 TLS',
+        hint: '开发模式(PANEL_DEV_DISABLE_MTLS=1);生产移除该 env 即默认启用内置 CA mTLS',
       }
   return (
     <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
