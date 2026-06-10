@@ -5,6 +5,7 @@ mod manager;
 mod relay;
 mod stats;
 mod store;
+mod tunnel;
 mod system;
 
 use anyhow::Result;
