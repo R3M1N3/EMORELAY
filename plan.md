@@ -477,10 +477,11 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 
 ---
 
-## 附录·实施状态（2026-06-09）
+## 附录·实施状态
 
 > 本节为实施快照，反映代码当前状态；蓝本（第一至十五节）内容不变。
-> 审计原始发现见 `audit-findings.md`（R1-R12 红线快照）。
+> **已交付**：MVP + P1 + P2 + P3a + P3b 控制面（逐 Phase 详情见下方分节）。**当前推进**：P3b 数据面（多跳隧道转发层）。
+> P1/P2 的逐 Task TDD plan 文件（phase-1/phase-2.md）已随交付删除；P3 计划见 `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`。
 
 ### 第十二节 20 步开发顺序
 
