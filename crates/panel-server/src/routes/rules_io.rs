@@ -18,7 +18,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
 
-#[derive(Serialize, Deserialize, FromRow)]
+#[derive(Serialize, Deserialize)]
 pub struct RuleExportItem {
     pub name: String,
     pub protocol: String,

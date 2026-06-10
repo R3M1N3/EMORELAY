@@ -154,6 +154,13 @@ async fn import_conflict_strategies_skip_and_overwrite() {
     .unwrap();
     let (_, report) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(report["items"][0]["action"], "skip");
+    let host: String = sqlx::query_scalar(
+        "SELECT target_host FROM forward_rules WHERE listen_port = 20010 AND deleted_at IS NULL",
+    )
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(host, "1.1.1.1", "skip 不得改动现有规则");
 
     // overwrite → PATCH 现有规则
     let req = common::auth_req(
