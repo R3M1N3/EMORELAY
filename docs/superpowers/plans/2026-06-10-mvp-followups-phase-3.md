@@ -1076,15 +1076,1189 @@ git commit -m "docs(p3a): document built-in CA + mTLS, node credential rotation,
 
 ---
 
-## P3b 概要（待 P3a 落地后展开）
+# P3b · 多跳隧道控制面 Implementation Plan
 
-§4.9 单元 4/5/6/7（删除保护）。Task 概要：
-1. migration 0006（tunnels + tunnel_hops + forward_rules.tunnel_id）+ `models/tunnel.rs`
-2. proto：`Rule.tunnel`(TunnelContext) + `Command` oneof 加 `TunnelCredentials`/`RevokeTunnelCredentials`(字段号不复用) + `TunnelRole` enum
-3. `routes/tunnels.rs` CRUD（创建校验链路 ≥2 节点全 online + 分配 inter_port + 事务写 hops + audit）
-4. dispatcher 按 hop 拆 Rule（entry/mid/exit 三实例，mid/exit 角色 bandwidth_mbps=0 避免逐跳重复限速）
-5. Agent `tunnel/` 模块：`transport.rs` trait + `tcp_transport.rs`（先）→ `tls_transport.rs`（复用内置 CA，SNI=tunnel-<id>-hop-<n>.emorelay.internal）→ `wss_transport.rs`（tokio-tungstenite）；`task.rs` entry/mid/exit 三角色；RuleManager/ConfigStore 扩展
-6. 节点删除保护扩展（查 tunnel_hops.node_id）
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
+
+**Goal:** 给 EMORELAY 加多跳隧道的「控制面」——DB 模型（tunnels/tunnel_hops）、protobuf 隧道上下文、隧道 REST CRUD（含链路校验/inter_port 分配/删除保护）、节点删除保护扩展、以及按 hop 把业务规则拆成 entry/mid/exit 三角色 Rule 的纯函数。**不含 Agent 转发实现**（数据面 = transport + TunnelTask，作为 P3b-数据面 在本段落地后展开）。
+
+**Architecture:** 隧道是一串有序 hop（ordinal 0..N-1，N≥2）。`tunnels` 存 name/transport/status，`tunnel_hops` 存每跳 node_id + inter_port（被上一跳连入的监听端口）。业务规则 `forward_rules.tunnel_id` 关联隧道，其 `node_id` 必须 = 入口节点（ordinal 0）。dispatcher 把一条关联隧道的 Rule 拆成 N 个带 `TunnelContext` 的实例分发到各 hop 节点（限速只在 entry 计，mid/exit 置 0）。本段只做纯函数拆分 + 单测，**实际 dispatch 接入留数据面**（无 tunnel 能力的 Agent 收到拆分 Rule 会错误起普通 relay，故控制面阶段不接入真实下发）。
+
+**Tech Stack:** Rust（SQLx/SQLite 事务 + tonic/prost）。
+
+---
+
+## P3b 控制面 关键设计决策（实现前必读）
+
+1. **migration 编号 = `0006`**（spec §4.2 写 0003 已过时；实际已到 0005/P3a）。
+2. **proto `Rule.tunnel` 字段号 = `12`,不是 spec §4.3 写的 11**——字段 11 已被 P2 的 `bandwidth_mbps` 占用。复用 11 会破坏 wire 兼容。`TunnelContext`/`TunnelRole`/`Command` oneof 6/7 按 spec。
+3. **inter_port 语义（修正 spec §4.5 step3 的歧义）**:spec 写「为每个 ordinal < N-1 的节点分配」表述有歧义。按数据面 `task.rs` 的实际语义——inter_port 是「该 hop 被上一跳连入时监听的端口」,所以**ordinal ≥ 1 的 hop 才需要 inter_port**（共 N-1 个）,从该 hop **自己节点的 port_pool** 分配（排除 reserved + 已占用）；**entry(ordinal 0) 的 inter_port = NULL**(它监听业务规则的 listen_port,不被连入)。`tunnel_hops` 表每行存 inter_port,ordinal 0 行为 NULL。
+4. **隧道全程统一 transport**（spec §5.3 已确认；用户选 A）。`tunnels.transport` ∈ {tcp, tls, wss},全链路一致。
+5. **控制面阶段不真实 dispatch 拆分 Rule**:`split_tunnel_rule` 纯函数 + 单测就绪,但不接入 `rules.rs` create 的下发路径（接入留数据面,届时 Agent 能消费 tunnel 字段）。隧道创建本身也不 dispatch（spec §4.5 step5:隧道不带业务规则,等规则关联）。
+6. 每个 Task 收尾跑测试 + `cargo test --workspace`,全绿 → commit → spawn 子代理走 `superpowers:code-reviewer`,通过才进下一 Task。
+
+## P3b 控制面 文件结构（变更面）
+
+**Create:**
+- `migrations/0006_tunnels.sql` — tunnels + tunnel_hops + forward_rules.tunnel_id
+- `crates/panel-server/src/models/tunnel.rs` — Tunnel + TunnelHop struct + CRUD/查询/删除保护方法
+- `crates/panel-server/src/routes/tunnels.rs` — REST CRUD + 链路校验 + inter_port 分配
+- `crates/panel-server/src/grpc/tunnel_split.rs` — `split_tunnel_rule` 纯函数(按 hop 拆 Rule)
+- `crates/panel-server/tests/api_tunnels.rs` — 隧道 CRUD + 校验 + 删除保护集成测试
+- `crates/panel-server/tests/tunnel_split.rs` — 拆分纯函数单测(双跳/三跳)
+
+**Modify:**
+- `crates/common/proto/control.proto` — Rule.tunnel=12 + TunnelContext + TunnelRole + Command oneof 6/7 + TunnelCredentials + RevokeTunnelCredentials
+- `crates/panel-server/src/models/mod.rs` — `pub mod tunnel;`
+- `crates/panel-server/src/routes/mod.rs` — 注册 7 个 /api/tunnels 路由
+- `crates/panel-server/src/grpc/mod.rs` — `pub mod tunnel_split;`
+- `crates/panel-server/src/routes/nodes.rs` — delete 扩展查 tunnel_hops 引用
+- `crates/panel-server/src/routes/rules.rs` — create/update 加 tunnel_id 校验(node_id 必须=入口节点)
+- `docs/api.md` / `plan.md` — P3b 控制面文档
+
+---
+
+## Task 1: migration 0006 + models/tunnel.rs
+
+**Files:**
+- Create: `migrations/0006_tunnels.sql`、`crates/panel-server/src/models/tunnel.rs`
+- Modify: `crates/panel-server/src/models/mod.rs`
+- Test: 扩展 `crates/panel-server/tests/api_tunnels.rs`（先建文件,放 model 级 sqlx 测试）
+
+- [ ] **Step 1: 写 migration 0006**
+
+```sql
+-- migrations/0006_tunnels.sql
+-- P3b 多跳隧道:tunnels(隧道定义) + tunnel_hops(有序跳) + forward_rules.tunnel_id(业务规则关联)。
+-- PG 迁移:ADD COLUMN / CREATE TABLE / 部分唯一索引语法一致;datetime('now')→now()。
+CREATE TABLE tunnels (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    transport   TEXT    NOT NULL CHECK (transport IN ('tcp', 'tls', 'wss')),
+    status      TEXT    NOT NULL DEFAULT 'unknown'
+                CHECK (status IN ('up', 'degraded', 'down', 'unknown')),
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    deleted_at  TEXT
+);
+CREATE UNIQUE INDEX idx_tunnels_name_active
+    ON tunnels (name) WHERE deleted_at IS NULL;
+
+CREATE TABLE tunnel_hops (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tunnel_id   INTEGER NOT NULL REFERENCES tunnels(id),
+    ordinal     INTEGER NOT NULL CHECK (ordinal >= 0),
+    node_id     INTEGER NOT NULL REFERENCES nodes(id),
+    -- 该 hop 被上一跳连入时监听的端口;ordinal 0(入口)为 NULL(它监听业务 listen_port)。
+    inter_port  INTEGER CHECK (inter_port IS NULL OR (inter_port BETWEEN 1 AND 65535)),
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX idx_tunnel_hops_tunnel_ordinal ON tunnel_hops (tunnel_id, ordinal);
+CREATE INDEX idx_tunnel_hops_node_id ON tunnel_hops (node_id);
+
+ALTER TABLE forward_rules ADD COLUMN tunnel_id INTEGER REFERENCES tunnels(id);
+CREATE INDEX idx_forward_rules_tunnel_id ON forward_rules (tunnel_id);
+```
+
+- [ ] **Step 2: 写失败测试 `crates/panel-server/tests/api_tunnels.rs`(model 级)**
+
+```rust
+mod common;
+
+use panel_server::models::tunnel::{Tunnel, TunnelHop};
+
+#[tokio::test]
+async fn create_tunnel_with_hops_and_read_back() {
+    let app = common::make_app().await.unwrap();
+    // 两个节点。
+    let n1 = sqlx::query("INSERT INTO nodes (name, agent_token_hash, public_ip) VALUES ('hk', 'x', '1.1.1.1')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    let n2 = sqlx::query("INSERT INTO nodes (name, agent_token_hash, public_ip) VALUES ('jp', 'x', '2.2.2.2')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+
+    // 事务建隧道 + 两跳:ordinal0(entry,inter_port NULL) + ordinal1(exit,inter_port 30001)。
+    let tid = Tunnel::create_with_hops(
+        &app.state.pool, "hk-jp", "tcp",
+        &[(0, n1, None), (1, n2, Some(30001))],
+    ).await.unwrap();
+
+    let t = Tunnel::find_by_id(&app.state.pool, tid).await.unwrap().unwrap();
+    assert_eq!(t.name, "hk-jp");
+    assert_eq!(t.transport, "tcp");
+    assert_eq!(t.status, "unknown");
+
+    let hops = TunnelHop::list_for_tunnel(&app.state.pool, tid).await.unwrap();
+    assert_eq!(hops.len(), 2);
+    assert_eq!(hops[0].ordinal, 0);
+    assert_eq!(hops[0].node_id, n1);
+    assert!(hops[0].inter_port.is_none());
+    assert_eq!(hops[1].ordinal, 1);
+    assert_eq!(hops[1].inter_port, Some(30001));
+}
+
+#[tokio::test]
+async fn soft_delete_hides_tunnel_and_active_refs_counts() {
+    let app = common::make_app().await.unwrap();
+    let n1 = sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('a','x')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    let n2 = sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('b','x')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    let tid = Tunnel::create_with_hops(&app.state.pool, "t1", "tls",
+        &[(0, n1, None), (1, n2, Some(30002))]).await.unwrap();
+
+    // 无规则引用 → active_rule_refs = 0。
+    assert_eq!(Tunnel::active_rule_refs(&app.state.pool, tid).await.unwrap(), 0);
+    // 软删后 find_by_id 不可见。
+    assert_eq!(Tunnel::soft_delete(&app.state.pool, tid).await.unwrap(), 1);
+    assert!(Tunnel::find_by_id(&app.state.pool, tid).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn hops_using_node_detects_node_membership() {
+    let app = common::make_app().await.unwrap();
+    let n1 = sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('a','x')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    let n2 = sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('b','x')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    Tunnel::create_with_hops(&app.state.pool, "t2", "tcp",
+        &[(0, n1, None), (1, n2, Some(30003))]).await.unwrap();
+    assert!(TunnelHop::node_in_active_tunnel(&app.state.pool, n2).await.unwrap());
+    let n3 = sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('c','x')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    assert!(!TunnelHop::node_in_active_tunnel(&app.state.pool, n3).await.unwrap());
+}
+```
+
+- [ ] **Step 3: 跑测试验证失败**
+
+Run: `cargo test -p panel-server --test api_tunnels`
+Expected: 编译 FAIL（`models::tunnel` 不存在）。
+
+- [ ] **Step 4: 实现 models/tunnel.rs**
+
+```rust
+use sqlx::{prelude::FromRow, SqlitePool};
+
+#[derive(Debug, Clone, FromRow)]
+pub struct Tunnel {
+    pub id: i64,
+    pub name: String,
+    pub transport: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct TunnelHop {
+    pub id: i64,
+    pub tunnel_id: i64,
+    pub ordinal: i64,
+    pub node_id: i64,
+    pub inter_port: Option<i64>,
+    pub created_at: String,
+}
+
+const TUNNEL_COLS: &str = "id, name, transport, status, created_at, updated_at";
+const HOP_COLS: &str = "id, tunnel_id, ordinal, node_id, inter_port, created_at";
+
+impl Tunnel {
+    /// 事务建隧道 + N 跳。hops = &[(ordinal, node_id, inter_port)]。
+    pub async fn create_with_hops(
+        pool: &SqlitePool,
+        name: &str,
+        transport: &str,
+        hops: &[(i64, i64, Option<i64>)],
+    ) -> sqlx::Result<i64> {
+        let mut tx = pool.begin().await?;
+        let res = sqlx::query("INSERT INTO tunnels (name, transport) VALUES (?, ?)")
+            .bind(name).bind(transport).execute(&mut *tx).await?;
+        let tunnel_id = res.last_insert_rowid();
+        for (ordinal, node_id, inter_port) in hops {
+            sqlx::query(
+                "INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (?, ?, ?, ?)",
+            )
+            .bind(tunnel_id).bind(ordinal).bind(node_id).bind(inter_port)
+            .execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(tunnel_id)
+    }
+
+    pub async fn find_by_id(pool: &SqlitePool, id: i64) -> sqlx::Result<Option<Self>> {
+        let sql = format!("SELECT {TUNNEL_COLS} FROM tunnels WHERE id = ? AND deleted_at IS NULL");
+        sqlx::query_as(&sql).bind(id).fetch_optional(pool).await
+    }
+
+    pub async fn list_paged(pool: &SqlitePool, limit: i64, offset: i64) -> sqlx::Result<Vec<Self>> {
+        let sql = format!(
+            "SELECT {TUNNEL_COLS} FROM tunnels WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ? OFFSET ?"
+        );
+        sqlx::query_as(&sql).bind(limit).bind(offset).fetch_all(pool).await
+    }
+
+    pub async fn count(pool: &SqlitePool) -> sqlx::Result<i64> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM tunnels WHERE deleted_at IS NULL")
+            .fetch_one(pool).await
+    }
+
+    pub async fn update_name(pool: &SqlitePool, id: i64, name: &str) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE tunnels SET name = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+        ).bind(name).bind(id).execute(pool).await?;
+        Ok(res.rows_affected())
+    }
+
+    pub async fn soft_delete(pool: &SqlitePool, id: i64) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE tunnels SET deleted_at = datetime('now'), updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        ).bind(id).execute(pool).await?;
+        Ok(res.rows_affected())
+    }
+
+    /// 引用该隧道的活跃业务规则数(删除保护用)。
+    pub async fn active_rule_refs(pool: &SqlitePool, id: i64) -> sqlx::Result<i64> {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM forward_rules WHERE tunnel_id = ? AND deleted_at IS NULL",
+        ).bind(id).fetch_one(pool).await
+    }
+}
+
+impl TunnelHop {
+    pub async fn list_for_tunnel(pool: &SqlitePool, tunnel_id: i64) -> sqlx::Result<Vec<Self>> {
+        let sql = format!(
+            "SELECT {HOP_COLS} FROM tunnel_hops WHERE tunnel_id = ? ORDER BY ordinal"
+        );
+        sqlx::query_as(&sql).bind(tunnel_id).fetch_all(pool).await
+    }
+
+    /// 该节点是否参与任一活跃隧道(删节点保护用;隧道软删时其 hops 视为失效)。
+    pub async fn node_in_active_tunnel(pool: &SqlitePool, node_id: i64) -> sqlx::Result<bool> {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tunnel_hops th \
+             JOIN tunnels t ON t.id = th.tunnel_id \
+             WHERE th.node_id = ? AND t.deleted_at IS NULL",
+        ).bind(node_id).fetch_one(pool).await?;
+        Ok(n > 0)
+    }
+}
+```
+
+`models/mod.rs` 加 `pub mod tunnel;`。
+
+- [ ] **Step 5: 跑测试验证通过**
+
+Run: `cargo test -p panel-server --test api_tunnels && cargo test --workspace`
+Expected: 全 PASS。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add migrations/0006_tunnels.sql crates/panel-server/src/models/tunnel.rs crates/panel-server/src/models/mod.rs crates/panel-server/tests/api_tunnels.rs
+git commit -m "feat(db): tunnels + tunnel_hops schema; Tunnel/TunnelHop models with delete-protection queries"
+```
+
+## Task 2: proto — Rule.tunnel + TunnelContext + Command oneof 6/7
+
+**Files:**
+- Modify: `crates/common/proto/control.proto`
+- Test: `crates/common/tests/proto_tunnel.rs`（新建,验证生成的类型可构造）
+
+> proto 由 `crates/common/build.rs`（tonic-build + vendored protoc）在 `cargo build` 时生成,无需本地装 protoc。
+
+- [ ] **Step 1: 写失败测试 `crates/common/tests/proto_tunnel.rs`**
+
+```rust
+//! 验证 P3b 隧道 proto 类型生成正确且可构造。
+use emorelay_common::control::v1::{
+    tunnel_role, Rule, TunnelContext, TunnelCredentials, RevokeTunnelCredentials,
+    command::Body, Command, TunnelRole,
+};
+
+#[test]
+fn rule_carries_tunnel_context() {
+    let r = Rule {
+        id: 1,
+        protocol: "tcp".into(),
+        listen_ip: "0.0.0.0".into(),
+        listen_port: 20000,
+        target_host: "1.2.3.4".into(),
+        target_port: 443,
+        enabled: true,
+        bandwidth_mbps: 0,
+        tunnel: Some(TunnelContext {
+            tunnel_id: 7,
+            role: TunnelRole::Entry as i32,
+            next_hop_addr: "2.2.2.2".into(),
+            next_hop_inter_port: 30001,
+            self_inter_port: 0,
+            transport: "tcp".into(),
+        }),
+    };
+    assert_eq!(r.tunnel.as_ref().unwrap().tunnel_id, 7);
+    assert_eq!(r.tunnel.as_ref().unwrap().role, tunnel_role::Entry as i32);
+}
+
+#[test]
+fn command_oneof_has_tunnel_credentials() {
+    let c = Command {
+        body: Some(Body::TunnelCredentials(TunnelCredentials {
+            tunnel_id: 7,
+            ordinal: 1,
+            server_cert_pem: "S".into(),
+            server_key_pem: "SK".into(),
+            client_cert_pem: "C".into(),
+            client_key_pem: "CK".into(),
+        })),
+    };
+    assert!(matches!(c.body, Some(Body::TunnelCredentials(_))));
+
+    let r = Command {
+        body: Some(Body::RevokeTunnelCredentials(RevokeTunnelCredentials { tunnel_id: 7 })),
+    };
+    assert!(matches!(r.body, Some(Body::RevokeTunnelCredentials(_))));
+}
+```
+
+（`tunnel_role` 模块名与 `TunnelRole` 枚举名按 prost 生成实际为准；prost 把 enum 变体生成为 `TunnelRole::Entry`。若 `tunnel_role::Entry` 路径不存在则只用 `TunnelRole::Entry as i32`,删去 `tunnel_role` import 与该断言行——以编译通过为准,不改语义。）
+
+- [ ] **Step 2: 跑测试验证失败**
+
+Run: `cargo test -p emorelay-common --test proto_tunnel`
+Expected: 编译 FAIL（Rule 无 tunnel 字段 / TunnelContext 不存在）。
+
+- [ ] **Step 3: 改 proto**
+
+`crates/common/proto/control.proto` 的 `message Rule`,在 `int64 bandwidth_mbps = 11;` 之后加：
+
+```proto
+  // P3b 多跳隧道上下文。无隧道 → None。字段号 12(11 已被 bandwidth_mbps 占)。
+  TunnelContext tunnel = 12;
+```
+
+在 `Rule` 之后(`ApplyRule` 之前)加：
+
+```proto
+// 多跳隧道上下文。dispatcher 按 hop 拆 Rule 时填充,告诉 Agent 自己的角色与下一跳。
+message TunnelContext {
+  int64 tunnel_id = 1;
+  TunnelRole role = 2;
+  string next_hop_addr = 3;        // 下一跳节点可达地址(public_ip)
+  uint32 next_hop_inter_port = 4;  // 下一跳监听的 inter_port(自己 dial 的目标)
+  uint32 self_inter_port = 5;      // 本跳监听端口(mid/exit 用;entry 监听业务 listen_port,置 0)
+  string transport = 6;            // tcp / tls / wss(全链路统一)
+}
+
+enum TunnelRole {
+  TUNNEL_ROLE_UNSPECIFIED = 0;
+  TUNNEL_ROLE_ENTRY = 1;
+  TUNNEL_ROLE_MID = 2;
+  TUNNEL_ROLE_EXIT = 3;
+}
+
+// 隧道 hop 的 TLS 凭据(transport=tls/wss 时,由面板 CA 在隧道创建时签发并下发)。
+// Agent 落盘到 ${AGENT_DATA_DIR}/tunnels/<id>/hop-<ordinal>/{server,client}.{pem,key}。
+message TunnelCredentials {
+  int64 tunnel_id = 1;
+  int32 ordinal = 2;
+  string server_cert_pem = 3;
+  string server_key_pem = 4;
+  string client_cert_pem = 5;
+  string client_key_pem = 6;
+}
+
+message RevokeTunnelCredentials {
+  int64 tunnel_id = 1;
+}
+```
+
+`message Command` 的 `oneof body` 在 `RestartRule restart_rule = 5;` 之后加：
+
+```proto
+    TunnelCredentials tunnel_credentials = 6;
+    RevokeTunnelCredentials revoke_tunnel_credentials = 7;
+```
+
+- [ ] **Step 4: 跑测试验证通过**
+
+Run: `cargo test -p emorelay-common --test proto_tunnel && cargo test --workspace`
+Expected: 全 PASS。注意:proto 加 `Rule.tunnel` 字段后,所有构造 `Rule {}` 字面量的地方（panel-server `grpc/commands.rs::rule_to_proto`、node-agent `store.rs` 的 RuleJson From、relay tcp/udp 测试的 `rule_for`）会因缺 `tunnel` 字段**编译失败**。逐处补 `tunnel: None`:
+- `grpc/commands.rs::rule_to_proto`: 末尾加 `tunnel: None,`
+- `node-agent/src/store.rs`: `From<RuleJson> for Rule` 末尾加 `tunnel: None,`（RuleJson 本身不加 tunnel 字段——Agent 持久化暂不含隧道,数据面再扩展;`From<&Rule> for RuleJson` 忽略 tunnel）
+- `node-agent/src/relay/tcp.rs` + `udp.rs` 测试 `rule_for()`: 加 `tunnel: None,`
+这些是 proto 加字段的机械同步,本 Task 一并改（属「因你的改动产生的编译错误」）。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/common/proto/control.proto crates/common/tests/proto_tunnel.rs crates/panel-server/src/grpc/commands.rs crates/node-agent/src/store.rs crates/node-agent/src/relay/tcp.rs crates/node-agent/src/relay/udp.rs
+git commit -m "feat(proto): Rule.tunnel context + TunnelRole + Command tunnel-credentials branches"
+```
+
+---
+
+## Task 3: routes/tunnels.rs CRUD + 链路校验 + inter_port 分配 + 删除保护
+
+**Files:**
+- Create: `crates/panel-server/src/routes/tunnels.rs`
+- Modify: `crates/panel-server/src/routes/mod.rs`
+- Test: 扩展 `crates/panel-server/tests/api_tunnels.rs`
+
+- [ ] **Step 1: 写失败测试（追加 api_tunnels.rs）**
+
+```rust
+use axum::http::{Method, StatusCode};
+use serde_json::json;
+
+/// 建 N 个 online 节点,port_pool [30000,30010],返回 ids。
+async fn seed_online_nodes(app: &common::TestApp, n: usize) -> Vec<i64> {
+    let mut ids = Vec::new();
+    for i in 0..n {
+        let id = sqlx::query(
+            "INSERT INTO nodes (name, agent_token_hash, status, public_ip, port_pool_min, port_pool_max) \
+             VALUES (?, 'x', 'online', ?, 30000, 30010)",
+        )
+        .bind(format!("tn{i}")).bind(format!("10.0.0.{i}"))
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+        ids.push(id);
+    }
+    ids
+}
+
+#[tokio::test]
+async fn create_tunnel_allocates_inter_ports_and_lists() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 3).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "hk-jp-us", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tid = body["id"].as_i64().unwrap();
+
+    // GET :id 含 hops,ordinal0 inter_port=null,ordinal≥1 有分配端口(池内)。
+    let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid}"), &app.admin_token, None).unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let hops = body["hops"].as_array().unwrap();
+    assert_eq!(hops.len(), 3);
+    assert!(hops[0]["inter_port"].is_null());
+    let p1 = hops[1]["inter_port"].as_i64().unwrap();
+    let p2 = hops[2]["inter_port"].as_i64().unwrap();
+    assert!((30000..=30010).contains(&p1) && (30000..=30010).contains(&p2));
+
+    // list 含 hops_count。
+    let req = common::auth_req(Method::GET, "/api/tunnels", &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["hops_count"], 3);
+}
+
+#[tokio::test]
+async fn create_tunnel_rejects_short_chain_dup_and_offline() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    // < 2 节点。
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0]] }))).unwrap();
+    let (s, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // 重复节点。
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0], nodes[0]] }))).unwrap();
+    let (s, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // 含 offline 节点。
+    let off = sqlx::query("INSERT INTO nodes (name, agent_token_hash, status) VALUES ('off','x','offline')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0], off] }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("online"));
+}
+
+#[tokio::test]
+async fn delete_tunnel_blocked_by_rule_reference() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    // 入口节点上挂一条关联隧道的规则。
+    sqlx::query(
+        "INSERT INTO forward_rules (user_id, node_id, name, protocol, listen_ip, listen_port, target_host, target_port, tunnel_id) \
+         VALUES (?, ?, 'r', 'tcp', '0.0.0.0', 20000, '1.2.3.4', 443, ?)",
+    ).bind(app.admin_user_id).bind(nodes[0]).bind(tid)
+    .execute(&app.state.pool).await.unwrap();
+
+    let req = common::auth_req(Method::DELETE, &format!("/api/tunnels/{tid}"), &app.admin_token, None).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("1"));
+}
+
+#[tokio::test]
+async fn patch_only_name_and_requires_admin() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    let req = common::auth_req(Method::PATCH, &format!("/api/tunnels/{tid}"), &app.admin_token,
+        Some(json!({ "name": "renamed" }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "renamed");
+    // 非 admin。
+    let (_uid, token) = common::make_user_token(&app, "u", "password123").await.unwrap();
+    let req = common::auth_req(Method::GET, "/api/tunnels", &token, None).unwrap();
+    let (s, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}
+```
+
+- [ ] **Step 2: 跑测试验证失败**
+
+Run: `cargo test -p panel-server --test api_tunnels`
+Expected: FAIL（路由不存在）。
+
+- [ ] **Step 3: 实现 routes/tunnels.rs**
+
+```rust
+use crate::{
+    audit,
+    auth::extractor::{ActorIp, AuthUser},
+    error::{ApiError, ApiResult},
+    models::{settings, tunnel::{Tunnel, TunnelHop}},
+    state::AppState,
+};
+use axum::{extract::{Path, Query, State}, Json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Serialize)]
+pub struct TunnelView {
+    pub id: i64,
+    pub name: String,
+    pub transport: String,
+    pub status: String,
+    pub hops_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct HopView {
+    pub ordinal: i64,
+    pub node_id: i64,
+    pub inter_port: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct TunnelDetail {
+    pub id: i64,
+    pub name: String,
+    pub transport: String,
+    pub status: String,
+    pub hops: Vec<HopView>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct ListQuery { pub page: Option<i64>, pub page_size: Option<i64> }
+
+#[derive(Serialize)]
+pub struct TunnelListResponse {
+    pub items: Vec<TunnelView>, pub total: i64, pub page: i64, pub page_size: i64,
+}
+
+#[derive(Deserialize)]
+pub struct CreateTunnelRequest {
+    pub name: String,
+    pub transport: String,
+    pub node_ids: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateTunnelRequest { pub name: Option<String> }
+
+pub async fn list(
+    State(state): State<AppState>, auth: AuthUser, Query(q): Query<ListQuery>,
+) -> ApiResult<Json<TunnelListResponse>> {
+    auth.require_admin()?;
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
+    let offset = page.saturating_sub(1).saturating_mul(page_size);
+    let tunnels = Tunnel::list_paged(&state.pool, page_size, offset).await?;
+    let total = Tunnel::count(&state.pool).await?;
+    let mut items = Vec::with_capacity(tunnels.len());
+    for t in tunnels {
+        let hops = TunnelHop::list_for_tunnel(&state.pool, t.id).await?;
+        items.push(TunnelView {
+            id: t.id, name: t.name, transport: t.transport, status: t.status,
+            hops_count: hops.len() as i64, created_at: t.created_at, updated_at: t.updated_at,
+        });
+    }
+    Ok(Json(TunnelListResponse { items, total, page, page_size }))
+}
+
+pub async fn get(
+    State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
+) -> ApiResult<Json<TunnelDetail>> {
+    auth.require_admin()?;
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
+    Ok(Json(TunnelDetail {
+        id: t.id, name: t.name, transport: t.transport, status: t.status,
+        hops: hops.into_iter().map(|h| HopView { ordinal: h.ordinal, node_id: h.node_id, inter_port: h.inter_port }).collect(),
+        created_at: t.created_at, updated_at: t.updated_at,
+    }))
+}
+
+pub async fn create(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp,
+    Json(req): Json<CreateTunnelRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+    if !matches!(req.transport.as_str(), "tcp" | "tls" | "wss") {
+        return Err(ApiError::BadRequest("transport must be tcp | tls | wss".into()));
+    }
+    // 链路 ≥ 2 + 不重复。
+    if req.node_ids.len() < 2 {
+        return Err(ApiError::BadRequest("tunnel needs at least 2 nodes".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for nid in &req.node_ids {
+        if !seen.insert(*nid) {
+            return Err(ApiError::BadRequest("node_ids must be unique".into()));
+        }
+    }
+    // 每个节点存在 + online,记录 port_pool。
+    #[derive(sqlx::FromRow)]
+    struct NodeRow { id: i64, status: String, port_pool_min: i64, port_pool_max: i64 }
+    let reserved = settings::reserved_ports(&state.pool).await;
+    let mut pools: std::collections::HashMap<i64, (i64, i64)> = std::collections::HashMap::new();
+    for nid in &req.node_ids {
+        let row: Option<NodeRow> = sqlx::query_as(
+            "SELECT id, status, port_pool_min, port_pool_max FROM nodes WHERE id = ? AND deleted_at IS NULL",
+        ).bind(nid).fetch_optional(&state.pool).await?;
+        let row = row.ok_or_else(|| ApiError::BadRequest(format!("node {nid} does not exist")))?;
+        if row.status != "online" {
+            return Err(ApiError::BadRequest(
+                "请确保链上所有节点都在线 (all nodes must be online)".into(),
+            ));
+        }
+        pools.insert(row.id, (row.port_pool_min, row.port_pool_max));
+    }
+    // 为 ordinal ≥ 1 的 hop 在其节点 port_pool 分配 inter_port(排除 reserved + 该节点已占用 listen_port + 同隧道已分配)。
+    let mut hops: Vec<(i64, i64, Option<i64>)> = Vec::with_capacity(req.node_ids.len());
+    for (ordinal, nid) in req.node_ids.iter().enumerate() {
+        if ordinal == 0 {
+            hops.push((0, *nid, None));
+            continue;
+        }
+        let (lo, hi) = pools[nid];
+        // 该节点已占用端口(活跃 forward_rules.listen_port + 已分配的 inter_port)。
+        let taken: Vec<i64> = sqlx::query_scalar(
+            "SELECT listen_port FROM forward_rules WHERE node_id = ? AND deleted_at IS NULL \
+             UNION SELECT th.inter_port FROM tunnel_hops th JOIN tunnels t ON t.id = th.tunnel_id \
+             WHERE th.node_id = ? AND th.inter_port IS NOT NULL AND t.deleted_at IS NULL",
+        ).bind(nid).bind(nid).fetch_all(&state.pool).await?;
+        let already: std::collections::HashSet<i64> =
+            hops.iter().filter(|(_, n, _)| n == nid).filter_map(|(_, _, p)| *p).collect();
+        let port = (lo..=hi).find(|p| {
+            !reserved.contains(p) && !taken.contains(p) && !already.contains(p)
+        }).ok_or_else(|| ApiError::BadRequest(format!(
+            "node {nid} port pool exhausted for inter_port allocation"
+        )))?;
+        hops.push((ordinal as i64, *nid, Some(port)));
+    }
+
+    let tid = Tunnel::create_with_hops(&state.pool, name, &req.transport, &hops)
+        .await
+        .map_err(map_sqlx_to_api)?;
+
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.create", Some("tunnel"), Some(tid), Some(name), true, None).await;
+
+    // 控制面阶段不 dispatch(隧道不带业务规则,等规则关联;真正下发留数据面)。
+    Ok(Json(json!({ "id": tid })))
+}
+
+pub async fn update(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp,
+    Path(id): Path<i64>, Json(req): Json<UpdateTunnelRequest>,
+) -> ApiResult<Json<TunnelView>> {
+    auth.require_admin()?;
+    if let Some(name) = req.name.as_deref() {
+        if name.trim().is_empty() {
+            return Err(ApiError::BadRequest("name cannot be empty".into()));
+        }
+        let rows = Tunnel::update_name(&state.pool, id, name.trim()).await.map_err(map_sqlx_to_api)?;
+        if rows == 0 { return Err(ApiError::NotFound); }
+    }
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.update", Some("tunnel"), Some(id), None, true, None).await;
+    Ok(Json(TunnelView {
+        id: t.id, name: t.name, transport: t.transport, status: t.status,
+        hops_count: hops.len() as i64, created_at: t.created_at, updated_at: t.updated_at,
+    }))
+}
+
+pub async fn delete(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp, Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let _t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let refs = Tunnel::active_rule_refs(&state.pool, id).await?;
+    if refs > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "tunnel is referenced by {refs} active rule(s); detach them first"
+        )));
+    }
+    let rows = Tunnel::soft_delete(&state.pool, id).await?;
+    if rows == 0 { return Err(ApiError::NotFound); }
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.delete", Some("tunnel"), Some(id), None, true, None).await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 控制面阶段:restart 仅记 audit(真正下发 TunnelTask 重启留数据面)。
+pub async fn restart(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp, Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let _t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.restart", Some("tunnel"), Some(id), None, true, None).await;
+    Ok(Json(json!({ "ok": true, "dispatched": false })))
+}
+
+/// 控制面阶段:status 返回 tunnels.status 字段值(数据面接 hop 心跳后更新)。
+pub async fn status(
+    State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(json!({ "id": t.id, "status": t.status })))
+}
+
+fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
+    if let Some(db) = e.as_database_error() {
+        if db.is_unique_violation() {
+            return ApiError::BadRequest("tunnel name already exists".into());
+        }
+        if db.is_check_violation() {
+            return ApiError::BadRequest("invalid tunnel fields (check constraint)".into());
+        }
+    }
+    ApiError::Database(e)
+}
+```
+
+`routes/mod.rs`：`pub mod tunnels;` + 注册（在 bandwidth-profiles 路由块后）：
+
+```rust
+        .route("/api/tunnels", get(tunnels::list).post(tunnels::create))
+        .route(
+            "/api/tunnels/{id}",
+            get(tunnels::get).patch(tunnels::update).delete(tunnels::delete),
+        )
+        .route("/api/tunnels/{id}/restart", post(tunnels::restart))
+        .route("/api/tunnels/{id}/status", get(tunnels::status))
+```
+
+- [ ] **Step 4: 跑测试验证通过**
+
+Run: `cargo test -p panel-server --test api_tunnels && cargo test --workspace`
+Expected: 全 PASS。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/panel-server/src/routes/tunnels.rs crates/panel-server/src/routes/mod.rs crates/panel-server/tests/api_tunnels.rs
+git commit -m "feat(server): tunnels CRUD with chain validation, inter_port allocation, delete protection"
+```
+
+## Task 4: 节点删除保护扩展 + 规则关联隧道校验
+
+**Files:**
+- Modify: `crates/panel-server/src/models/rule.rs`（Rule struct + create 加 tunnel_id）、`crates/panel-server/src/routes/rules.rs`（DTO + 校验）、`crates/panel-server/src/routes/nodes.rs`（delete 查 tunnel_hops）
+- Test: `crates/panel-server/tests/api_tunnels.rs`（追加）
+
+- [ ] **Step 1: 写失败测试（追加 api_tunnels.rs）**
+
+```rust
+#[tokio::test]
+async fn delete_node_blocked_when_in_tunnel() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, _b) = common::send(app.app.clone(), req).await.unwrap();
+    // 删参与隧道的节点 → 400。
+    let req = common::auth_req(Method::DELETE, &format!("/api/nodes/{}", nodes[1]), &app.admin_token, None).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("隧道") || body["message"].as_str().unwrap().contains("tunnel"));
+}
+
+#[tokio::test]
+async fn rule_tunnel_id_must_match_entry_node() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    // node_id = 入口(nodes[0]) → OK。
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({ "node_id": nodes[0], "name": "ok", "protocol": "tcp", "listen_port": 20000,
+                     "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["tunnel_id"], tid);
+    // node_id = 非入口(nodes[1]) → 400。
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({ "node_id": nodes[1], "name": "bad", "protocol": "tcp", "listen_port": 20001,
+                     "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("entry"));
+}
+```
+
+- [ ] **Step 2: 跑测试验证失败**
+
+Run: `cargo test -p panel-server --test api_tunnels`
+Expected: FAIL（删节点未拦 / 规则无 tunnel_id）。
+
+- [ ] **Step 3: models/rule.rs — Rule struct + create 加 tunnel_id**
+
+`Rule` struct 在 `bandwidth_mbps` 之后加 `pub tunnel_id: Option<i64>,`。
+
+`RULE_COLUMNS` 把 `bandwidth_profile_id,` 那段之后追加 `tunnel_id`(放在派生 bandwidth_mbps 子查询之后、created_at 之前)：
+
+```rust
+const RULE_COLUMNS: &str = "id, user_id, node_id, name, protocol, listen_ip, listen_port, \
+    target_host, target_port, enabled, rx_bytes, tx_bytes, connection_count, \
+    bandwidth_profile_id, \
+    (SELECT bp.bandwidth_mbps FROM bandwidth_profiles bp \
+        WHERE bp.id = forward_rules.bandwidth_profile_id AND bp.deleted_at IS NULL) AS bandwidth_mbps, \
+    tunnel_id, created_at, updated_at";
+```
+
+`create` 加末参 `tunnel_id: Option<i64>`,INSERT 列加 `tunnel_id`、VALUES 加一个 `?`、bind 加 `.bind(tunnel_id)`（放 bandwidth_profile_id 之后）：
+
+```rust
+            "INSERT INTO forward_rules \
+                (user_id, node_id, name, protocol, listen_ip, listen_port, \
+                 target_host, target_port, bandwidth_profile_id, tunnel_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+```
+（`update_fields` 不动 tunnel_id——隧道关联在 create 时定;update 不改。）
+
+- [ ] **Step 4: routes/rules.rs — DTO + 校验**
+
+`RuleView` 加 `pub tunnel_id: Option<i64>,`;`From<Rule>` 同步 `tunnel_id: r.tunnel_id,`。
+`CreateRuleRequest` 加 `pub tunnel_id: Option<i64>,`。
+create handler 在 node 查询之后、端口解析之前加：
+
+```rust
+    // 关联隧道:tunnel_id 给定时,node_id 必须 = 隧道入口(ordinal 0)节点。
+    if let Some(tid) = req.tunnel_id {
+        use crate::models::tunnel::TunnelHop;
+        let hops = TunnelHop::list_for_tunnel(&state.pool, tid).await?;
+        let entry = hops.iter().find(|h| h.ordinal == 0)
+            .ok_or_else(|| ApiError::BadRequest("tunnel_id does not exist".into()))?;
+        if entry.node_id != req.node_id {
+            return Err(ApiError::BadRequest(
+                "rule.node_id must equal the tunnel entry (ordinal 0) node".into()));
+        }
+    }
+```
+
+`Rule::create(...)` 调用末尾加 `req.tunnel_id`。
+
+- [ ] **Step 5: routes/nodes.rs — delete 扩展查 tunnel_hops**
+
+在现有「查 forward_rules 引用」块之后、`Node::soft_delete` 之前加：
+
+```rust
+    // 节点参与任一活跃隧道 → 拒删(P3b)。
+    if crate::models::tunnel::TunnelHop::node_in_active_tunnel(&state.pool, id).await? {
+        return Err(ApiError::BadRequest(
+            "节点正参与活跃隧道,请先删除相关隧道 (node is part of an active tunnel)".into()));
+    }
+```
+
+- [ ] **Step 6: 跑测试验证通过**
+
+Run: `cargo test -p panel-server --test api_tunnels && cargo test -p panel-server --test api_rules && cargo test --workspace`
+Expected: 全 PASS（注意 api_rules 既有测试因 RuleView 加 tunnel_id 字段不受影响——serde 加字段不破坏旧断言;Rule::create 调用点若别处有需同步加 tunnel_id 实参,grep 确认仅 rules.rs + rules_io.rs::execute_create 两处——rules_io.rs 的导入路径也要补 `None`）。
+
+> **重要**：`rules_io.rs::execute_create` 也调 `Rule::create`,加 tunnel_id 参数后此处编译失败,补末参 `None`（导入的规则不关联隧道——隧道关联跨实例不可控,与 bandwidth_profile 同理）。本 Task 一并改 `crates/panel-server/src/routes/rules_io.rs`。
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/panel-server/src/models/rule.rs crates/panel-server/src/routes/rules.rs crates/panel-server/src/routes/rules_io.rs crates/panel-server/src/routes/nodes.rs crates/panel-server/tests/api_tunnels.rs
+git commit -m "feat(server): node-delete blocked by tunnel membership; rule.tunnel_id must match entry node"
+```
+
+---
+
+## Task 5: dispatcher 按 hop 拆 Rule（split_tunnel_rule 纯函数）
+
+**Files:**
+- Create: `crates/panel-server/src/grpc/tunnel_split.rs`
+- Modify: `crates/panel-server/src/grpc/mod.rs`（`pub mod tunnel_split;`）
+- Test: `crates/panel-server/tests/tunnel_split.rs`
+
+> 本 Task 只做纯函数 + 单测。**不接入** rules.rs 的实际 dispatch 路径——无 tunnel 能力的 Agent 收到拆分 Rule 会错误起普通 relay,真实下发留数据面（届时 Agent 消费 tunnel 字段走 TunnelTask）。
+
+- [ ] **Step 1: 写失败测试 `crates/panel-server/tests/tunnel_split.rs`**
+
+```rust
+use emorelay_common::control::v1::TunnelRole;
+use panel_server::grpc::tunnel_split::{split_tunnel_rule, SplitInput, HopInput};
+
+fn rule_input() -> SplitInput {
+    SplitInput {
+        rule_id: 100,
+        protocol: "tcp".into(),
+        listen_ip: "0.0.0.0".into(),
+        listen_port: 20000,
+        target_host: "9.9.9.9".into(),
+        target_port: 443,
+        enabled: true,
+        bandwidth_mbps: 50,
+        tunnel_id: 7,
+        transport: "tls".into(),
+    }
+}
+
+#[test]
+fn two_hop_split_entry_and_exit() {
+    let hops = vec![
+        HopInput { node_id: 1, inter_port: None,        addr: "10.0.0.1".into() }, // entry
+        HopInput { node_id: 2, inter_port: Some(30001), addr: "10.0.0.2".into() }, // exit
+    ];
+    let out = split_tunnel_rule(&rule_input(), &hops);
+    assert_eq!(out.len(), 2);
+
+    // entry
+    let (n0, r0) = &out[0];
+    assert_eq!(*n0, 1);
+    let t0 = r0.tunnel.as_ref().unwrap();
+    assert_eq!(t0.role, TunnelRole::Entry as i32);
+    assert_eq!(t0.next_hop_addr, "10.0.0.2");
+    assert_eq!(t0.next_hop_inter_port, 30001);
+    assert_eq!(t0.self_inter_port, 0);
+    assert_eq!(t0.transport, "tls");
+    assert_eq!(r0.listen_port, 20000);     // entry 监听业务端口
+    assert_eq!(r0.bandwidth_mbps, 50);     // 限速只在 entry
+
+    // exit
+    let (n1, r1) = &out[1];
+    assert_eq!(*n1, 2);
+    let t1 = r1.tunnel.as_ref().unwrap();
+    assert_eq!(t1.role, TunnelRole::Exit as i32);
+    assert_eq!(t1.self_inter_port, 30001); // exit 监听自己的 inter_port
+    assert_eq!(t1.next_hop_inter_port, 0); // 无下一跳
+    assert_eq!(r1.target_host, "9.9.9.9"); // exit 连业务目标
+    assert_eq!(r1.bandwidth_mbps, 0);      // 非 entry 不重复限速
+}
+
+#[test]
+fn three_hop_split_has_mid() {
+    let hops = vec![
+        HopInput { node_id: 1, inter_port: None,        addr: "10.0.0.1".into() },
+        HopInput { node_id: 2, inter_port: Some(30001), addr: "10.0.0.2".into() },
+        HopInput { node_id: 3, inter_port: Some(30002), addr: "10.0.0.3".into() },
+    ];
+    let out = split_tunnel_rule(&rule_input(), &hops);
+    assert_eq!(out.len(), 3);
+    let t_mid = out[1].1.tunnel.as_ref().unwrap();
+    assert_eq!(t_mid.role, TunnelRole::Mid as i32);
+    assert_eq!(t_mid.self_inter_port, 30001);     // mid 监听自己
+    assert_eq!(t_mid.next_hop_addr, "10.0.0.3");   // dial 下一跳
+    assert_eq!(t_mid.next_hop_inter_port, 30002);
+    assert_eq!(out[1].1.bandwidth_mbps, 0);
+    // exit
+    assert_eq!(out[2].1.tunnel.as_ref().unwrap().role, TunnelRole::Exit as i32);
+}
+```
+
+- [ ] **Step 2: 跑测试验证失败**
+
+Run: `cargo test -p panel-server --test tunnel_split`
+Expected: 编译 FAIL（`grpc::tunnel_split` 不存在）。
+
+- [ ] **Step 3: 实现 tunnel_split.rs**
+
+```rust
+//! 把一条关联隧道的业务规则按 hop 拆成 N 个带 TunnelContext 的 proto Rule(P3b)。
+//! entry 监听业务 listen_port + dial 下一跳;mid 监听 self_inter_port + dial 下一跳;
+//! exit 监听 self_inter_port + connect 业务 target。限速只在 entry 计(mid/exit bandwidth_mbps=0)。
+//! 纯函数,便于单测;dispatch 接入留数据面。
+use emorelay_common::control::v1::{Rule as ProtoRule, TunnelContext, TunnelRole};
+
+/// 拆分输入:业务规则字段 + 隧道 id/transport。
+pub struct SplitInput {
+    pub rule_id: i64,
+    pub protocol: String,
+    pub listen_ip: String,
+    pub listen_port: u32,
+    pub target_host: String,
+    pub target_port: u32,
+    pub enabled: bool,
+    pub bandwidth_mbps: i64,
+    pub tunnel_id: i64,
+    pub transport: String,
+}
+
+/// 单跳输入:节点 id + 该跳监听端口(entry 为 None)+ 节点可达地址。
+pub struct HopInput {
+    pub node_id: i64,
+    pub inter_port: Option<i64>,
+    pub addr: String,
+}
+
+/// 返回 (node_id, 该节点上要跑的 proto Rule)。hops 按 ordinal 升序。
+pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, ProtoRule)> {
+    let n = hops.len();
+    hops.iter().enumerate().map(|(i, hop)| {
+        let role = if i == 0 {
+            TunnelRole::Entry
+        } else if i == n - 1 {
+            TunnelRole::Exit
+        } else {
+            TunnelRole::Mid
+        };
+        let next = hops.get(i + 1);
+        let tunnel = TunnelContext {
+            tunnel_id: input.tunnel_id,
+            role: role as i32,
+            next_hop_addr: next.map(|h| h.addr.clone()).unwrap_or_default(),
+            next_hop_inter_port: next.and_then(|h| h.inter_port).unwrap_or(0) as u32,
+            self_inter_port: hop.inter_port.unwrap_or(0) as u32,
+            transport: input.transport.clone(),
+        };
+        let proto = ProtoRule {
+            id: input.rule_id,
+            protocol: input.protocol.clone(),
+            listen_ip: input.listen_ip.clone(),
+            listen_port: input.listen_port,
+            target_host: input.target_host.clone(),
+            target_port: input.target_port,
+            enabled: input.enabled,
+            // 限速只在 entry 起作用,mid/exit 置 0 避免逐跳重复扣量。
+            bandwidth_mbps: if i == 0 { input.bandwidth_mbps } else { 0 },
+            tunnel: Some(tunnel),
+        };
+        (hop.node_id, proto)
+    }).collect()
+}
+```
+
+`grpc/mod.rs` 加 `pub mod tunnel_split;`。
+
+- [ ] **Step 4: 跑测试验证通过**
+
+Run: `cargo test -p panel-server --test tunnel_split && cargo test --workspace`
+Expected: 全 PASS。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add crates/panel-server/src/grpc/tunnel_split.rs crates/panel-server/src/grpc/mod.rs crates/panel-server/tests/tunnel_split.rs
+git commit -m "feat(grpc): split_tunnel_rule splits a rule into per-hop entry/mid/exit proto Rules"
+```
+
+## Task 6: P3b 控制面文档收尾
+
+**Files:**
+- Modify: `docs/api.md`、`plan.md`
+
+- [ ] **Step 1: docs/api.md**
+
+- 新增 `## Tunnels`（admin only）：7 端点（GET list 含 hops_count / POST create {name, transport, node_ids} / GET :id 含 hops 详情 / PATCH :id 仅改 name / DELETE :id 被规则引用→400 / POST :id/restart / GET :id/status）；说明 transport ∈ {tcp,tls,wss}、链路 ≥2 节点全 online、inter_port 自动分配（ordinal≥1 从各节点 port_pool）、删除保护。
+- rules 资源：`tunnel_id`（创建可选；给定时 node_id 必须 = 隧道入口 ordinal 0 节点；响应含 tunnel_id）。
+- 节点删除保护：补「节点参与活跃隧道时拒删」。
+- audit actions：加 `tunnel.create` / `tunnel.update` / `tunnel.delete` / `tunnel.restart`。
+- 注明：隧道转发由 Agent 数据面执行（P3b-数据面 落地后生效）；控制面阶段隧道为「定义就绪、转发待数据面」。
+
+- [ ] **Step 2: plan.md 附录**
+
+「Phase 3a」小节后加：
+
+```markdown
+### Phase 3b 控制面（2026-06-10 启动）
+
+多跳隧道控制面 —— DB(tunnels/tunnel_hops) + proto(Rule.tunnel=12 + TunnelContext + Command 6/7) + 隧道 REST CRUD + 节点删除保护扩展 + 按 hop 拆 Rule 纯函数,全部交付。
+
+- Spec: `docs/superpowers/specs/2026-06-10-mvp-followups-design.md` §4.2/4.3/4.5
+- Plan: `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`（P3b 控制面段,6 Task）
+- migration 0006(tunnels + tunnel_hops + forward_rules.tunnel_id)。
+- proto Rule.tunnel 用字段号 12(11 已被 P2 bandwidth_mbps 占)。
+- inter_port 语义:ordinal≥1 的 hop 从其节点 port_pool 分配(被上一跳连入),entry inter_port=NULL。
+- 隧道全链路统一 transport;创建校验 ≥2 节点全 online + 不重复。
+- 删除保护:删隧道(有规则引用)/删节点(参与隧道)均 400。
+- `split_tunnel_rule` 纯函数就绪(entry/mid/exit + 限速只在 entry),实际 dispatch 接入留数据面。
+- **待 P3b-数据面**:Agent tunnel 模块(transport trait + TCP/TLS/WSS + TunnelTask)+ 真实下发 + 隧道证书签发下发 + status 心跳。
+```
+
+- [ ] **Step 3: 全量回归 + Commit**
+
+```bash
+cargo test --workspace
+git add docs/api.md plan.md
+git commit -m "docs(p3b): document tunnels control-plane API, rule.tunnel_id, node-delete protection"
+```
+
+---
+
+## P3b 控制面 验收清单
+
+- [ ] migration 0006 建 tunnels/tunnel_hops + forward_rules.tunnel_id → Task 1
+- [ ] proto Rule.tunnel(12) + TunnelContext + TunnelRole + Command oneof 6/7 编译且可构造 → Task 2
+- [ ] POST /api/tunnels（≥2 online 节点）→ 分配 inter_port（ordinal≥1）+ 事务写 hops → Task 3
+- [ ] 创建拒：<2 节点 / 重复节点 / 含 offline → Task 3
+- [ ] DELETE 隧道有规则引用 → 400；DELETE 节点参与隧道 → 400 → Task 3 / 4
+- [ ] 规则 tunnel_id 给定时 node_id 必须 = 入口节点 → Task 4
+- [ ] split_tunnel_rule 双跳/三跳拆出正确角色 + next_hop + inter_port + 限速只 entry → Task 5
+
+## P3b-数据面 概要（待控制面落地后展开）
+
+§4.6 + §4.9 单元 5(dispatch 接入)/6。Task 概要：
+1. Agent `tunnel/transport.rs`：`TunnelTransport` trait（dial/bind/accept）+ `tcp_transport.rs`（裸 TCP，先）。store.rs RuleJson 加 tunnel context（serde default 兼容）。
+2. Agent `tunnel/task.rs`：`TunnelTask` per (rule_id, role)——entry（bind listen_port → dial 下一跳）/ mid（bind inter_port → dial 下一跳）/ exit（bind inter_port → connect target）；`bridge()` 复用 P2 token bucket（仅 entry）。UDP-over-tunnel 帧（2 字节大端长度前缀，entry/exit 打包拆包）。
+3. `manager.rs` RuleManager 扩展：收到带 `tunnel` 的 Rule → 起 TunnelTask 而非 TcpRelayTask/UdpRelayTask；ConfigStore 持久化 + 重启恢复。
+4. `tls_transport.rs`（rustls，SNI=tunnel-<id>-hop-<n>.emorelay.internal，复用内置 CA）+ server 端按 (tunnel_id, ordinal) 签隧道 server/client cert + `Command.tunnel_credentials` 下发 + Agent 落盘 `${AGENT_DATA_DIR}/tunnels/<id>/hop-<ordinal>/`。
+5. `wss_transport.rs`（tokio-tungstenite + rustls）。
+6. 实际 dispatch 接入：rules.rs create 关联隧道时调 `split_tunnel_rule` + 逐 hop dispatch；隧道创建/删除时下发/吊销 TunnelCredentials；隧道 restart 重下发。
+7. 隧道 status：hop 心跳聚合（最近 30s 有心跳 = up）。
+
+## P3b 执行注意
+
+1. 严格按 Task 1→6 顺序。T3 依赖 T1（model）；T4 依赖 T1（TunnelHop 方法）+ T3（隧道已能建）；T5 依赖 T2（proto 类型）。
+2. T2 改 proto 后所有 `Rule {}` 字面量需补 `tunnel: None`（grpc/commands.rs、node-agent store.rs/relay 测试）——属机械同步。
+3. 每个 Task 收尾跑测试 + `cargo test --workspace`,全绿 → commit → spawn 子代理走 `superpowers:code-reviewer`,通过才进下一 Task。
+4. 控制面**不接入真实 dispatch**（T3 创建不下发、T5 只纯函数）——避免无 tunnel 能力的 Agent 错误起 relay；真实下发是数据面第一要务。
+5. 不顺手改无关代码；发现 spec 与现状冲突（尤其 proto 字段号 11 vs 12、inter_port ordinal 语义）按本计划「关键设计决策」执行。
+
+
 
 ## P3c 概要（待 P3b 落地后展开）
 
