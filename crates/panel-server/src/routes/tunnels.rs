@@ -221,6 +221,11 @@ pub async fn status(
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
     if let Some(db) = e.as_database_error() {
         if db.is_unique_violation() {
+            // SQLite unique violation 消息含冲突索引/列名;区分 inter_port 撞(并发)与 name 撞。
+            if db.message().contains("inter_port") {
+                return ApiError::BadRequest(
+                    "inter_port allocation conflict (likely concurrent tunnel creation); please retry".into());
+            }
             return ApiError::BadRequest("tunnel name already exists".into());
         }
         if db.is_check_violation() {

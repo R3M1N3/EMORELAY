@@ -162,3 +162,23 @@ async fn patch_only_name_and_requires_admin() {
     let (s, _) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn tunnel_hop_inter_port_unique_per_node() {
+    let app = common::make_app().await.unwrap();
+    let n = sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('a','x')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    // 先建一个隧道占住 (n, 30005)。
+    sqlx::query("INSERT INTO tunnels (name, transport) VALUES ('t','tcp')").execute(&app.state.pool).await.unwrap();
+    sqlx::query("INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (1, 0, ?, 30005)")
+        .bind(n).execute(&app.state.pool).await.unwrap();
+    // 同 (n, 30005) 第二条 → UNIQUE 失败。
+    let r = sqlx::query("INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (1, 1, ?, 30005)")
+        .bind(n).execute(&app.state.pool).await;
+    assert!(r.is_err(), "同节点同 inter_port 第二条必须被唯一索引拒绝");
+    // NULL inter_port 不受约束:两个 entry 可共存。
+    sqlx::query("INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (1, 2, ?, NULL)")
+        .bind(n).execute(&app.state.pool).await.unwrap();
+    sqlx::query("INSERT INTO tunnel_hops (tunnel_id, ordinal, node_id, inter_port) VALUES (1, 3, ?, NULL)")
+        .bind(n).execute(&app.state.pool).await.unwrap();
+}
