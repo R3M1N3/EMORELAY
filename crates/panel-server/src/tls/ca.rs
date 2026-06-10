@@ -120,15 +120,28 @@ fn read_pem(path: &Path) -> Result<String> {
         .with_context(|| format!("读取 PEM 失败: {}", path.display()))
 }
 
-/// 写 PEM 文件;Unix 下设 0600(仅属主可读写),Windows 跳过 chmod。
+/// 写 PEM 文件。Unix 下用 `OpenOptions::mode(0o600)` 让文件**自创建即 0600**——
+/// 而非先 write(按 umask 常落 0644)再 chmod,避免私钥短暂以全局可读暴露的竞态窗口。
+/// 四个文件统一走此路径:公开证书虽不敏感,但统一处理更简单。Windows 无 POSIX 权限,直接写。
 fn write_pem(path: &Path, contents: &str) -> Result<()> {
-    std::fs::write(path, contents)
-        .with_context(|| format!("写入 PEM 失败: {}", path.display()))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("设置 0600 权限失败: {}", path.display()))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("以 0600 创建 PEM 失败: {}", path.display()))?;
+        f.write_all(contents.as_bytes())
+            .with_context(|| format!("写入 PEM 失败: {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)
+            .with_context(|| format!("写入 PEM 失败: {}", path.display()))?;
     }
     Ok(())
 }
