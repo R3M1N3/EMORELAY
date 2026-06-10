@@ -9,7 +9,9 @@ import {
   rules,
   type BandwidthProfileView,
   type CreateRuleRequest,
+  type ImportReport,
   type NodeView,
+  type RuleExportItem,
   type RuleView,
   type UpdateRuleRequest,
 } from '../lib/api'
@@ -39,6 +41,12 @@ export default function Rules() {
   const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
+  const [importing, setImporting] = useState<{
+    items: RuleExportItem[]
+    report: ImportReport
+    strategy: 'skip' | 'overwrite'
+    submitting: boolean
+  } | null>(null)
   const [actingId, setActingId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
@@ -168,6 +176,52 @@ export default function Rules() {
     }
   }
 
+  async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 允许重复选同一文件
+    if (!file) return
+    let items: RuleExportItem[]
+    try {
+      items = JSON.parse(await file.text()) as RuleExportItem[]
+      if (!Array.isArray(items)) throw new Error('not array')
+    } catch {
+      toast.error('文件不是合法的规则导出 JSON')
+      return
+    }
+    try {
+      const report = await rules.importRules(items, 'skip', true)
+      setImporting({ items, report, strategy: 'skip', submitting: false })
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '预检失败')
+    }
+  }
+
+  async function changeStrategy(strategy: 'skip' | 'overwrite') {
+    if (!importing) return
+    try {
+      const report = await rules.importRules(importing.items, strategy, true)
+      setImporting({ ...importing, strategy, report })
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '预检失败')
+    }
+  }
+
+  async function confirmImport() {
+    if (!importing) return
+    setImporting({ ...importing, submitting: true })
+    try {
+      const report = await rules.importRules(importing.items, importing.strategy, false)
+      const errs = report.items.filter((i) => i.action === 'error').length
+      if (errs > 0) toast.error(`导入完成，${errs} 项失败`)
+      else toast.success('导入完成')
+      setImporting(null)
+      await reload()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : '导入失败')
+      setImporting(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-3">
@@ -175,14 +229,40 @@ export default function Rules() {
           <h2 className="text-xl font-semibold tracking-tight">转发规则</h2>
           <p className="text-sm text-zinc-400 mt-1">TCP / UDP 端口转发配置与运行状态</p>
         </div>
-        <button
-          onClick={() => setEditing({ mode: 'create' })}
-          disabled={nodeList.length === 0}
-          title={nodeList.length === 0 ? '请先创建节点' : ''}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium shrink-0"
-        >
-          新增规则
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={async () => {
+              try {
+                await rules.exportDownload({
+                  node_id: filters.node_id ? Number(filters.node_id) : undefined,
+                })
+                toast.success('已导出当前筛选规则')
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.message : '导出失败')
+              }
+            }}
+            className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+          >
+            导出
+          </button>
+          <label className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm cursor-pointer">
+            导入
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => void onImportFile(e)}
+            />
+          </label>
+          <button
+            onClick={() => setEditing({ mode: 'create' })}
+            disabled={nodeList.length === 0}
+            title={nodeList.length === 0 ? '请先创建节点' : ''}
+            className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium shrink-0"
+          >
+            新增规则
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3 items-end">
@@ -351,6 +431,83 @@ export default function Rules() {
               className="rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
             >
               {busy ? '删除中…' : '确认删除'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {importing && (
+        <Modal
+          title={`导入预览 · ${importing.items.length} 项`}
+          onClose={() => !importing.submitting && setImporting(null)}
+          size="lg"
+        >
+          <div className="flex items-center gap-3 mb-3 text-sm">
+            <span className="text-zinc-400">冲突策略:</span>
+            {(['skip', 'overwrite'] as const).map((s) => (
+              <label key={s} className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="radio"
+                  name="import-strategy"
+                  checked={importing.strategy === s}
+                  onChange={() => void changeStrategy(s)}
+                />
+                {s === 'skip' ? '跳过 (skip)' : '覆盖 (overwrite)'}
+              </label>
+            ))}
+          </div>
+          <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
+            <table className="w-full text-sm">
+              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">#</th>
+                  <th className="px-3 py-2 text-left font-medium">规则</th>
+                  <th className="px-3 py-2 text-left font-medium">动作</th>
+                  <th className="px-3 py-2 text-left font-medium">说明</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {importing.report.items.map((it) => {
+                  const src = importing.items[it.index]
+                  const tone =
+                    it.action === 'error'
+                      ? 'text-red-300'
+                      : it.action === 'skip'
+                        ? 'text-zinc-400'
+                        : 'text-emerald-300'
+                  return (
+                    <tr key={it.index}>
+                      <td className="px-3 py-2 text-zinc-500">{it.index + 1}</td>
+                      <td className="px-3 py-2 text-zinc-200">
+                        {src?.name ?? '—'}
+                        <span className="text-[11px] text-zinc-500 ml-1.5 font-mono">
+                          {src ? `${src.node_name}:${src.listen_port}/${src.protocol}` : ''}
+                        </span>
+                      </td>
+                      <td className={`px-3 py-2 ${tone}`}>{it.action}</td>
+                      <td className="px-3 py-2 text-[12px] text-zinc-400">{it.reason || '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setImporting(null)}
+              disabled={importing.submitting}
+              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmImport()}
+              disabled={importing.submitting}
+              className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+            >
+              {importing.submitting ? '导入中…' : '确认导入'}
             </button>
           </div>
         </Modal>
@@ -642,7 +799,7 @@ function RuleForm({
             value={form.listen_port}
             onChange={(e) => set('listen_port', e.target.value)}
             className={fieldInputCls}
-            placeholder="留空 = 自动分配"
+            placeholder={mode === 'create' ? '留空 = 自动分配' : '留空 = 不修改'}
           />
         </div>
       </div>

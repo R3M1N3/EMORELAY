@@ -212,6 +212,31 @@ export interface RuleLogEntry {
   created_at: string
 }
 
+export interface RuleExportItem {
+  name: string
+  protocol: 'tcp' | 'udp' | 'tcp_udp'
+  listen_ip: string
+  listen_port: number
+  target_host: string
+  target_port: number
+  enabled: boolean
+  node_name: string
+  tunnel_name: string | null
+  bandwidth_profile_name: string | null
+}
+
+export interface ImportItemReport {
+  index: number
+  action: 'create' | 'skip' | 'overwrite' | 'error'
+  reason: string
+}
+
+export interface ImportReport {
+  dry_run: boolean
+  strategy: string
+  items: ImportItemReport[]
+}
+
 export interface UserDetail {
   id: number
   username: string
@@ -415,6 +440,31 @@ export const rules = {
   restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/rules/${id}/restart`),
   stats: (id: number) => api.get<RuleStatsResponse>(`/api/rules/${id}/stats`),
   logs: (id: number) => api.get<RuleLogEntry[]>(`/api/rules/${id}/logs`),
+  /** 按当前筛选导出并触发浏览器下载(需带 Authorization,不能用 <a href>)。 */
+  exportDownload: async (q: { node_id?: number } = {}) => {
+    const sp = new URLSearchParams()
+    if (q.node_id) sp.set('node_id', String(q.node_id))
+    const token = getToken()
+    const res = await fetch(`/api/rules/export?${sp.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      const err = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+      throw new ApiError(res.status, err?.error ?? 'unknown', err?.message ?? res.statusText)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'emorelay-rules-export.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+  importRules: (items: RuleExportItem[], strategy: 'skip' | 'overwrite', dryRun: boolean) =>
+    api.post<ImportReport>(
+      `/api/rules/import?strategy=${strategy}&dry_run=${dryRun ? 1 : 0}`,
+      items,
+    ),
 }
 
 // ============ 工具 ============

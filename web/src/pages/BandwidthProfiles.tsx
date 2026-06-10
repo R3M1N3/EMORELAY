@@ -248,12 +248,15 @@ function ProfileForm({
           description: form.description.trim(),
         })
       } else if (initial) {
-        await bandwidthProfiles.update(initial.id, {
-          name: form.name.trim() !== initial.name ? form.name.trim() : undefined,
-          bandwidth_mbps: mbps !== initial.bandwidth_mbps ? mbps : undefined,
-          description:
-            form.description.trim() !== initial.description ? form.description.trim() : undefined,
-        })
+        const payload: { name?: string; bandwidth_mbps?: number; description?: string } = {}
+        if (form.name.trim() !== initial.name) payload.name = form.name.trim()
+        if (mbps !== initial.bandwidth_mbps) payload.bandwidth_mbps = mbps
+        if (form.description.trim() !== initial.description) payload.description = form.description.trim()
+        if (Object.keys(payload).length === 0) {
+          onCancel()
+          return
+        }
+        await bandwidthProfiles.update(initial.id, payload)
       }
       await onSuccess()
     } catch (e) {
