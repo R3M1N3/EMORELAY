@@ -1,0 +1,231 @@
+use crate::{
+    audit,
+    auth::extractor::{ActorIp, AuthUser},
+    error::{ApiError, ApiResult},
+    models::{settings, tunnel::{Tunnel, TunnelHop}},
+    state::AppState,
+};
+use axum::{extract::{Path, Query, State}, Json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Serialize)]
+pub struct TunnelView {
+    pub id: i64,
+    pub name: String,
+    pub transport: String,
+    pub status: String,
+    pub hops_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct HopView {
+    pub ordinal: i64,
+    pub node_id: i64,
+    pub inter_port: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct TunnelDetail {
+    pub id: i64,
+    pub name: String,
+    pub transport: String,
+    pub status: String,
+    pub hops: Vec<HopView>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct ListQuery { pub page: Option<i64>, pub page_size: Option<i64> }
+
+#[derive(Serialize)]
+pub struct TunnelListResponse {
+    pub items: Vec<TunnelView>, pub total: i64, pub page: i64, pub page_size: i64,
+}
+
+#[derive(Deserialize)]
+pub struct CreateTunnelRequest {
+    pub name: String,
+    pub transport: String,
+    pub node_ids: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateTunnelRequest { pub name: Option<String> }
+
+pub async fn list(
+    State(state): State<AppState>, auth: AuthUser, Query(q): Query<ListQuery>,
+) -> ApiResult<Json<TunnelListResponse>> {
+    auth.require_admin()?;
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
+    let offset = page.saturating_sub(1).saturating_mul(page_size);
+    let tunnels = Tunnel::list_paged(&state.pool, page_size, offset).await?;
+    let total = Tunnel::count(&state.pool).await?;
+    let mut items = Vec::with_capacity(tunnels.len());
+    for t in tunnels {
+        let hops = TunnelHop::list_for_tunnel(&state.pool, t.id).await?;
+        items.push(TunnelView {
+            id: t.id, name: t.name, transport: t.transport, status: t.status,
+            hops_count: hops.len() as i64, created_at: t.created_at, updated_at: t.updated_at,
+        });
+    }
+    Ok(Json(TunnelListResponse { items, total, page, page_size }))
+}
+
+pub async fn get(
+    State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
+) -> ApiResult<Json<TunnelDetail>> {
+    auth.require_admin()?;
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
+    Ok(Json(TunnelDetail {
+        id: t.id, name: t.name, transport: t.transport, status: t.status,
+        hops: hops.into_iter().map(|h| HopView { ordinal: h.ordinal, node_id: h.node_id, inter_port: h.inter_port }).collect(),
+        created_at: t.created_at, updated_at: t.updated_at,
+    }))
+}
+
+pub async fn create(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp,
+    Json(req): Json<CreateTunnelRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+    if !matches!(req.transport.as_str(), "tcp" | "tls" | "wss") {
+        return Err(ApiError::BadRequest("transport must be tcp | tls | wss".into()));
+    }
+    if req.node_ids.len() < 2 {
+        return Err(ApiError::BadRequest("tunnel needs at least 2 nodes".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for nid in &req.node_ids {
+        if !seen.insert(*nid) {
+            return Err(ApiError::BadRequest("node_ids must be unique".into()));
+        }
+    }
+    #[derive(sqlx::FromRow)]
+    struct NodeRow { id: i64, status: String, port_pool_min: i64, port_pool_max: i64 }
+    let reserved = settings::reserved_ports(&state.pool).await;
+    let mut pools: std::collections::HashMap<i64, (i64, i64)> = std::collections::HashMap::new();
+    for nid in &req.node_ids {
+        let row: Option<NodeRow> = sqlx::query_as(
+            "SELECT id, status, port_pool_min, port_pool_max FROM nodes WHERE id = ? AND deleted_at IS NULL",
+        ).bind(nid).fetch_optional(&state.pool).await?;
+        let row = row.ok_or_else(|| ApiError::BadRequest(format!("node {nid} does not exist")))?;
+        if row.status != "online" {
+            return Err(ApiError::BadRequest(
+                "请确保链上所有节点都在线 (all nodes must be online)".into(),
+            ));
+        }
+        pools.insert(row.id, (row.port_pool_min, row.port_pool_max));
+    }
+    let mut hops: Vec<(i64, i64, Option<i64>)> = Vec::with_capacity(req.node_ids.len());
+    for (ordinal, nid) in req.node_ids.iter().enumerate() {
+        if ordinal == 0 {
+            hops.push((0, *nid, None));
+            continue;
+        }
+        let (lo, hi) = pools[nid];
+        let taken: Vec<i64> = sqlx::query_scalar(
+            "SELECT listen_port FROM forward_rules WHERE node_id = ? AND deleted_at IS NULL \
+             UNION SELECT th.inter_port FROM tunnel_hops th JOIN tunnels t ON t.id = th.tunnel_id \
+             WHERE th.node_id = ? AND th.inter_port IS NOT NULL AND t.deleted_at IS NULL",
+        ).bind(nid).bind(nid).fetch_all(&state.pool).await?;
+        let already: std::collections::HashSet<i64> =
+            hops.iter().filter(|(_, n, _)| n == nid).filter_map(|(_, _, p)| *p).collect();
+        let port = (lo..=hi).find(|p| {
+            !reserved.contains(p) && !taken.contains(p) && !already.contains(p)
+        }).ok_or_else(|| ApiError::BadRequest(format!(
+            "node {nid} port pool exhausted for inter_port allocation"
+        )))?;
+        hops.push((ordinal as i64, *nid, Some(port)));
+    }
+
+    let tid = Tunnel::create_with_hops(&state.pool, name, &req.transport, &hops)
+        .await
+        .map_err(map_sqlx_to_api)?;
+
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.create", Some("tunnel"), Some(tid), Some(name), true, None).await;
+
+    Ok(Json(json!({ "id": tid })))
+}
+
+pub async fn update(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp,
+    Path(id): Path<i64>, Json(req): Json<UpdateTunnelRequest>,
+) -> ApiResult<Json<TunnelView>> {
+    auth.require_admin()?;
+    if let Some(name) = req.name.as_deref() {
+        if name.trim().is_empty() {
+            return Err(ApiError::BadRequest("name cannot be empty".into()));
+        }
+        let rows = Tunnel::update_name(&state.pool, id, name.trim()).await.map_err(map_sqlx_to_api)?;
+        if rows == 0 { return Err(ApiError::NotFound); }
+    }
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.update", Some("tunnel"), Some(id), None, true, None).await;
+    Ok(Json(TunnelView {
+        id: t.id, name: t.name, transport: t.transport, status: t.status,
+        hops_count: hops.len() as i64, created_at: t.created_at, updated_at: t.updated_at,
+    }))
+}
+
+pub async fn delete(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp, Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let _t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let refs = Tunnel::active_rule_refs(&state.pool, id).await?;
+    if refs > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "tunnel is referenced by {refs} active rule(s); detach them first"
+        )));
+    }
+    let rows = Tunnel::soft_delete(&state.pool, id).await?;
+    if rows == 0 { return Err(ApiError::NotFound); }
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.delete", Some("tunnel"), Some(id), None, true, None).await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 控制面阶段:restart 仅记 audit(真正下发 TunnelTask 重启留数据面)。
+pub async fn restart(
+    State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp, Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let _t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
+        "tunnel.restart", Some("tunnel"), Some(id), None, true, None).await;
+    Ok(Json(json!({ "ok": true, "dispatched": false })))
+}
+
+/// 控制面阶段:status 返回 tunnels.status 字段值(数据面接 hop 心跳后更新)。
+pub async fn status(
+    State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    Ok(Json(json!({ "id": t.id, "status": t.status })))
+}
+
+fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
+    if let Some(db) = e.as_database_error() {
+        if db.is_unique_violation() {
+            return ApiError::BadRequest("tunnel name already exists".into());
+        }
+        if db.is_check_violation() {
+            return ApiError::BadRequest("invalid tunnel fields (check constraint)".into());
+        }
+    }
+    ApiError::Database(e)
+}

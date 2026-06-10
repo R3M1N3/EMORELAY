@@ -58,3 +58,107 @@ async fn hops_using_node_detects_node_membership() {
         .execute(&app.state.pool).await.unwrap().last_insert_rowid();
     assert!(!TunnelHop::node_in_active_tunnel(&app.state.pool, n3).await.unwrap());
 }
+
+use axum::http::{Method, StatusCode};
+use serde_json::json;
+
+/// 建 N 个 online 节点,port_pool [30000,30010],返回 ids。
+async fn seed_online_nodes(app: &common::TestApp, n: usize) -> Vec<i64> {
+    let mut ids = Vec::new();
+    for i in 0..n {
+        let id = sqlx::query(
+            "INSERT INTO nodes (name, agent_token_hash, status, public_ip, port_pool_min, port_pool_max) \
+             VALUES (?, 'x', 'online', ?, 30000, 30010)",
+        )
+        .bind(format!("tn{i}")).bind(format!("10.0.0.{i}"))
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+        ids.push(id);
+    }
+    ids
+}
+
+#[tokio::test]
+async fn create_tunnel_allocates_inter_ports_and_lists() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 3).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "hk-jp-us", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tid = body["id"].as_i64().unwrap();
+
+    let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid}"), &app.admin_token, None).unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let hops = body["hops"].as_array().unwrap();
+    assert_eq!(hops.len(), 3);
+    assert!(hops[0]["inter_port"].is_null());
+    let p1 = hops[1]["inter_port"].as_i64().unwrap();
+    let p2 = hops[2]["inter_port"].as_i64().unwrap();
+    assert!((30000..=30010).contains(&p1) && (30000..=30010).contains(&p2));
+
+    let req = common::auth_req(Method::GET, "/api/tunnels", &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["hops_count"], 3);
+}
+
+#[tokio::test]
+async fn create_tunnel_rejects_short_chain_dup_and_offline() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0]] }))).unwrap();
+    let (s, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0], nodes[0]] }))).unwrap();
+    let (s, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let off = sqlx::query("INSERT INTO nodes (name, agent_token_hash, status) VALUES ('off','x','offline')")
+        .execute(&app.state.pool).await.unwrap().last_insert_rowid();
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0], off] }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("online"));
+}
+
+#[tokio::test]
+async fn delete_tunnel_blocked_by_rule_reference() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    sqlx::query(
+        "INSERT INTO forward_rules (user_id, node_id, name, protocol, listen_ip, listen_port, target_host, target_port, tunnel_id) \
+         VALUES (?, ?, 'r', 'tcp', '0.0.0.0', 20000, '1.2.3.4', 443, ?)",
+    ).bind(app.admin_user_id).bind(nodes[0]).bind(tid)
+    .execute(&app.state.pool).await.unwrap();
+
+    let req = common::auth_req(Method::DELETE, &format!("/api/tunnels/{tid}"), &app.admin_token, None).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("1"));
+}
+
+#[tokio::test]
+async fn patch_only_name_and_requires_admin() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+    let req = common::auth_req(Method::PATCH, &format!("/api/tunnels/{tid}"), &app.admin_token,
+        Some(json!({ "name": "renamed" }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "renamed");
+    let (_uid, token) = common::make_user_token(&app, "u", "password123").await.unwrap();
+    let req = common::auth_req(Method::GET, "/api/tunnels", &token, None).unwrap();
+    let (s, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}

@@ -6,6 +6,7 @@ pub mod nodes;
 pub mod rules;
 pub mod rules_io;
 pub mod system;
+pub mod tunnels;
 pub mod users;
 
 use crate::state::AppState;
@@ -76,6 +77,13 @@ pub fn router(state: AppState) -> Router {
                 .patch(bandwidth_profiles::update)
                 .delete(bandwidth_profiles::delete),
         )
+        .route("/api/tunnels", get(tunnels::list).post(tunnels::create))
+        .route(
+            "/api/tunnels/{id}",
+            get(tunnels::get).patch(tunnels::update).delete(tunnels::delete),
+        )
+        .route("/api/tunnels/{id}/restart", post(tunnels::restart))
+        .route("/api/tunnels/{id}/status", get(tunnels::status))
         .route("/api/system/overview", get(system::overview))
         .route("/api/system/security", get(system::security))
         .route("/api/system/audit-logs", get(system::audit_logs))
