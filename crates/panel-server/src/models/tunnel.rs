@@ -112,6 +112,30 @@ impl TunnelHop {
         sqlx::query_as(&sql).bind(tunnel_id).fetch_all(pool).await
     }
 
+    /// 该节点参与的活跃隧道 id 列表(reconcile 用)。
+    pub async fn list_tunnel_ids_for_node(pool: &SqlitePool, node_id: i64) -> sqlx::Result<Vec<i64>> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT t.id FROM tunnel_hops th \
+             JOIN tunnels t ON t.id = th.tunnel_id \
+             WHERE th.node_id = ? AND t.deleted_at IS NULL ORDER BY t.id",
+        )
+        .bind(node_id)
+        .fetch_all(pool)
+        .await
+    }
+
+    /// 该节点在指定隧道里的 hop 行(凭据 ordinal 用)。
+    pub async fn find_for_node(
+        pool: &SqlitePool,
+        tunnel_id: i64,
+        node_id: i64,
+    ) -> sqlx::Result<Option<Self>> {
+        let sql = format!(
+            "SELECT {HOP_COLS} FROM tunnel_hops WHERE tunnel_id = ? AND node_id = ? LIMIT 1"
+        );
+        sqlx::query_as(&sql).bind(tunnel_id).bind(node_id).fetch_optional(pool).await
+    }
+
     /// 该节点是否参与任一活跃隧道(删节点保护用;隧道软删时其 hops 视为失效)。
     pub async fn node_in_active_tunnel(pool: &SqlitePool, node_id: i64) -> sqlx::Result<bool> {
         let n: i64 = sqlx::query_scalar(

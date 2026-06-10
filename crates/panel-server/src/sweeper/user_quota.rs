@@ -1,7 +1,7 @@
 //! 用户级到期 / 滚动 30 天流量配额 sweeper(P2)。
 //! 取代已退役的规则级 expiry sweeper:一个 tokio task 内两个独立 interval,
 //! expiry 默认 60s(PANEL_USER_EXPIRY_SWEEP_SECS),quota 默认 300s(PANEL_USER_QUOTA_SWEEP_SECS)。
-use crate::{audit, grpc::commands::apply_command, models::rule::Rule, state::AppState};
+use crate::{audit, models::rule::Rule, state::AppState};
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -128,7 +128,7 @@ pub async fn quota_tick_once(state: &AppState) -> anyhow::Result<u64> {
 
 /// 原子停用某用户全部 enabled 规则并逐条 dispatch ApplyRule(enabled=false)。
 /// 返回实际停掉的行数。Agent 离线时静默(下次 register reconcile 对齐)。
-async fn disable_rules_for_user(state: &AppState, user_id: i64, reason: &str) -> anyhow::Result<u64> {
+async fn disable_rules_for_user(state: &AppState, user_id: i64, _reason: &str) -> anyhow::Result<u64> {
     let ids: Vec<(i64,)> = sqlx::query_as(
         "SELECT id FROM forward_rules WHERE user_id = ? AND enabled = 1 AND deleted_at IS NULL",
     )
@@ -154,9 +154,7 @@ async fn disable_rules_for_user(state: &AppState, user_id: i64, reason: &str) ->
     for (rule_id,) in ids {
         match Rule::find_by_id(&state.pool, rule_id).await {
             Ok(Some(rule)) => {
-                if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-                    warn!(node_id = rule.node_id, rule_id, reason, "agent offline; disable syncs at next register");
-                }
+                let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(state, &rule).await;
             }
             // 窗口内被软删:DB 已是终态,无需下发。
             Ok(None) => {}

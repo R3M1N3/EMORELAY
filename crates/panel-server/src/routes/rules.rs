@@ -2,7 +2,6 @@ use crate::{
     audit,
     auth::extractor::{ActorIp, AuthUser},
     error::{ApiError, ApiResult},
-    grpc::commands::{apply_command, remove_command, restart_command},
     models::{
         node::Node,
         rule::{Rule, SORT_FIELDS},
@@ -350,9 +349,7 @@ pub async fn create(
     )
     .await;
 
-    if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-        tracing::warn!(node_id = rule.node_id, rule_id = rule.id, "agent offline; rule will sync at next register");
-    }
+    crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await?;
 
     Ok(Json(rule.into()))
 }
@@ -461,9 +458,7 @@ pub async fn update(
     )
     .await;
 
-    if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-        tracing::warn!(node_id = rule.node_id, rule_id = rule.id, "agent offline; update will sync at next register");
-    }
+    crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await?;
 
     Ok(Json(rule.into()))
 }
@@ -479,7 +474,6 @@ pub async fn delete(
         .await?
         .ok_or(ApiError::NotFound)?;
     ensure_can_touch(&auth, &existing)?;
-    let node_id = existing.node_id;
 
     let rows = Rule::soft_delete(&state.pool, id).await?;
     if rows == 0 {
@@ -498,9 +492,7 @@ pub async fn delete(
     )
     .await;
 
-    if !state.dispatcher.dispatch(node_id, remove_command(id)) {
-        tracing::warn!(node_id, rule_id = id, "agent offline; rule will be removed on next register reconcile");
-    }
+    crate::grpc::tunnel_dispatch::dispatch_rule_remove(&state, &existing).await?;
 
     Ok(Json(json!({ "ok": true })))
 }
@@ -555,9 +547,7 @@ async fn set_enabled_handler(
 
     // 通过 ApplyRule 让 Agent 用新的 enabled 字段重新对齐（启停 listener）。
     if let Ok(Some(rule)) = Rule::find_by_id(&state.pool, id).await {
-        if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-            tracing::warn!(node_id = rule.node_id, rule_id = id, action, "agent offline");
-        }
+        let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
     }
 
     Ok(Json(json!({ "ok": true, "enabled": enabled })))
@@ -585,7 +575,7 @@ pub async fn restart(
         None,
     )
     .await;
-    let dispatched = state.dispatcher.dispatch(rule.node_id, restart_command(id));
+    let dispatched = crate::grpc::tunnel_dispatch::dispatch_rule_restart(&state, &rule).await?;
     if !dispatched {
         tracing::warn!(node_id = rule.node_id, rule_id = id, "agent offline; restart skipped");
     }

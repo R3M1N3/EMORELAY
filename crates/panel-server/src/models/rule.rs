@@ -160,6 +160,17 @@ impl Rule {
             .await
     }
 
+    /// 关联某隧道的全部活跃规则(数据面 split 下发/reconcile 用)。
+    pub async fn list_active_for_tunnel(
+        pool: &SqlitePool,
+        tunnel_id: i64,
+    ) -> sqlx::Result<Vec<Self>> {
+        let sql = format!(
+            "SELECT {RULE_COLUMNS} FROM forward_rules WHERE tunnel_id = ? AND deleted_at IS NULL ORDER BY id"
+        );
+        sqlx::query_as::<_, Rule>(&sql).bind(tunnel_id).fetch_all(pool).await
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn create(
         pool: &SqlitePool,

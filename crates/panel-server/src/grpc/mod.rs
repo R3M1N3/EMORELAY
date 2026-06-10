@@ -2,6 +2,7 @@ pub mod commands;
 pub mod dispatcher;
 pub mod service;
 pub mod session;
+pub mod tunnel_dispatch;
 pub mod tunnel_split;
 
 use anyhow::{Context, Result};

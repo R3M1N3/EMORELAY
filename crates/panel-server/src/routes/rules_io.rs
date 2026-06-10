@@ -5,7 +5,6 @@ use crate::{
     audit,
     auth::extractor::{ActorIp, AuthUser},
     error::{ApiError, ApiResult},
-    grpc::commands::apply_command,
     models::{bandwidth_profile::BandwidthProfile, node::Node, rule::Rule, settings},
     state::AppState,
 };
@@ -346,9 +345,7 @@ async fn execute_create(
         Rule::set_enabled(&state.pool, new_id, false).await?;
     }
     if let Some(rule) = Rule::find_by_id(&state.pool, new_id).await? {
-        if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-            tracing::warn!(node_id = rule.node_id, rule_id = new_id, "agent offline; imported rule syncs at next register");
-        }
+        let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(state, &rule).await;
     }
     Ok(())
 }
@@ -373,9 +370,7 @@ async fn execute_overwrite(
     .await?;
     Rule::set_enabled(&state.pool, existing_id, item.enabled).await?;
     if let Some(rule) = Rule::find_by_id(&state.pool, existing_id).await? {
-        if !state.dispatcher.dispatch(rule.node_id, apply_command(&rule)) {
-            tracing::warn!(node_id = rule.node_id, rule_id = existing_id, "agent offline; overwrite syncs at next register");
-        }
+        let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(state, &rule).await;
     }
     Ok(())
 }

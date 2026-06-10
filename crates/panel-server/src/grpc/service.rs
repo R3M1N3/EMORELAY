@@ -14,11 +14,9 @@ use tracing::{info, warn};
 use crate::{
     audit,
     auth::token::{generate_token, hash_token},
-    grpc::commands::apply_command,
     grpc::dispatcher::CommandDispatcher,
     grpc::session::SessionInfo,
     grpc::SESSION_METADATA_KEY,
-    models::rule::Rule as DbRule,
     state::AppState,
 };
 
@@ -225,14 +223,18 @@ impl ControlPlane for ControlPlaneImpl {
 
         // Reconcile：新 channel 建立后立即重放该 node 所有 active 规则。
         // 覆盖断网期间漏掉的 CRUD，让 Agent 重连后与 server 真值对齐。
-        let reconciled = match DbRule::list_active_for_node(&self.state.pool, inner.node_id).await {
-            Ok(rules) => {
-                for rule in &rules {
-                    self.state
-                        .dispatcher
-                        .dispatch(inner.node_id, apply_command(rule));
+        let reconciled = match crate::grpc::tunnel_dispatch::reconcile_commands_for_node(
+            &self.state,
+            inner.node_id,
+        )
+        .await
+        {
+            Ok(cmds) => {
+                let n = cmds.len();
+                for cmd in cmds {
+                    self.state.dispatcher.dispatch(inner.node_id, cmd);
                 }
-                rules.len()
+                n
             }
             Err(e) => {
                 warn!(error = ?e, "reconcile query failed; agent will run with last-known rules");

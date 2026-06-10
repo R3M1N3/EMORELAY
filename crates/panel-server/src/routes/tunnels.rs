@@ -111,18 +111,24 @@ pub async fn create(
         }
     }
     #[derive(sqlx::FromRow)]
-    struct NodeRow { id: i64, status: String, port_pool_min: i64, port_pool_max: i64 }
+    struct NodeRow { id: i64, status: String, public_ip: String, port_pool_min: i64, port_pool_max: i64 }
     let reserved = settings::reserved_ports(&state.pool).await;
     let mut pools: std::collections::HashMap<i64, (i64, i64)> = std::collections::HashMap::new();
-    for nid in &req.node_ids {
+    for (ordinal, nid) in req.node_ids.iter().enumerate() {
         let row: Option<NodeRow> = sqlx::query_as(
-            "SELECT id, status, port_pool_min, port_pool_max FROM nodes WHERE id = ? AND deleted_at IS NULL",
+            "SELECT id, status, public_ip, port_pool_min, port_pool_max FROM nodes WHERE id = ? AND deleted_at IS NULL",
         ).bind(nid).fetch_optional(&state.pool).await?;
         let row = row.ok_or_else(|| ApiError::BadRequest(format!("node {nid} does not exist")))?;
         if row.status != "online" {
             return Err(ApiError::BadRequest(
                 "请确保链上所有节点都在线 (all nodes must be online)".into(),
             ));
+        }
+        // ordinal ≥ 1 的 hop 会被上一跳 dial,split 时 next_hop_addr 取它的 public_ip。
+        if ordinal >= 1 && row.public_ip.trim().is_empty() {
+            return Err(ApiError::BadRequest(format!(
+                "node {nid} needs a public_ip to be a dialed hop (ordinal >= 1)"
+            )));
         }
         pools.insert(row.id, (row.port_pool_min, row.port_pool_max));
     }
@@ -154,6 +160,11 @@ pub async fn create(
 
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.create", Some("tunnel"), Some(tid), Some(name), true, None).await;
+
+    // 数据面:tls/wss 隧道即时签发 hop 凭据下发(Agent 离线 → reconcile 兜底)。
+    if let Some(t) = Tunnel::find_by_id(&state.pool, tid).await? {
+        crate::grpc::tunnel_dispatch::dispatch_tunnel_credentials(&state, &t).await?;
+    }
 
     Ok(Json(json!({ "id": tid })))
 }
@@ -191,22 +202,33 @@ pub async fn delete(
             "tunnel is referenced by {refs} active rule(s); detach them first"
         )));
     }
+    let hop_nodes: Vec<i64> =
+        sqlx::query_scalar("SELECT node_id FROM tunnel_hops WHERE tunnel_id = ? ORDER BY ordinal")
+            .bind(id)
+            .fetch_all(&state.pool)
+            .await?;
     let rows = Tunnel::soft_delete(&state.pool, id).await?;
     if rows == 0 { return Err(ApiError::NotFound); }
+    crate::grpc::tunnel_dispatch::dispatch_revoke_tunnel_credentials(&state, id, &hop_nodes).await;
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.delete", Some("tunnel"), Some(id), None, true, None).await;
     Ok(Json(json!({ "ok": true })))
 }
 
-/// 控制面阶段:restart 仅记 audit(真正下发 TunnelTask 重启留数据面)。
 pub async fn restart(
     State(state): State<AppState>, auth: AuthUser, actor_ip: ActorIp, Path(id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
     auth.require_admin()?;
-    let _t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    // 凭据先行(重签轮换),再对该隧道全部活跃规则 per-hop restart。
+    crate::grpc::tunnel_dispatch::dispatch_tunnel_credentials(&state, &t).await?;
+    let mut dispatched = false;
+    for rule in crate::models::rule::Rule::list_active_for_tunnel(&state.pool, id).await? {
+        dispatched |= crate::grpc::tunnel_dispatch::dispatch_rule_restart(&state, &rule).await?;
+    }
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.restart", Some("tunnel"), Some(id), None, true, None).await;
-    Ok(Json(json!({ "ok": true, "dispatched": false })))
+    Ok(Json(json!({ "ok": true, "dispatched": dispatched })))
 }
 
 /// 控制面阶段:status 返回 tunnels.status 字段值(数据面接 hop 心跳后更新)。
