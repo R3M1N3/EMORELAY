@@ -45,6 +45,10 @@ pub fn router(state: AppState) -> Router {
             get(nodes::get).patch(nodes::update).delete(nodes::delete),
         )
         .route("/api/nodes/{id}/stats", get(nodes::stats))
+        .route(
+            "/api/nodes/{id}/revoke-credentials",
+            post(nodes::revoke_credentials),
+        )
         .route("/api/rules", get(rules::list).post(rules::create))
         .route(
             "/api/rules/{id}",

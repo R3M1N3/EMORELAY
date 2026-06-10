@@ -58,6 +58,16 @@ impl ControlPlane for ControlPlaneImpl {
         &self,
         req: Request<RegisterRequest>,
     ) -> Result<Response<RegisterResponse>, Status> {
+        // peer 证书挂在 Request 上,into_inner 后丢失,故先取。
+        // tonic 0.12: peer_certs() -> Option<Arc<Vec<CertificateDer>>>;
+        // CertificateDer: AsRef<[u8]> 给出 DER,SHA-256 与 issue.rs 的 fingerprint 一致。
+        let peer_fp = req.peer_certs().and_then(|certs| {
+            certs.first().map(|leaf| {
+                use sha2::{Digest, Sha256};
+                hex::encode(Sha256::digest(leaf.as_ref()))
+            })
+        });
+
         let req = req.into_inner();
 
         // 取 nodes 表存储的 token hash。
@@ -98,6 +108,24 @@ impl ControlPlane for ControlPlaneImpl {
             )
             .await;
             return Err(Status::permission_denied("permission denied"));
+        }
+
+        // mTLS 模式下拒已吊销 client 证书(plaintext dev 无 peer cert → peer_fp=None,跳过)。
+        if let Some(fp) = &peer_fp {
+            if self.state.crl.is_revoked(fp) {
+                audit::record(
+                    &self.state.pool,
+                    None,
+                    "agent.register",
+                    Some("node"),
+                    Some(req.node_id),
+                    Some(&format!("version={}", req.version)),
+                    false,
+                    Some("revoked_cert"),
+                )
+                .await;
+                return Err(Status::permission_denied("permission denied"));
+            }
         }
 
         // 颁发 session_token：明文进内存，hash 落 agent_sessions 表（审计）。

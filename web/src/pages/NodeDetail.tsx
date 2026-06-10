@@ -9,7 +9,8 @@ import {
   type NodeView,
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
-import { StatusDot } from '../lib/ui'
+import { Modal, StatusDot } from '../lib/ui'
+import { useToast } from '../lib/use-toast'
 
 interface State {
   node: NodeView | null
@@ -18,15 +19,53 @@ interface State {
   error: string | null
 }
 
+// 轮换凭据后一次性返回的 mTLS 三件套。
+type RevokedCreds = {
+  caPem: string
+  clientCertPem: string
+  clientKeyPem: string
+}
+
 export default function NodeDetail() {
   const { id } = useParams<{ id: string }>()
   const nodeId = id ? Number(id) : NaN
+  const toast = useToast()
   const [state, setState] = useState<State>({
     node: null,
     stats: null,
     loading: true,
     error: null,
   })
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false)
+  const [revoking, setRevoking] = useState(false)
+  const [revokedCreds, setRevokedCreds] = useState<RevokedCreds | null>(null)
+
+  function copyCred(value: string, label: string) {
+    navigator.clipboard
+      ?.writeText(value)
+      .then(() => toast.success(`已复制${label}`))
+      .catch(() => toast.error('复制失败，请手动选择'))
+  }
+
+  async function doRevoke() {
+    if (!Number.isFinite(nodeId)) return
+    setRevoking(true)
+    try {
+      const r = await nodes.revokeCredentials(nodeId)
+      setConfirmingRevoke(false)
+      setRevokedCreds({
+        caPem: r.ca_pem,
+        clientCertPem: r.client_cert_pem,
+        clientKeyPem: r.client_key_pem,
+      })
+      toast.success('凭据已轮换，旧证书已吊销')
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : '轮换失败')
+      setConfirmingRevoke(false)
+    } finally {
+      setRevoking(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -73,16 +112,25 @@ export default function NodeDetail() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link to="/nodes" className="text-xs text-zinc-400 hover:text-zinc-200">← 返回节点列表</Link>
-        <h2 className="mt-1 text-xl font-semibold tracking-tight">{node.name}</h2>
-        <p className="text-sm text-zinc-400">
-          <span className="inline-flex items-center gap-1.5 mr-3">
-            <StatusDot kind={node.status} />
-            {node.status}
-          </span>
-          ID #{node.id} · {node.region || '—'} · {node.public_ip || '未填'}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Link to="/nodes" className="text-xs text-zinc-400 hover:text-zinc-200">← 返回节点列表</Link>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight">{node.name}</h2>
+          <p className="text-sm text-zinc-400">
+            <span className="inline-flex items-center gap-1.5 mr-3">
+              <StatusDot kind={node.status} />
+              {node.status}
+            </span>
+            ID #{node.id} · {node.region || '—'} · {node.public_ip || '未填'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirmingRevoke(true)}
+          className="shrink-0 rounded-lg bg-amber-600/80 hover:bg-amber-500 px-3 py-2 text-sm font-medium"
+        >
+          轮换凭据
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -126,7 +174,101 @@ export default function NodeDetail() {
         <SeriesCard title="rx 字节 / 分钟" values={rx} color="stroke-indigo-400" fill="fill-indigo-500/10" />
         <SeriesCard title="tx 字节 / 分钟" values={tx} color="stroke-emerald-400" fill="fill-emerald-500/10" />
       </div>
+
+      {confirmingRevoke && (
+        <Modal title="轮换 Agent 凭据" onClose={() => !revoking && setConfirmingRevoke(false)} size="sm">
+          <p className="text-sm text-zinc-300">
+            将为节点 <span className="font-medium text-white">{node.name}</span> 重新签发 mTLS 证书。
+          </p>
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+            旧证书将立即失效，必须用新的四件套重装 Agent，否则该节点将无法再连接主控。
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingRevoke(false)}
+              disabled={revoking}
+              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={doRevoke}
+              disabled={revoking}
+              className="rounded-lg bg-amber-600 hover:bg-amber-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+            >
+              {revoking ? '轮换中…' : '确认轮换'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {revokedCreds && (
+        <Modal title="新 Agent 凭据" onClose={() => setRevokedCreds(null)} size="md">
+          <p className="text-sm text-zinc-300">
+            节点 <span className="font-medium text-white">{node.name}</span> 的新 mTLS 凭据。
+          </p>
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+            旧证书已吊销。私钥仅此一次显示，请立即妥善保存并用以下三件套重装 Agent。
+          </p>
+          <div className="mt-4 space-y-2">
+            <CredBlock label="CA 证书 (ca.pem)" value={revokedCreds.caPem} onCopy={copyCred} />
+            <CredBlock
+              label="客户端证书 (client.pem)"
+              value={revokedCreds.clientCertPem}
+              onCopy={copyCred}
+            />
+            <CredBlock
+              label="客户端私钥 (client-key.pem)"
+              value={revokedCreds.clientKeyPem}
+              onCopy={copyCred}
+            />
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setRevokedCreds(null)}
+              className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-2 text-xs font-medium"
+            >
+              我已保存
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
+  )
+}
+
+// 单条凭据展示块：可折叠 + 一键复制。与 Nodes.tsx 的创建凭据弹窗风格一致。
+function CredBlock({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string
+  value: string
+  onCopy: (value: string, label: string) => void
+}) {
+  return (
+    <details className="rounded-lg border border-white/10 bg-zinc-950">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-[11px] text-zinc-400 select-none">
+        <span>{label}</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            onCopy(value, label)
+          }}
+          className="rounded-md bg-zinc-800 hover:bg-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200"
+        >
+          复制
+        </button>
+      </summary>
+      <pre className="max-h-40 overflow-auto border-t border-white/5 px-3 py-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap break-all">
+        {value}
+      </pre>
+    </details>
   )
 }
 

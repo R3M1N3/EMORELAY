@@ -343,6 +343,10 @@ export const nodes = {
   update: (id: number, req: UpdateNodeRequest) => api.patch<NodeView>(`/api/nodes/${id}`, req),
   del: (id: number) => api.del<{ ok: boolean }>(`/api/nodes/${id}`),
   stats: (id: number) => api.get<NodeStatsResponse>(`/api/nodes/${id}/stats`),
+  revokeCredentials: (id: number) =>
+    api.post<{ ca_pem: string; client_cert_pem: string; client_key_pem: string }>(
+      `/api/nodes/${id}/revoke-credentials`,
+    ),
 }
 
 export const users = {

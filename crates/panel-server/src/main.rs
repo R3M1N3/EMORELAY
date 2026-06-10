@@ -52,6 +52,40 @@ async fn main() -> Result<()> {
         crl,
     };
 
+    // P3a 存量迁移:活跃但无证书的节点(P1/P2 创建)自动签发 client cert。
+    // 管理员需到面板「轮换凭据」拿明文重装 Agent(升级 P3a = fleet-wide 重装)。
+    match panel_server::models::node::Node::find_active_without_cert(&state.pool).await {
+        Ok(ids) => {
+            for nid in ids {
+                if let Ok(issued) = panel_server::tls::issue::issue_client_cert(&state.ca, nid) {
+                    let _ = panel_server::models::node::Node::set_cert_meta(
+                        &state.pool,
+                        nid,
+                        &issued.serial,
+                        &issued.fingerprint,
+                    )
+                    .await;
+                    panel_server::audit::record(
+                        &state.pool,
+                        None,
+                        "node.mtls_credentials_issued",
+                        Some("node"),
+                        Some(nid),
+                        None,
+                        true,
+                        None,
+                    )
+                    .await;
+                    tracing::warn!(
+                        node_id = nid,
+                        "issued mTLS cert for legacy node; rotate to get plaintext for reinstall"
+                    );
+                }
+            }
+        }
+        Err(e) => tracing::warn!(error = ?e, "legacy node cert migration query failed"),
+    }
+
     let cors_origin: HeaderValue = config
         .cors_origin
         .parse()

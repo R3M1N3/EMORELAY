@@ -369,6 +369,52 @@ pub async fn delete(
     Ok(Json(json!({ "ok": true })))
 }
 
+pub async fn revoke_credentials(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    actor_ip: ActorIp,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let _node = Node::find_by_id(&state.pool, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // 取旧 fingerprint 入 CRL(若有)。
+    let old: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT cert_fingerprint FROM nodes WHERE id = ? AND deleted_at IS NULL")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
+    if let Some((Some(old_fp),)) = old {
+        let crl_path = format!("{}/tls/crl.json", state.config.panel_data_dir);
+        state.crl.revoke(&old_fp, &crl_path).map_err(ApiError::Internal)?;
+    }
+
+    // 重签新证书 + 落新 meta。
+    let issued = crate::tls::issue::issue_client_cert(&state.ca, id).map_err(ApiError::Internal)?;
+    Node::set_cert_meta(&state.pool, id, &issued.serial, &issued.fingerprint).await?;
+
+    audit::record_with_ip(
+        &state.pool,
+        Some(auth.0.sub),
+        actor_ip.as_option(),
+        "node.credentials_revoked",
+        Some("node"),
+        Some(id),
+        None,
+        true,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({
+        "ca_pem": state.ca.ca_pem.clone(),
+        "client_cert_pem": issued.cert_pem,
+        "client_key_pem": issued.key_pem,
+    })))
+}
+
 pub async fn stats(
     State(state): State<AppState>,
     auth: AuthUser,
