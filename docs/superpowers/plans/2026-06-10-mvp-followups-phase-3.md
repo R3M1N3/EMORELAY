@@ -2241,6 +2241,8 @@ git commit -m "docs(p3b): document tunnels control-plane API, rule.tunnel_id, no
 
 ## P3b-数据面 概要（待控制面落地后展开）
 
+**已展开为独立 TDD 计划:`2026-06-11-p3b-data-plane.md`(9 Task);以下概要保留作历史背景。**
+
 §4.6 + §4.9 单元 5(dispatch 接入)/6。Task 概要：
 1. Agent `tunnel/transport.rs`：`TunnelTransport` trait（dial/bind/accept）+ `tcp_transport.rs`（裸 TCP，先）。store.rs RuleJson 加 tunnel context（serde default 兼容）。
 2. Agent `tunnel/task.rs`：`TunnelTask` per (rule_id, role)——entry（bind listen_port → dial 下一跳）/ mid（bind inter_port → dial 下一跳）/ exit（bind inter_port → connect target）；`bridge()` 复用 P2 token bucket（仅 entry）。UDP-over-tunnel 帧（2 字节大端长度前缀，entry/exit 打包拆包）。

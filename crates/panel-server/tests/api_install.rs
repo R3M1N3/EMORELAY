@@ -139,6 +139,21 @@ async fn dist_unknown_arch_returns_404() {
 }
 
 #[tokio::test]
+async fn install_script_sets_agent_data_dir() {
+    let app = make_app().await.unwrap();
+    // install.sh 路由挂 IP 维度 rate limiter:必须带 x-forwarded-for(沿用本文件既有测试写法)。
+    let req = Request::get("/install.sh?node=7")
+        .header("x-forwarded-for", "203.0.113.77")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let body = std::str::from_utf8(&bytes).unwrap();
+    assert!(body.contains("AGENT_DATA_DIR=/var/lib/emorelay"));
+}
+
+#[tokio::test]
 async fn install_sh_rate_limited_after_burst() {
     let app = make_app().await.unwrap();
     let mut ok_count = 0;

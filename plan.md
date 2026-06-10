@@ -480,7 +480,7 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 ## 附录·实施状态
 
 > 本节为实施快照，反映代码当前状态；蓝本（第一至十五节）内容不变。
-> **已交付**：MVP + P1 + P2 + P3a + P3b 控制面（逐 Phase 详情见下方分节）。**当前推进**：P3b 数据面（多跳隧道转发层）。
+> **已交付**：MVP + P1 + P2 + P3a + P3b 控制面 + P3b 数据面（逐 Phase 详情见下方分节）。**当前推进**：P3c（隧道前端 + e2e）。
 > P1/P2 的逐 Task TDD plan 文件（phase-1/phase-2.md）已随交付删除；P3 计划见 `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`。
 
 ### 第十二节 20 步开发顺序
@@ -580,4 +580,17 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 - 规则关联隧道:tunnel_id 创建时设定(不可 PATCH 改),node_id 必须=入口节点;入口规则 listen_port 免节点池范围检查但仍守保留端口红线;规则自动分配排除隧道 inter_port。
 - `split_tunnel_rule` 纯函数就绪(entry/mid/exit + 限速只 entry),实际 dispatch 接入留数据面。
 - **待 P3b-数据面**:Agent tunnel 模块(transport trait + TCP/TLS/WSS + TunnelTask)+ 真实下发(split+dispatch)+ 隧道证书签发下发(TunnelCredentials)+ status 心跳。控制面阶段:隧道可定义/管理,转发未生效。
+
+### Phase 3b 数据面（2026-06-11 启动,同日交付）
+
+Agent 多跳隧道转发层 —— transport trait + TCP/TLS/WSS + TunnelTask entry/mid/exit + UDP-over-tunnel + TLS 凭据签发下发 + server 真实 split+dispatch + hop 心跳 status 聚合,全部交付。
+
+- Plan: `docs/superpowers/plans/2026-06-11-p3b-data-plane.md`（9 Task TDD）
+- Agent tunnel 模块六文件:`tunnel/mod.rs`、`transport.rs`、`tcp_transport.rs`、`tls_transport.rs`、`wss_transport.rs`、`task.rs`。
+- proto 新增字段:`Rule.self_ordinal`（hop 链路序号）、`TunnelCredentials.ca_pem`（自包含 CA,Agent 无需额外信任链）。
+- 流量统计与限速 entry-only 决策:mid/exit hop 的 `TcpRelayTask` 不装 `QuotaGuard`,仅 entry 计数。
+- preamble 协议:entry 连 mid 后先发 8 字节 `[EMRL][target_port u16 LE][0x00 0x00]` 协商目标端口,mid 解析后接力拨下一跳(或直连 exit target)。
+- reconcile 扩展:Agent 重连时 server 重发全部活跃隧道凭据(`dispatch_tunnel_credentials` 加入 reconcile 流程)。
+- status 聚合:30s 心跳窗口;`GET /api/tunnels/{id}` 与 `/status` 端点实时计算并写回 `tunnels.status`;list 返回上次写入值。
+- P3c（隧道前端 + e2e）待展开。
 

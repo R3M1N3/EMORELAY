@@ -18,6 +18,7 @@
 - 限速：带宽模板（bandwidth profiles）关联到规则，Agent 端 token bucket 实际执行限速。
 - 用户到期 / 滚动 30 天流量配额：到期或超额自动停用名下全部规则，到期账号登录直接拒绝。
 - 规则导入导出：JSON 导出（按名称跨实例映射）+ 导入 dry-run 预览（skip/overwrite 策略）。
+- 多跳隧道数据面（TCP/TLS/WSS,UDP-over-tunnel）：Agent 多跳中继（entry/mid/exit）+ 隧道凭据自动签发下发 + hop 心跳聚合 status。
 - 端口自动分配：创建规则不填监听端口时自动取节点池内最小可用端口。
 - 防呆：节点上仍有活跃规则时拒绝删除。
 - 一键编排:`docker compose up -d`(panel-server + web + sqlite volume)。
@@ -95,7 +96,7 @@ EMORELAY/
 | 10 | Agent 重启恢复已有规则 | ✅(`agent-state.json` + `store.rs`) |
 | 11 | README 一键部署 + 开发启动步骤 | ✅ |
 
-MVP 之后已交付 P1（体验防呆）、P2（用户配额 + 限速 + 导入导出）、P3a（内置 CA + 默认 mTLS）、P3b 控制面（多跳隧道 DB/proto/REST）；逐 Phase 交付记录见 [`plan.md`](./plan.md) 附录·实施状态。后续 P3b 数据面 / P3c 见 [`docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`](./docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md)。
+MVP 之后已交付 P1（体验防呆）、P2（用户配额 + 限速 + 导入导出）、P3a（内置 CA + 默认 mTLS）、P3b 控制面（多跳隧道 DB/proto/REST）、P3b 数据面（Agent tunnel 模块 TCP/TLS/WSS + 凭据下发 + status 聚合）；逐 Phase 交付记录见 [`plan.md`](./plan.md) 附录·实施状态。P3c（隧道前端 + e2e）待展开。
 
 ## 安全
 

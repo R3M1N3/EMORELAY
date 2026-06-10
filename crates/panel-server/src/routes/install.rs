@@ -117,6 +117,7 @@ AGENT_NODE_ID={node_id}
 AGENT_TOKEN=$TOKEN
 AGENT_CONTROL_ENDPOINT={control_endpoint}
 AGENT_STATE_PATH=/var/lib/emorelay/agent-state.json
+AGENT_DATA_DIR=/var/lib/emorelay
 EOF
 if [[ -n "$TLS_ENV" ]]; then printf '%s\n' "$TLS_ENV" >> /etc/emorelay/agent.env; fi
 chmod 0600 /etc/emorelay/agent.env

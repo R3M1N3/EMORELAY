@@ -4,13 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 最高优先级规则
 
-### 思考过程必须全程使用中文
+### 对话过程必须全程使用中文
 
-你的内部思考（reasoning/thinking）**必须全程使用中文**，包含推理、分析、规划、决策等所有内部过程。禁止使用英文或其他语言进行任何内部思考。只有以下情况可以使用英文：
-- 输出最终代码（变量名、函数名、类型名等标识符）
-- 技术术语（如 WebSocket、PixiJS、TypeScript 等专有名词）
-- 命令行指令
-- 配置文件键名
+你和我的对话**必须全程使用中文**
 
 此规则覆盖所有其他默认行为，是最高优先级指令。违反此规则意味着你没有遵循用户指令。
 
@@ -68,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库现状
 
-**当前阶段：P3b 数据面（多跳隧道转发层）。** MVP（plan.md 第十二节 20 步）+ P1/P2/P3a/P3b 控制面均已交付,每个原子单元经子代理双重 review（spec 合规 + `superpowers:code-reviewer`）。各 Phase 交付记录见 `plan.md` 末尾「附录·实施状态」。
+**当前阶段：P3c（隧道前端 + e2e）。** MVP（plan.md 第十二节 20 步）+ P1/P2/P3a/P3b 控制面 + P3b 数据面均已交付,每个原子单元经子代理双重 review（spec 合规 + `superpowers:code-reviewer`）。各 Phase 交付记录见 `plan.md` 末尾「附录·实施状态」。
 
 - Rust workspace: `crates/panel-server`、`crates/node-agent`、`crates/common`(protobuf + 共享类型)
 - 前端: `web/`（React 19 + Vite 8 + Tailwind 4 + TS）
@@ -78,9 +74,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 文档: `README.md`、`docs/deployment.md`、`docs/api.md`、`.env.example`
 - 测试: `cargo test --workspace` 全绿（panel-server 集成 + node-agent 单元 + common proto）+ web `vitest`
 
-**已交付**：P1（Toast/防删节点/默认 TCP+UDP/Settings Agent 端点/一键安装 URL）、P2（端口自动分配/用户到期 + 滚动 30 天流量配额/`bandwidth_profiles` 限速 + Agent token bucket/规则导入导出;规则级 expires/traffic/bandwidth 已退役）、P3a（内置 CA + 默认 mTLS + 节点四件套 + 吊销/CRL + 存量迁移）、P3b 控制面（`tunnels`/`tunnel_hops` + proto `Rule.tunnel` + 隧道 REST CRUD + 删除保护扩展 + `split_tunnel_rule` 拆 hop 纯函数）。
+**已交付**：P1（Toast/防删节点/默认 TCP+UDP/Settings Agent 端点/一键安装 URL）、P2（端口自动分配/用户到期 + 滚动 30 天流量配额/`bandwidth_profiles` 限速 + Agent token bucket/规则导入导出;规则级 expires/traffic/bandwidth 已退役）、P3a（内置 CA + 默认 mTLS + 节点四件套 + 吊销/CRL + 存量迁移）、P3b 控制面（`tunnels`/`tunnel_hops` + proto `Rule.tunnel` + 隧道 REST CRUD + 删除保护扩展 + `split_tunnel_rule` 拆 hop 纯函数）、P3b 数据面（Agent `tunnel/` 模块 TCP/TLS/WSS + entry/mid/exit `TunnelTask` + 凭据签发下发 + hop 心跳 status 聚合）。
 
-**待推进**：**P3b 数据面**（Agent `tunnel/` 模块 + TCP/TLS/WSS transport + entry/mid/exit `TunnelTask` + 真实 split+dispatch + 隧道证书下发 `TunnelCredentials` + status 心跳）、**P3c**（隧道前端 + 双跳/三跳 e2e）。权威计划见 `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`;设计来源 `docs/superpowers/specs/2026-06-10-mvp-followups-design.md` §4.6/§4.7。任何新原子单元仍按本文件「代码完成后必须使用子代理 review」流程审查。
+**待推进**：**P3c**（隧道前端 + 双跳/三跳 e2e）。权威计划见 `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`;任何新原子单元仍按本文件「代码完成后必须使用子代理 review」流程审查。
 
 ## 目标架构（来自 plan.md 第十一节）
 

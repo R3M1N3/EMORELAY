@@ -239,6 +239,47 @@ async fn rule_auto_alloc_skips_tunnel_inter_port() {
 }
 
 #[tokio::test]
+async fn tunnel_status_aggregates_hop_heartbeats() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "hb", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let tid = body["id"].as_i64().unwrap();
+
+    let set_seen = |node_id: i64, expr: &'static str| {
+        let pool = app.state.pool.clone();
+        async move {
+            sqlx::query(&format!("UPDATE nodes SET last_seen_at = {expr} WHERE id = ?"))
+                .bind(node_id).execute(&pool).await.unwrap();
+        }
+    };
+    let get_status = || async {
+        let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid}/status"),
+            &app.admin_token, None).unwrap();
+        let (s, b) = common::send(app.app.clone(), req).await.unwrap();
+        assert_eq!(s, StatusCode::OK);
+        b["status"].as_str().unwrap().to_string()
+    };
+
+    // 全部 hop 30s 内有心跳 → up。
+    set_seen(nodes[0], "datetime('now')").await;
+    set_seen(nodes[1], "datetime('now')").await;
+    assert_eq!(get_status().await, "up");
+    // 一个超窗 → degraded。
+    set_seen(nodes[1], "datetime('now', '-120 seconds')").await;
+    assert_eq!(get_status().await, "degraded");
+    // 全部超窗 → down。
+    set_seen(nodes[0], "datetime('now', '-120 seconds')").await;
+    assert_eq!(get_status().await, "down");
+
+    // 聚合值回写 tunnels.status,GET :id 同步反映。
+    let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid}"), &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["status"], "down");
+}
+
+#[tokio::test]
 async fn tunnel_rule_still_barred_from_reserved_port() {
     let app = common::make_app().await.unwrap();
     let nodes = seed_online_nodes(&app, 2).await;

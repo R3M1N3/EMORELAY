@@ -81,9 +81,11 @@ pub async fn get(
 ) -> ApiResult<Json<TunnelDetail>> {
     auth.require_admin()?;
     let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let status = Tunnel::compute_status(&state.pool, id).await?;
+    let _ = Tunnel::set_status(&state.pool, id, &status).await;
     let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
     Ok(Json(TunnelDetail {
-        id: t.id, name: t.name, transport: t.transport, status: t.status,
+        id: t.id, name: t.name, transport: t.transport, status,
         hops: hops.into_iter().map(|h| HopView { ordinal: h.ordinal, node_id: h.node_id, inter_port: h.inter_port }).collect(),
         created_at: t.created_at, updated_at: t.updated_at,
     }))
@@ -231,13 +233,14 @@ pub async fn restart(
     Ok(Json(json!({ "ok": true, "dispatched": dispatched })))
 }
 
-/// 控制面阶段:status 返回 tunnels.status 字段值(数据面接 hop 心跳后更新)。
 pub async fn status(
     State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
 ) -> ApiResult<Json<serde_json::Value>> {
     auth.require_admin()?;
-    let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
-    Ok(Json(json!({ "id": t.id, "status": t.status })))
+    let _t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    let status = Tunnel::compute_status(&state.pool, id).await?;
+    let _ = Tunnel::set_status(&state.pool, id, &status).await;
+    Ok(Json(json!({ "id": id, "status": status })))
 }
 
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {

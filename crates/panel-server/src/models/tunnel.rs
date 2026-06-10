@@ -93,6 +93,40 @@ impl Tunnel {
         Ok(res.rows_affected())
     }
 
+    /// hop 心跳聚合(spec §5.1:最近 30s 有心跳 = 该 hop 存活)。
+    /// 全部存活 → up;全部超窗 → down;部分 → degraded;无 hop → unknown(防御)。
+    pub async fn compute_status(pool: &SqlitePool, id: i64) -> sqlx::Result<String> {
+        let (total, alive): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), \
+                COALESCE(SUM(CASE WHEN n.last_seen_at IS NOT NULL \
+                    AND n.last_seen_at >= datetime('now', '-30 seconds') THEN 1 ELSE 0 END), 0) \
+             FROM tunnel_hops th JOIN nodes n ON n.id = th.node_id \
+             WHERE th.tunnel_id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+        Ok(match (total, alive) {
+            (0, _) => "unknown",
+            (t, a) if a == t => "up",
+            (_, 0) => "down",
+            _ => "degraded",
+        }
+        .to_string())
+    }
+
+    pub async fn set_status(pool: &SqlitePool, id: i64, status: &str) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE tunnels SET status = ?, updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
     /// 引用该隧道的活跃业务规则数(删除保护用)。
     pub async fn active_rule_refs(pool: &SqlitePool, id: i64) -> sqlx::Result<i64> {
         sqlx::query_scalar(

@@ -1545,6 +1545,8 @@ git commit -m "feat(agent): RuleManager routes tunnel rules to TunnelTask; resto
 - Modify: `crates/node-agent/src/tunnel/mod.rs`、`crates/node-agent/src/main.rs`、`crates/node-agent/Cargo.toml`
 
 > **实现前置**：先 context7 查 `tokio-rustls 0.26` / `rustls 0.23`（重导出路径 `tokio_rustls::rustls`、`pki_types`、`WebPkiClientVerifier`、crypto provider feature）与 `rustls-pemfile 2`。骨架按 rustls 0.23 写；若 API 形态不符，以「测试通过」为准调整，不改测试断言语义。crypto provider 用 **ring**（与 tonic 0.12 的 tls 栈对齐，避免拉入 aws-lc-rs）。
+>
+> **半关（half-close）备注**（Task 3 review 提出）：task.rs 的 `copy_counted`/`bridge_raw` 在 EOF 时对写端 `shutdown()`——TCP 上是半关；tokio-rustls 的 `poll_shutdown` 发 close_notify，TLS 1.3 协议层允许 half-close 但具体行为取决于 rustls 实现。本 Task 的 roundtrip 测试覆盖「先写后读再关」路径即可；「客户端先关写半、再等响应」的真实半关链路留 P3c e2e 验证，若届时发现截断按 WSS 决策 7b 同款处理（文档明示 + 建议改用 tcp transport）。
 
 - [ ] **Step 1: Cargo.toml 加依赖**
 
@@ -3201,7 +3203,7 @@ git commit -m "feat(server): tunnel status from hop heartbeats; AGENT_DATA_DIR i
 
 1. 严格按 Task 1→9 顺序:T3 依赖 T2(transport)与 T1(self_ordinal);T5 依赖 T3/T4(task);T6 依赖 T5(make_transport 签名)与 T1(ca_pem/creds 目录);T7 依赖 T6(TlsTransport 复用);T8 依赖 T1(split self_ordinal)+T6(issue);T9 依赖 T8(tunnels.rs 已改)。
 2. **rustls/tungstenite API 不确定性**:T6/T7 动手前 context7 校准(`tokio-rustls 0.26` feature/provider、`Message::Binary` 载荷类型)。测试断言是契约,实现体按真实 API 调整,不改断言语义。provider 统一 **ring**,main.rs 启动 `install_default` 一次。
-3. T8 的 9 处 dispatch 替换是本计划唯一的「面状」改动:每处只换 dispatch 调用行,不动周边 audit/校验逻辑;随手清理**因替换而孤儿化**的 import,不动其他。错误传播取舍:create/update/delete/restart 用 `?`(split 的 DB 查询失败是真异常,500 合理),set_enabled/rules_io/sweeper 用 `let _ =`(原行为 dispatch 不影响主流程)——两者都不让「Agent 离线」影响响应,离线由 reconcile 兜底。
+3. T8 的 9 处 dispatch 替换是本计划唯一的「面状」改动:每处只换 dispatch 调用行,不动周边 audit/校验逻辑;随手清理**因替换而孤儿化**的 import,不动其他。错误传播取舍(Task 8 review 后定稿):凡实体已落库的路径(create/update/delete、tunnels create 凭据下发)一律 `let _ =` best-effort——dispatch 内 DB 查询失败时实体已存在,回 500 误导客户端重试撞 UNIQUE,reconcile 是真兜底;仅 restart(下发前无落库副作用)保留 `?`。
 4. 不顺手改无关代码。发现本计划与代码现状冲突(行号漂移、helper 命名差异)时按最小改动对齐,以「让本计划的测试通过」为准。
 5. 每个 Task 收尾:跑该 Task Run 命令 + `cargo test --workspace`,全绿 → commit → spawn `general-purpose` 子代理走 `superpowers:code-reviewer`(prompt 含本文件与 CLAUDE.md/plan.md 路径、该 Task 文件清单、强制红线),阻塞性问题修完才进下一 Task。
 6. P3b 数据面完成后**停下来向用户报告**,确认验收(尤其 TLS 隧道在真实双节点环境的手工冒烟)后再展开 P3c。

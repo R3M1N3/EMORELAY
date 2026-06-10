@@ -82,7 +82,7 @@
 - `bandwidth_profile_id` 创建可选;PATCH 传 `0` = 解除关联;不存在 → 400。
 - `tunnel_id` 创建可选,把该规则挂到一条隧道作为业务入口规则;**仅创建时设定,PATCH 不可改**。给定时 `node_id` 必须等于该隧道入口(ordinal 0)节点,否则 → 400(message 含 `entry`)。挂隧道的入口规则其 `listen_port` **豁免节点池范围检查**(隧道入口是面向业务的端口,与节点转发池相互独立),但仍受保留端口红线约束(22/80/443/3306/5432 一律拒绝)。
 - 响应含 `bandwidth_mbps`(关联 profile 的当前值,无关联/已删 → `null`)与 `tunnel_id`(未挂隧道 → `null`)。
-- **注意**:挂隧道仅记录关联关系,控制面阶段**不触发**按 hop 拆分与下发(真实转发由 Agent 数据面负责,见「Tunnels」一节末尾)。
+- 关联隧道的规则会拆成 entry/mid/exit 实例分发到链上各节点;流量统计与限速只在 entry 计。
 
 ### 用户 `users` (admin only)
 
@@ -122,8 +122,8 @@
 | GET    | `/api/tunnels/{id}` | 详情,含 hops 明细(含 `inter_port`) |
 | PATCH  | `/api/tunnels/{id}` | 仅改 `name` |
 | DELETE | `/api/tunnels/{id}` | 软删,被活跃规则引用时拒绝(400) |
-| POST   | `/api/tunnels/{id}/restart` | 控制面 stub:仅记 audit,`dispatched: false` |
-| GET    | `/api/tunnels/{id}/status` | 返回 `tunnels.status` 字段 |
+| POST   | `/api/tunnels/{id}/restart` | 重签凭据 + per-hop 重启,返回 `dispatched` |
+| GET    | `/api/tunnels/{id}/status` | 实时聚合 hop 心跳并回写,返回 `{ id, status }` |
 
 详细语义见「Tunnels」一节。
 
@@ -200,7 +200,7 @@ curl -s http://localhost:8080/api/system/overview -H "Authorization: Bearer $TOK
 REST 之外,panel-server 同时监听 gRPC `:50051` 用于 Agent。协议见 `crates/common/proto/control.proto`:
 
 - `Register` — Agent 上线(node_id + agent_token)
-- `SubscribeCommands` — server → agent 命令流(ApplyRule / RemoveRule / RestartRule / Enable / Disable;P3b 新增 `tunnel_credentials` / `revoke_tunnel_credentials` 两支,Agent 当前为 log-only no-op,数据面接入后生效)
+- `SubscribeCommands` — server → agent 命令流(ApplyRule / RemoveRule / RestartRule / Enable / Disable;`tunnel_credentials` / `revoke_tunnel_credentials` 两支用于隧道凭据下发/吊销,见「隧道凭据下发」小节)
 - `Heartbeat` — 10s 心跳(含 CPU/MEM/LOAD)
 - `ReportNodeStats(stream)` — 60s 上报 NodeStatsBatch
 - `ReportRuleStats(stream)` — 60s 上报 RuleStatsBatch
@@ -346,11 +346,9 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 
 ---
 
-## 十一、Tunnels(多跳隧道控制面)
+## 十一、Tunnels(多跳隧道)
 
 多跳隧道把多个节点串成一条转发链:入口(entry)→ 中继(mid…)→ 出口(exit)。全部 admin only。
-
-> **P3b 控制面阶段范围**:本节描述的是**隧道的定义与管理**(增删改查 + inter_port 分配 + 链路校验 + 删除保护)。**隧道转发(entry/mid/exit 中继)由 Agent 数据面执行,将在后续阶段(P3b-数据面)交付**。当前控制面阶段:**创建隧道不下发任何指令,把规则挂到隧道也不会拆分链路或移动流量**——隧道可定义/管理,转发尚未生效。
 
 ### 端点
 
@@ -361,8 +359,8 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 | GET    | `/api/tunnels/{id}` | 详情,含 hops 明细(`ordinal` / `node_id` / `inter_port`) |
 | PATCH  | `/api/tunnels/{id}` | 仅可改 `name`(链路拓扑不可后改) |
 | DELETE | `/api/tunnels/{id}` | 软删,被活跃规则引用时拒绝(400) |
-| POST   | `/api/tunnels/{id}/restart` | 控制面 stub:仅记 audit,响应 `dispatched: false` |
-| GET    | `/api/tunnels/{id}/status` | 返回隧道当前 `status` 字段 |
+| POST   | `/api/tunnels/{id}/restart` | 重签下发 hop 凭据 + 对隧道全部活跃规则 per-hop 重启,返回 `dispatched` |
+| GET    | `/api/tunnels/{id}/status` | 实时聚合 hop 心跳,刷新并**回写** `tunnels.status`,返回 `{ id, status }` |
 
 ### 创建语义与校验
 
@@ -373,8 +371,9 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 ```
 
 - `name` 非空。
-- `transport` ∈ `{ tcp, tls, wss }`,全链路统一一种 transport。
+- `transport` ∈ `{ tcp, tls, wss }`,全链路统一一种 transport。`wss` 不保证 TCP 半关语义,依赖半关的业务流选 `tcp` 或 `tls`。
 - `node_ids` 是有序链路(`[entry, mid…, exit]`),要求**≥2 个**、**不重复**、**全部 online**;任一不在线 → 400(message 含 `online`)。
+- `ordinal ≥ 1` 的节点必须有 `public_ip`(将被上一跳拨号),否则 → 400。
 - **inter_port 自动分配**:`ordinal ≥ 1` 的每个 hop 从**其自身节点**的 `port_pool` 分配一个 inter_port(排除 reserved + 该节点上活跃 `forward_rules.listen_port` + 该节点上活跃 `tunnel_hops.inter_port`);`ordinal 0`(入口)的 inter_port 为 `null`。
 - 整个创建是事务性的。并发创建撞同一端口由 DB 偏函数唯一索引(`tunnel_hops(node_id, inter_port) WHERE inter_port IS NOT NULL`)兜底 → 400(message:`inter_port allocation conflict (likely concurrent tunnel creation); please retry`)。
 
@@ -386,26 +385,26 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 ### 字段语义
 
 - `tunnels.transport` — `tcp` / `tls` / `wss`。
-- `tunnels.status` — `up` / `degraded` / `down` / `unknown`。控制面阶段恒为占位值;真实状态由数据面心跳回填。
+- `tunnels.status` — `up` / `degraded` / `down` / `unknown`。由 hop 心跳聚合得出(最近 30s 内收到心跳 = 该 hop 存活):全部存活 → `up`;部分存活 → `degraded`;全部超窗 → `down`;无 hop → `unknown`(防御值)。`GET /api/tunnels/{id}` 与 `GET /api/tunnels/{id}/status` 均**实时计算并写回**存储值——即这两个 GET 端点有写副作用;`GET /api/tunnels`(列表)返回上次刷新写入的存储值,避免分页 N 次聚合。
 - `tunnel_hops.ordinal` — 链路序号,`0` = 入口。
 - `tunnel_hops.inter_port` — 该 hop 监听的链路内部端口;入口(ordinal 0)为 `null`。
 
 ### 规则关联隧道
 
-转发规则可通过 `tunnel_id` 挂到一条隧道作为业务入口规则,详见「转发规则」一节的 `tunnel_id` 要点:仅创建时设定(PATCH 不可改),`node_id` 必须等于隧道入口节点,入口规则 `listen_port` 豁免节点池范围检查但仍守保留端口红线。
+转发规则可通过 `tunnel_id` 挂到一条隧道作为业务入口规则,详见「转发规则」一节的 `tunnel_id` 要点:仅创建时设定(PATCH 不可改),`node_id` 必须等于隧道入口节点,入口规则 `listen_port` 豁免节点池范围检查但仍守保留端口红线。关联隧道的规则会拆成 entry/mid/exit 实例分发到链上各节点;流量统计与限速只在 entry 计。
 
-### restart / status 是控制面 stub
+### 隧道凭据下发
 
-- `POST /api/tunnels/{id}/restart`:控制面阶段仅落一条 audit,响应 `dispatched: false`——**不向任何 Agent 下发**(真实重建留数据面)。
-- `GET /api/tunnels/{id}/status`:直接返回 `tunnels.status` 字段(数据面接入前为占位)。
+Server 为每条隧道各 hop 即时签发凭据并通过 gRPC `Command.tunnel_credentials` 下发;凭据不入 DB。
 
-### 新增 audit actions
+- `Command.tunnel_credentials` 含 `tunnel_id`、`self_ordinal`、节点 TLS cert/key、`ca_pem`(自包含,Agent 无需额外信任链)。
+- 创建隧道时即时签发并下发到链上全部节点;reconcile(Agent 重连)重发。
+- `restart` 重新签发全链 hop 凭据(轮换),再对全部活跃规则 per-hop 重启。
+- 删除隧道时 Server 向各 hop 节点发送 `Command.revoke_tunnel_credentials`，Agent 清理本地 `${AGENT_DATA_DIR}/tunnels/<id>/hop-<ordinal>/` 目录。
+
+### audit actions
 
 - `tunnel.create` — 创建隧道。
 - `tunnel.update` — 改名。
 - `tunnel.delete` — 软删隧道。
-- `tunnel.restart` — restart stub(控制面阶段仅记录,不下发)。
-
-### 待数据面(P3b-数据面)
-
-隧道转发由 Agent 数据面执行,后续阶段交付:transport trait(TCP/TLS/WSS)+ `TunnelTask` 中继 + 按 hop 拆 Rule 的真实下发(`split_tunnel_rule` 纯函数已就绪)+ 隧道证书签发下发(proto `Command` 的 `tunnel_credentials` / `revoke_tunnel_credentials`,Agent 当前为 log-only no-op)+ status 心跳回填。控制面阶段隧道只可定义/管理,转发未生效。
+- `tunnel.restart` — 重签凭据 + per-hop 规则重启。
