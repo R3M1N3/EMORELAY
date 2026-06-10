@@ -397,7 +397,7 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 
 Server 为每条隧道各 hop 即时签发凭据并通过 gRPC `Command.tunnel_credentials` 下发;凭据不入 DB。
 
-- `Command.tunnel_credentials` 含 `tunnel_id`、`self_ordinal`、节点 TLS cert/key、`ca_pem`(自包含,Agent 无需额外信任链)。
+- `Command.tunnel_credentials` 含 `tunnel_id`、`ordinal`、节点 TLS cert/key、`ca_pem`(自包含,Agent 无需额外信任链)。
 - 创建隧道时即时签发并下发到链上全部节点;reconcile(Agent 重连)重发。
 - `restart` 重新签发全链 hop 凭据(轮换),再对全部活跃规则 per-hop 重启。
 - 删除隧道时 Server 向各 hop 节点发送 `Command.revoke_tunnel_credentials`，Agent 清理本地 `${AGENT_DATA_DIR}/tunnels/<id>/hop-<ordinal>/` 目录。
