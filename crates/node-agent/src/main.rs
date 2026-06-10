@@ -51,7 +51,10 @@ async fn main() -> Result<()> {
     );
 
     let stats = Arc::new(StatsCollector::new());
-    let manager = Arc::new(Mutex::new(RuleManager::new(stats.clone())));
+    let manager = Arc::new(Mutex::new(RuleManager::new(
+        stats.clone(),
+        config.data_dir.clone(),
+    )));
     let store = Arc::new(ConfigStore::new(config.state_path.clone()));
     // 跨会话保留:重连不会重置 CPU/MEM 采样基线或网卡字节累计,
     // 保证 60s bucket 不被人为撕裂。
