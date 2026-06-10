@@ -7,6 +7,7 @@ use tracing::info;
 
 /// JSON 镜像 prost Rule，因为 prost 生成的类型未派生 Serialize。
 /// 字段集与 proto Rule 严格一一对应；新增字段时两侧必须同步。
+/// （P3b 的 tunnel 上下文是有意例外:Agent 持久化暂不含隧道,数据面落地后再同步。）
 #[derive(Serialize, Deserialize)]
 struct RuleJson {
     id: i64,
