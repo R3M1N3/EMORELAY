@@ -64,6 +64,17 @@ impl Node {
             .await
     }
 
+    /// 规则导入按 node_name 映射跨实例节点用。
+    pub async fn find_by_name(pool: &SqlitePool, name: &str) -> sqlx::Result<Option<Self>> {
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM nodes WHERE name = ? AND deleted_at IS NULL"
+        );
+        sqlx::query_as::<_, Node>(&sql)
+            .bind(name)
+            .fetch_optional(pool)
+            .await
+    }
+
     pub async fn create(
         pool: &SqlitePool,
         name: &str,

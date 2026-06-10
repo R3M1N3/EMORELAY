@@ -4,6 +4,7 @@ pub mod health;
 pub mod install;
 pub mod nodes;
 pub mod rules;
+pub mod rules_io;
 pub mod system;
 pub mod users;
 
@@ -54,6 +55,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rules/{id}/restart", post(rules::restart))
         .route("/api/rules/{id}/stats", get(rules::stats))
         .route("/api/rules/{id}/logs", get(rules::logs))
+        .route("/api/rules/export", get(rules_io::export))
+        .route("/api/rules/import", post(rules_io::import))
         .route("/api/users", get(users::list).post(users::create))
         .route(
             "/api/users/{id}",
