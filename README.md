@@ -10,6 +10,7 @@
 - **node-agent**(Rust + Tokio)TCP/UDP relay,本地规则落盘,断开主控后继续运行。
 - **web**(React 19 + Vite + TS + Tailwind 4)深色现代控制台,登录 / 概览 / 节点 / 规则 / 用户 / 设置。
 - 鉴权:Argon2 密码哈希,JWT;Agent 注册 token DB 内只存 SHA-256 哈希。
+- 内置 CA + 默认 mTLS（节点证书自动签发 + 吊销）:gRPC 控制面强制双向认证,创建节点一次性下发四件套凭据,支持轮换/吊销。
 - 审计:所有写操作落 `audit_logs`;面板「设置」页可查最近 50 条。
 - 流量统计:60s 桶聚合,server 端事务 UPSERT,Dashboard 显示过去 24h 流量。
 - 通知：右上角全局 Toast 反馈所有写操作。
@@ -102,7 +103,7 @@ EMORELAY/
 - Agent token DB 内只存 SHA-256 哈希,创建节点时面板**仅显示一次**明文。
 - 保留端口默认 22/80/443/3306/5432,可在「设置」页改。
 - 后端不拼 shell;Agent 只接受白名单 RPC(`ApplyRule`/`RemoveRule`/`EnableRule`/`DisableRule`/`RestartRule`)。
-- gRPC 通道支持 TLS — 用 `scripts/gen-dev-tls.sh` 生成自签证书,或用真实证书,配置见 [`docs/deployment.md` §4.3](./docs/deployment.md)。两个 `PANEL_GRPC_TLS_*` 都为空时退回 plaintext 并 warn(仅供 dev)。
+- gRPC 控制面默认走内置 CA 强制 mTLS — 首次启动自动签发 CA + server 证书,创建节点一次性下发四件套凭据,支持轮换/吊销(CRL),配置见 [`docs/deployment.md` §4.5](./docs/deployment.md) 与 [`docs/api.md` §"mTLS 与节点凭据"](./docs/api.md)。`PANEL_DEV_DISABLE_MTLS=1` 退回 plaintext(仅供 dev)。旧的 `PANEL_GRPC_TLS_*` 已弃用。
 
 ## License
 

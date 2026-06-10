@@ -520,7 +520,7 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 
 - ~~`relay/traits.rs::QuotaGuard` trait 占位 + `bridge()` hot path `TODO(bandwidth)` 锚点~~（Phase 2 token bucket 取代）
 - ~~`grpc/dispatcher.rs` SubscribeCommands stream 终止时 Drop guard 清理 dead sender~~ → 已于 d519172 交付（`grpc/service.rs` GuardedStream）
-- ~~gRPC server 端 mTLS 客户端证书校验（`ClientCertVerifier`），与 Agent 已支持的 `ClientTlsConfig` 形成双向认证~~ → 已于 d519172 交付（`PANEL_GRPC_TLS_CLIENT_CA`）
+- ~~gRPC server 端 mTLS 客户端证书校验（`ClientCertVerifier`），与 Agent 已支持的 `ClientTlsConfig` 形成双向认证~~ → 已于 d519172 交付（`PANEL_GRPC_TLS_CLIENT_CA`）；P3a 已用内置 CA 默认强制 mTLS 取代该手动配置路径（`PANEL_GRPC_TLS_*` 弃用，见下 Phase 3a）
 - ~~`.env.example` 补 `AGENT_STATS_INTERVAL_SECS` / `PANEL_EXPIRY_SWEEP_SECS`~~（Phase 2 已完成;后者退役,换为 PANEL_USER_EXPIRY/QUOTA_SWEEP_SECS）
 - ~~前端引入 vitest + 关键页面渲染 smoke~~ → 已于 d519172 交付
 - ~~UDP session 超时测试~~ → 已于 d519172 交付（`udp_session_expires_after_timeout`）
@@ -549,4 +549,19 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 - 规则级 expires/traffic/bandwidth 全链路退役(migration 0004 + proto reserved 8-10)
 - 测试: `cargo test --workspace` 全绿(新增 bandwidth_profiles / port_alloc / rules_io / user_quota_sweeper / token_bucket);web vitest 全绿
 - 注意:Phase 2 的 commit 区间须整体部署(中间 commit 存在「规则级执法已删、用户级 sweeper 未上」的过渡态);限速变更对存量 TCP 连接延迟生效(新连接即时)
+
+### Phase 3a（2026-06-10 启动,同日交付）
+
+内置 CA + 默认强制 mTLS + 节点四件套 + install.sh 凭据落盘 + 吊销/CRL + 存量迁移 —— 全部交付。
+
+- Spec: `docs/superpowers/specs/2026-06-10-mvp-followups-design.md` §4.4
+- Plan: `docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`（P3a 段,7 Task）
+- 7 个 Task 全部 spec ✅ + code quality ✅（subagent-driven,每 Task 双重审查 + openssl 链验证）
+- migration 0005(nodes.cert_serial/fingerprint);新依赖 rcgen 0.13。
+- gRPC 默认强制 mTLS(内置 CA);PANEL_DEV_DISABLE_MTLS=1 退 plaintext。
+- 创建节点返回四件套(token+CA+cert+key)一次性;DB 只存 serial/fingerprint。
+- 吊销:POST /api/nodes/:id/revoke-credentials → CRL(原子写)+ 重签;register 拒已吊销证书。
+- **⚠️ 升级 P3a = fleet-wide Agent 重装**:存量节点须逐个「轮换凭据」重装。
+- 已知留置:register 拒吊销的真链路 + 「裸连接(无 client cert)被拒」负向断言留 P3c e2e;CRL 损坏当前 fail-open(loud error),强场景可升级 boot-blocking。
+- P3b(多跳隧道)/P3c(隧道前端 + e2e)待展开。
 

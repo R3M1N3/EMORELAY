@@ -45,11 +45,19 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET    | `/api/nodes` | 分页(page, page_size, sort, order) |
-| POST   | `/api/nodes` | 创建,响应一次性返回明文 `agent_token` |
+| POST   | `/api/nodes` | 创建,响应一次性返回四件套凭据(见下) |
 | GET    | `/api/nodes/{id}` | 详情 |
 | PATCH  | `/api/nodes/{id}` | 部分更新 |
 | DELETE | `/api/nodes/{id}` | 软删 |
 | GET    | `/api/nodes/{id}/stats` | 当前状态 + node_stats 时序 |
+| POST   | `/api/nodes/{id}/revoke-credentials` | 吊销旧证书入 CRL + 重签,返回新三件套(见下) |
+
+创建节点(POST `/api/nodes`)响应**一次性**返回四件套凭据,关闭后不可再取:
+
+- `agent_token` — Agent 注册明文 token(DB 仅存 SHA-256 哈希)。
+- `ca_pem` — 内置 CA 证书(Agent 用以校验 server)。
+- `client_cert_pem` — 该节点的 mTLS 客户端证书。
+- `client_key_pem` — 客户端私钥。**DB 永不持久化**,只存 `cert_serial` + `cert_fingerprint`;丢失即不可找回,只能走「轮换凭据」重签。
 
 ### 转发规则 `rules` (普通用户可用,仅限自己名下规则;export/import 除外)
 
@@ -152,7 +160,8 @@ curl -sX POST http://localhost:8080/api/nodes \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"name":"hk-relay-01","region":"HK","public_ip":"1.2.3.4"}' | jq .
-# 注意响应里的 agent_token —— 仅此一次显示,DB 不再存明文。
+# 注意响应里的 agent_token + ca_pem + client_cert_pem + client_key_pem —— 四件套仅此一次显示。
+# 私钥 DB 不持久化,丢失只能走「轮换凭据」(见「mTLS 与节点凭据」)。
 ```
 
 创建规则:
@@ -276,3 +285,45 @@ Rate limit：60 req/分钟/IP（看 §"Rate limit 与反代 header"）。
 - `tunnel_name` 非空 → `error`(隧道留待 P3)。
 - 精确同 binding(同 node/protocol/listen_ip/listen_port)的已有规则按 `strategy` 处理(skip 跳过 / overwrite 覆盖);互斥协议冲突(如 `tcp_udp` 撞 `tcp`)→ `error`。
 - 非 dry-run 落库后记一条聚合 audit `rule.import`(含 created/overwritten/skipped/errors 计数)。
+
+---
+
+## 十、mTLS 与节点凭据
+
+P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自动管理,不再依赖 `scripts/gen-dev-tls.sh` 或外部 CA。
+
+### 内置 CA
+
+- 首次启动时 panel-server 在 `${PANEL_DATA_DIR}/tls/` 自动生成一份 ECDSA P-256 CA + server 证书(幂等,私钥权限 0600)。已存在则复用。
+- server 证书的 SAN 主机名取自 `PANEL_PUBLIC_HOST`(Agent 连入时校验)。留空 → 仅含 `127.0.0.1` / `localhost`,远程 Agent 会因 SAN 不匹配握手失败。
+- 开发逃生阀 `PANEL_DEV_DISABLE_MTLS=1` 退回 plaintext(Agent 端 `AGENT_CONTROL_ENDPOINT` 须用 `http://` 配合)。**仅供本地开发**。
+- 旧的 `PANEL_GRPC_TLS_CERT` / `PANEL_GRPC_TLS_KEY` / `PANEL_GRPC_TLS_CLIENT_CA` 三项已**弃用**,serve 时被忽略(保留仅为兼容旧 `.env`)。
+
+### 四件套语义
+
+创建节点(POST `/api/nodes`)一次性返回 `agent_token` + `ca_pem` + `client_cert_pem` + `client_key_pem`。私钥 DB 永不持久化(只存 `cert_serial` + `cert_fingerprint`),关闭返回后**不可找回**,丢失只能走「轮换凭据」重签。
+
+前端把四件套(含私钥)嵌进可复制的一键安装命令(见 §"一键安装节点")。
+
+> **安全提示**:四件套(含私钥)随安装命令以明文出现在命令行,执行期间会留在 shell history 与 `ps` 输出里 —— 与既有 `--token=` 同一暴露级别。自托管面板可接受,但在共享/多人机器上安装后应清理 shell history(如 `history -c` / 删除 `~/.bash_history` 对应行)。
+
+### 轮换 / 吊销凭据
+
+`POST /api/nodes/{id}/revoke-credentials`(admin):
+
+- 把该节点当前证书指纹写入持久化 CRL(`${PANEL_DATA_DIR}/tls/crl.json`,原子写),并重新签发一套新证书。
+- 响应返回 `{ ca_pem, client_cert_pem, client_key_pem }`(**不含** token —— token 不变,只换证书)。
+- gRPC register 时被吊销的客户端证书会被拒(`PermissionDenied`,失败原因 `revoked_cert`)。
+- 记 audit `node.credentials_revoked`。
+
+适用场景:私钥泄漏、四件套丢失需重装、或下线某台 Agent。
+
+### 升级到 P3a = 全节点重装
+
+升级到 P3a 时,存量(P1/P2)活跃节点会在启动时自动补 `cert_serial` / `cert_fingerprint`(audit `node.mtls_credentials_issued`),但**拿不到私钥明文**,因此无法直接连入。管理员须逐个进节点详情页点「轮换凭据」拿到新四件套并重装 Agent。换言之,**升级到 P3a 等于全节点 Agent 重装**;dev/staging 可改设 `PANEL_DEV_DISABLE_MTLS=1` 走 plaintext 过渡。
+
+### 新增 audit actions
+
+- `node.credentials_revoked` — 轮换/吊销凭据。
+- `node.mtls_credentials_issued` — 升级时存量节点自动补签证书元数据。
+- gRPC register 失败原因新增 `revoked_cert`(证书已吊销)。
