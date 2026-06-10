@@ -15,4 +15,5 @@ pub mod models;
 pub mod routes;
 pub mod state;
 pub mod sweeper;
+pub mod tls;
 pub mod util;

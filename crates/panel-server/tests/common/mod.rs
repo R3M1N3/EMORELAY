@@ -53,6 +53,8 @@ pub async fn make_app() -> Result<TestApp> {
         grpc_tls_client_ca: None,
         panel_data_dir: temp.path().display().to_string().replace('\\', "/"),
         panel_public_base_url: None,
+        dev_disable_mtls: true,
+        panel_public_host: None,
     };
     let state = AppState {
         config,

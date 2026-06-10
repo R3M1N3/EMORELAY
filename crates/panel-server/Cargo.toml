@@ -30,6 +30,8 @@ hex = "0.4"
 sha2 = "0.10"
 url = "2"
 tower_governor = "0.8.0"
+rcgen = "0.13"
+time = "0.3"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

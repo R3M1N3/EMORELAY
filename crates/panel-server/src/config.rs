@@ -21,6 +21,11 @@ pub struct Config {
     /// 面板对外可访问的 base URL,用于生成安装命令(install.sh 自身从这里拉二进制)。
     /// 留空 → 节点详情页隐藏「复制安装命令」按钮。
     pub panel_public_base_url: Option<String>,
+    /// 强制 mTLS 的 dev 逃生阀:1 → gRPC 退回 plaintext(仅开发)。默认 false(强制 mTLS)。
+    pub dev_disable_mtls: bool,
+    /// server 证书 SAN 里写入的对外主机名(Agent 连入时校验)。
+    /// 留空 → 仅签 127.0.0.1 + localhost(本地开发足够)。
+    pub panel_public_host: Option<String>,
 }
 
 impl Config {
@@ -53,6 +58,11 @@ impl Config {
             panel_public_base_url: env::var("PANEL_PUBLIC_BASE_URL")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            dev_disable_mtls: env::var("PANEL_DEV_DISABLE_MTLS")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            panel_public_host: env::var("PANEL_PUBLIC_HOST").ok().filter(|s| !s.is_empty()),
         })
     }
 }

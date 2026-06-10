@@ -1,0 +1,34 @@
+//! CA bootstrap 与证书签发的链路测试。用临时目录,不污染真实 data dir。
+use panel_server::tls::ca::{bootstrap_ca, CaBundle};
+use std::sync::Arc;
+use tempfile::TempDir;
+
+fn tls_dir(t: &TempDir) -> String {
+    t.path().display().to_string().replace('\\', "/")
+}
+
+#[test]
+fn bootstrap_generates_ca_and_server_cert_then_is_idempotent() {
+    let dir = TempDir::new().unwrap();
+    let tls = tls_dir(&dir);
+
+    let bundle = bootstrap_ca(&tls, Some("relay.example.com")).expect("first bootstrap");
+    for f in ["ca.pem", "ca.key", "server.pem", "server.key"] {
+        assert!(std::path::Path::new(&tls).join(f).exists(), "missing {f}");
+    }
+    let ca_pem_first = bundle.ca_pem.clone();
+
+    let bundle2 = bootstrap_ca(&tls, Some("relay.example.com")).expect("second bootstrap");
+    assert_eq!(bundle2.ca_pem, ca_pem_first, "幂等:CA 必须复用,不可重签");
+}
+
+#[test]
+fn issued_server_cert_chains_to_ca() {
+    let dir = TempDir::new().unwrap();
+    let bundle: Arc<CaBundle> = bootstrap_ca(&tls_dir(&dir), None).unwrap();
+    assert!(bundle.ca_pem.contains("BEGIN CERTIFICATE"));
+    assert!(bundle.server_cert_pem.contains("BEGIN CERTIFICATE"));
+    assert!(bundle.server_key_pem.contains("BEGIN PRIVATE KEY")
+        || bundle.server_key_pem.contains("BEGIN EC PRIVATE KEY"));
+    assert_ne!(bundle.ca_pem, bundle.server_cert_pem);
+}
