@@ -376,7 +376,7 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 - `transport` ∈ `{ tcp, tls, wss }`,全链路统一一种 transport。
 - `node_ids` 是有序链路(`[entry, mid…, exit]`),要求**≥2 个**、**不重复**、**全部 online**;任一不在线 → 400(message 含 `online`)。
 - **inter_port 自动分配**:`ordinal ≥ 1` 的每个 hop 从**其自身节点**的 `port_pool` 分配一个 inter_port(排除 reserved + 该节点上活跃 `forward_rules.listen_port` + 该节点上活跃 `tunnel_hops.inter_port`);`ordinal 0`(入口)的 inter_port 为 `null`。
-- 整个创建是事务性的。并发创建撞同一端口由 DB 偏函数唯一索引(`tunnel_hops(node_id, inter_port) WHERE inter_port IS NOT NULL`)兜底 → 400(message 含 `concurrent tunnel creation; please retry`)。
+- 整个创建是事务性的。并发创建撞同一端口由 DB 偏函数唯一索引(`tunnel_hops(node_id, inter_port) WHERE inter_port IS NOT NULL`)兜底 → 400(message:`inter_port allocation conflict (likely concurrent tunnel creation); please retry`)。
 
 ### 删除保护
 
