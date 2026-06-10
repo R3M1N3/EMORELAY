@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use tokio::fs;
 use tracing::info;
 
-/// JSON 镜像 prost Rule，因为 prost 生成的类型未派生 Serialize。
-/// 字段集与 proto Rule 严格一一对应；新增字段时两侧必须同步。
 /// P3b 数据面起 tunnel 上下文随规则持久化,断网重启恢复隧道角色。
 /// 镜像 proto TunnelContext(prost 类型未派生 Serialize)。
 #[derive(Serialize, Deserialize, Clone)]
@@ -21,6 +19,8 @@ struct TunnelJson {
     self_ordinal: u32,
 }
 
+/// JSON 镜像 prost Rule，因为 prost 生成的类型未派生 Serialize。
+/// 字段集与 proto Rule 严格一一对应；新增字段时两侧必须同步。
 #[derive(Serialize, Deserialize)]
 struct RuleJson {
     id: i64,
