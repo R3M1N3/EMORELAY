@@ -42,6 +42,9 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
+    // 隧道 TLS/WSS 用 ring provider(与 tonic tls 栈对齐)。重复安装无害,忽略结果。
+    let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+
     let config = Config::from_env()?;
     info!(
         node_id = config.node_id,
@@ -131,7 +134,7 @@ async fn run_session(
             msg = command_stream.message() => {
                 match msg {
                     Ok(Some(cmd)) => {
-                        if let Err(e) = handle_command(&manager, &store, cmd).await {
+                        if let Err(e) = handle_command(&manager, &store, cmd, &config.data_dir).await {
                             error!(error = ?e, "command apply failed");
                         }
                     }
@@ -261,10 +264,30 @@ async fn handle_command(
     manager: &Mutex<RuleManager>,
     store: &ConfigStore,
     cmd: emorelay_common::control::v1::Command,
+    data_dir: &str,
 ) -> Result<()> {
     use emorelay_common::control::v1::command::Body;
     let Some(body) = cmd.body else {
         return Ok(());
+    };
+
+    // 凭据命令只动磁盘,不动规则状态,不进 manager 锁。
+    let body = match body {
+        Body::TunnelCredentials(c) => {
+            info!(tunnel_id = c.tunnel_id, ordinal = c.ordinal, "tunnel credentials received");
+            if let Err(e) = crate::tunnel::creds::store(data_dir, &c).await {
+                warn!(error = ?e, "store tunnel credentials failed");
+            }
+            return Ok(());
+        }
+        Body::RevokeTunnelCredentials(c) => {
+            info!(tunnel_id = c.tunnel_id, "tunnel credentials revoked");
+            if let Err(e) = crate::tunnel::creds::remove_tunnel(data_dir, c.tunnel_id).await {
+                warn!(error = ?e, "remove tunnel credentials failed");
+            }
+            return Ok(());
+        }
+        other => other,
     };
 
     // 锁内执行 apply / remove / restart，然后立即在锁内取快照；锁外做磁盘 IO。
@@ -288,19 +311,8 @@ async fn handle_command(
                 info!(rule_id = r.rule_id, "restart rule");
                 mgr.restart(r.rule_id).await?;
             }
-            Body::TunnelCredentials(c) => {
-                // P3b 数据面尚未落地隧道凭据处理(后续任务);先确认收到,不改规则状态。
-                info!(
-                    tunnel_id = c.tunnel_id,
-                    ordinal = c.ordinal,
-                    "tunnel credentials received (data plane pending)"
-                );
-            }
-            Body::RevokeTunnelCredentials(c) => {
-                info!(
-                    tunnel_id = c.tunnel_id,
-                    "tunnel credentials revoke received (data plane pending)"
-                );
+            Body::TunnelCredentials(_) | Body::RevokeTunnelCredentials(_) => {
+                unreachable!("credentials commands intercepted before manager lock")
             }
         }
         mgr.current_rules()

@@ -20,8 +20,13 @@ serde_json = { workspace = true }
 # 节点资源采样(CPU/MEM/LoadAvg)与网络字节累计。
 # 仅启用 system + network feature,避免拉入进程/磁盘/组件等不用的子集。
 sysinfo = { version = "0.32", default-features = false, features = ["system", "network"] }
+# P3b 隧道 TLS/WSS transport。ring provider 与 tonic 0.12 tls 栈对齐。
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
 
 [dev-dependencies]
 # token bucket 测试用 start_paused 虚拟时钟(tokio::time::advance)。
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
+# 隧道 TLS 测试用自签证书。
+rcgen = "0.13"

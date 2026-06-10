@@ -78,6 +78,58 @@ pub fn issue_client_cert(ca: &CaBundle, node_id: i64) -> Result<IssuedCert> {
     })
 }
 
+/// 隧道 hop 的 TLS 凭据(P3b 数据面)。server/client 各一张叶子,
+/// SAN 同为 tunnel-<id>-hop-<ordinal>.emorelay.internal(dial 方 SNI 校验 server SAN;
+/// client 叶子链验证即可,SAN 不参与 server 端校验)。不入 DB,即时签发即时下发。
+pub struct TunnelHopCerts {
+    pub server_cert_pem: String,
+    pub server_key_pem: String,
+    pub client_cert_pem: String,
+    pub client_key_pem: String,
+}
+
+pub fn issue_tunnel_hop_certs(ca: &CaBundle, tunnel_id: i64, ordinal: i64) -> Result<TunnelHopCerts> {
+    let san = format!("tunnel-{tunnel_id}-hop-{ordinal}.emorelay.internal");
+    let issuer_key = KeyPair::from_pem(&ca.ca_key_pem).context("从 PEM 重建 CA 私钥失败")?;
+    let issuer_cert = rebuild_issuer_cert(&issuer_key).context("重建 issuer 证书失败")?;
+
+    let (server_cert_pem, server_key_pem) =
+        issue_tunnel_leaf(&san, ExtendedKeyUsagePurpose::ServerAuth, &issuer_cert, &issuer_key)?;
+    let (client_cert_pem, client_key_pem) =
+        issue_tunnel_leaf(&san, ExtendedKeyUsagePurpose::ClientAuth, &issuer_cert, &issuer_key)?;
+
+    Ok(TunnelHopCerts {
+        server_cert_pem,
+        server_key_pem,
+        client_cert_pem,
+        client_key_pem,
+    })
+}
+
+fn issue_tunnel_leaf(
+    san: &str,
+    eku: ExtendedKeyUsagePurpose,
+    issuer_cert: &Certificate,
+    issuer_key: &KeyPair,
+) -> Result<(String, String)> {
+    let key = KeyPair::generate().context("生成隧道叶子密钥失败")?;
+    let now = OffsetDateTime::now_utc();
+    let mut params = CertificateParams::new(vec![san.to_string()])
+        .context("构造隧道叶子 CertificateParams 失败")?;
+    params.is_ca = IsCa::NoCa;
+    params.distinguished_name.push(DnType::CommonName, san);
+    params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+    params.extended_key_usages.push(eku);
+    params.serial_number = Some(SerialNumber::from(rand::random::<u64>() | 1));
+    params.use_authority_key_identifier_extension = true;
+    params.not_before = now - Duration::days(1);
+    params.not_after = now + Duration::days(1825);
+    let cert = params
+        .signed_by(&key, issuer_cert, issuer_key)
+        .context("CA 签发隧道叶子失败")?;
+    Ok((cert.pem(), key.serialize_pem()))
+}
+
 /// 重建 issuer 证书,仅供 `signed_by` 取用。
 ///
 /// **签发不变式(改 `bootstrap_ca` 前必读)**:叶子要链到本 CA,靠两点对齐——

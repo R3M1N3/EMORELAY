@@ -53,6 +53,22 @@ fn issue_client_cert_chains_and_has_stable_fingerprint() {
     assert_ne!(issued.fingerprint, issued2.fingerprint);
 }
 
+use panel_server::tls::issue::issue_tunnel_hop_certs;
+
+#[test]
+fn issue_tunnel_hop_certs_produces_server_and_client_pairs() {
+    let dir = TempDir::new().unwrap();
+    let ca = bootstrap_ca(&tls_dir(&dir), None).unwrap();
+    let c = issue_tunnel_hop_certs(&ca, 7, 1).expect("issue tunnel hop certs");
+    assert!(c.server_cert_pem.contains("BEGIN CERTIFICATE"));
+    assert!(c.client_cert_pem.contains("BEGIN CERTIFICATE"));
+    for key in [&c.server_key_pem, &c.client_key_pem] {
+        assert!(key.contains("BEGIN PRIVATE KEY") || key.contains("BEGIN EC PRIVATE KEY"));
+    }
+    // server 与 client 是两张独立叶子。
+    assert_ne!(c.server_cert_pem, c.client_cert_pem);
+}
+
 use panel_server::grpc::{tls_mode_for, GrpcTlsMode};
 
 #[test]
