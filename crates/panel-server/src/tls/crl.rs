@@ -61,7 +61,10 @@ impl Crl {
         set.insert(fingerprint.to_string());
         let snapshot: Vec<&String> = set.iter().collect();
         let json = serde_json::to_string(&snapshot)?;
-        std::fs::write(path, json)?;
+        // 原子写:先写 .tmp 再 rename,避免崩溃时留下半截损坏的 crl.json(损坏=吊销失效)。
+        let tmp = format!("{path}.tmp");
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 }

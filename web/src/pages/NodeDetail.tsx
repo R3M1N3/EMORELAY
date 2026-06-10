@@ -145,8 +145,8 @@ export default function NodeDetail() {
             <Row k="创建" v={shortTime(node.created_at)} />
           </dl>
           <div className="text-[11px] text-zinc-500 mt-2">
-            Agent 安装命令需要创建节点时一次性显示的 token；
-            如已遗失，后续（P2 阶段）将提供「轮换 Agent 凭据」入口。
+            Agent 接入凭据在创建节点时一次性显示；
+            凭据遗失或泄露时，点右上角「轮换凭据」重新签发(旧证书随即吊销)。
           </div>
         </section>
 
