@@ -586,11 +586,11 @@ TCP/UDP 转发必须优先自研 Rust Agent 实现，外部 realm/gost/nftables 
 Agent 多跳隧道转发层 —— transport trait + TCP/TLS/WSS + TunnelTask entry/mid/exit + UDP-over-tunnel + TLS 凭据签发下发 + server 真实 split+dispatch + hop 心跳 status 聚合,全部交付。
 
 - Plan: `docs/superpowers/plans/2026-06-11-p3b-data-plane.md`（9 Task TDD）
-- Agent tunnel 模块六文件:`tunnel/mod.rs`、`transport.rs`、`tcp_transport.rs`、`tls_transport.rs`、`wss_transport.rs`、`task.rs`。
-- proto 新增字段:`Rule.self_ordinal`（hop 链路序号）、`TunnelCredentials.ca_pem`（自包含 CA,Agent 无需额外信任链）。
-- 流量统计与限速 entry-only 决策:mid/exit hop 的 `TcpRelayTask` 不装 `QuotaGuard`,仅 entry 计数。
-- preamble 协议:entry 连 mid 后先发 8 字节 `[EMRL][target_port u16 LE][0x00 0x00]` 协商目标端口,mid 解析后接力拨下一跳(或直连 exit target)。
-- reconcile 扩展:Agent 重连时 server 重发全部活跃隧道凭据(`dispatch_tunnel_credentials` 加入 reconcile 流程)。
+- Agent tunnel 模块:`tunnel/{mod,transport,tcp_transport,tls_transport,wss_transport,task,frame,creds}.rs`（+ cfg(test) `testutil.rs`）。
+- proto 新增字段:`TunnelContext.self_ordinal = 7`（本跳序号,凭据目录与 dial SNI 推导）、`TunnelCredentials.ca_pem = 7`（凭据自包含 CA,不依赖控制面 mTLS 落盘）。
+- 流量统计与限速 entry-only 决策:mid/exit 的 TunnelTask 不调 `stats.ensure` 也不接收 bucket(split 已置 bandwidth=0),避免 server 按 rule_id 累加时 N 倍重复计量。
+- 线协议:entry dial 下一跳后先写 1 字节 stream preamble(`0x01`=TCP / `0x02`=UDP),exit 读后定模式,mid 纯字节 bridge 不感知;UDP 帧 = 2 字节大端长度前缀 + payload,per-client 一条隧道连接(120s 闲置回收)。
+- reconcile 扩展:`reconcile_commands_for_node` 覆盖非隧道规则 + 节点参与的全部活跃隧道(凭据先行,再发本 hop 拆分 Rule;mid/exit 节点无 forward_rules 行,从 tunnel_hops 反查)。
 - status 聚合:30s 心跳窗口;`GET /api/tunnels/{id}` 与 `/status` 端点实时计算并写回 `tunnels.status`;list 返回上次写入值。
 - P3c（隧道前端 + e2e）待展开。
 
