@@ -110,9 +110,8 @@ export interface RuleView {
   target_host: string
   target_port: number
   enabled: boolean
-  expires_at: string | null
-  traffic_limit_bytes: number | null
-  bandwidth_limit_mbps: number | null
+  bandwidth_profile_id: number | null
+  bandwidth_mbps: number | null
   rx_bytes: number
   tx_bytes: number
   connection_count: number
@@ -170,12 +169,10 @@ export interface CreateRuleRequest {
   name: string
   protocol: RuleView['protocol']
   listen_ip?: string
-  listen_port: number
+  listen_port?: number
   target_host: string
   target_port: number
-  expires_at?: string | null
-  traffic_limit_bytes?: number | null
-  bandwidth_limit_mbps?: number | null
+  bandwidth_profile_id?: number | null
 }
 
 export interface UpdateRuleRequest {
@@ -184,9 +181,8 @@ export interface UpdateRuleRequest {
   listen_port?: number
   target_host?: string
   target_port?: number
-  expires_at?: string | null
-  traffic_limit_bytes?: number | null
-  bandwidth_limit_mbps?: number | null
+  /** 0 = 解除关联 */
+  bandwidth_profile_id?: number
 }
 
 export interface RuleStatsBucket {
@@ -332,6 +328,36 @@ export const users = {
   create: (req: CreateUserRequest) => api.post<UserDetail>('/api/users', req),
   update: (id: number, req: UpdateUserRequest) => api.patch<UserDetail>(`/api/users/${id}`, req),
   del: (id: number) => api.del<{ ok: boolean }>(`/api/users/${id}`),
+}
+
+export interface BandwidthProfileView {
+  id: number
+  name: string
+  bandwidth_mbps: number
+  description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface BandwidthProfileListResponse {
+  items: BandwidthProfileView[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export const bandwidthProfiles = {
+  list: (q: { page?: number; page_size?: number } = {}) => {
+    const sp = new URLSearchParams()
+    if (q.page) sp.set('page', String(q.page))
+    if (q.page_size) sp.set('page_size', String(q.page_size))
+    return api.get<BandwidthProfileListResponse>(`/api/bandwidth-profiles?${sp.toString()}`)
+  },
+  create: (req: { name: string; bandwidth_mbps: number; description?: string }) =>
+    api.post<BandwidthProfileView>('/api/bandwidth-profiles', req),
+  update: (id: number, req: { name?: string; bandwidth_mbps?: number; description?: string }) =>
+    api.patch<BandwidthProfileView>(`/api/bandwidth-profiles/${id}`, req),
+  del: (id: number) => api.del<{ ok: boolean }>(`/api/bandwidth-profiles/${id}`),
 }
 
 export const system = {

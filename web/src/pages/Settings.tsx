@@ -11,8 +11,6 @@ import { useToast } from '../lib/use-toast'
 
 interface SettingsFormState {
   reserved_ports: string
-  default_traffic_limit_bytes: string
-  default_bandwidth_limit_mbps: string
   stats_retention_days: string
   agent_control_endpoint: string
 }
@@ -29,8 +27,6 @@ interface SettingsState {
 
 const EMPTY_FORM: SettingsFormState = {
   reserved_ports: '',
-  default_traffic_limit_bytes: '',
-  default_bandwidth_limit_mbps: '',
   stats_retention_days: '',
   agent_control_endpoint: '',
 }
@@ -71,8 +67,6 @@ export default function Settings() {
           initial,
           form: {
             reserved_ports: initial.reserved_ports ?? '',
-            default_traffic_limit_bytes: initial.default_traffic_limit_bytes ?? '',
-            default_bandwidth_limit_mbps: initial.default_bandwidth_limit_mbps ?? '',
             stats_retention_days: initial.stats_retention_days ?? '',
             agent_control_endpoint: initial.agent_control_endpoint ?? '',
           },
@@ -101,8 +95,6 @@ export default function Settings() {
       const init = state.initial
       const keys: (keyof SettingsFormState)[] = [
         'reserved_ports',
-        'default_traffic_limit_bytes',
-        'default_bandwidth_limit_mbps',
         'stats_retention_days',
         'agent_control_endpoint',
       ]
@@ -124,8 +116,6 @@ export default function Settings() {
         initial: resp.settings,
         form: {
           reserved_ports: resp.settings.reserved_ports ?? '',
-          default_traffic_limit_bytes: resp.settings.default_traffic_limit_bytes ?? '',
-          default_bandwidth_limit_mbps: resp.settings.default_bandwidth_limit_mbps ?? '',
           stats_retention_days: resp.settings.stats_retention_days ?? '',
           agent_control_endpoint: resp.settings.agent_control_endpoint ?? '',
         },
@@ -191,31 +181,6 @@ export default function Settings() {
           <p className="text-[11px] text-zinc-500 mt-1">
             JSON 整数数组。任何规则的 listen_port 命中将被拒绝创建。
           </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={fieldLabelCls}>默认总流量 (bytes)</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={state.form.default_traffic_limit_bytes}
-              onChange={(e) => set('default_traffic_limit_bytes', e.target.value)}
-              className={fieldInputCls}
-              placeholder="留空 = 不限"
-            />
-          </div>
-          <div>
-            <label className={fieldLabelCls}>默认带宽 (Mbps)</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={state.form.default_bandwidth_limit_mbps}
-              onChange={(e) => set('default_bandwidth_limit_mbps', e.target.value)}
-              className={fieldInputCls}
-              placeholder="留空 = 不限"
-            />
-          </div>
         </div>
 
         <div>

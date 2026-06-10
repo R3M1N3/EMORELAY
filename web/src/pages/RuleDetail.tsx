@@ -127,15 +127,7 @@ function ConfigCard({ rule }: { rule: RuleView }) {
         <Row k="协议" v={protoLabel} />
         <Row k="监听" v={`${rule.listen_ip}:${rule.listen_port}`} mono />
         <Row k="目标" v={`${rule.target_host}:${rule.target_port}`} mono />
-        <Row k="到期" v={rule.expires_at ? shortTime(rule.expires_at) : '永不'} />
-        <Row
-          k="总流量上限"
-          v={rule.traffic_limit_bytes != null ? formatBytes(rule.traffic_limit_bytes) : '不限'}
-        />
-        <Row
-          k="带宽上限"
-          v={rule.bandwidth_limit_mbps != null ? `${rule.bandwidth_limit_mbps} Mbps` : '不限'}
-        />
+        <Row k="限速" v={rule.bandwidth_mbps != null ? `${rule.bandwidth_mbps} Mbps` : '不限'} />
         <Row k="创建" v={shortTime(rule.created_at)} />
         <Row k="更新" v={shortTime(rule.updated_at)} />
       </dl>

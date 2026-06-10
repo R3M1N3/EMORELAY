@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import Nodes from './pages/Nodes'
 import Rules from './pages/Rules'
 import Users from './pages/Users'
+import BandwidthProfiles from './pages/BandwidthProfiles'
 import Settings from './pages/Settings'
 import RuleDetail from './pages/RuleDetail'
 import NodeDetail from './pages/NodeDetail'
@@ -26,6 +27,7 @@ export default function App() {
               <Route path="rules" element={<Rules />} />
               <Route path="rules/:id" element={<RuleDetail />} />
               <Route path="users" element={<Users />} />
+              <Route path="bandwidth-profiles" element={<BandwidthProfiles />} />
               <Route path="settings" element={<Settings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
@@ -73,6 +75,7 @@ function ProtectedShell() {
           <NavItem to="/nodes" label="节点" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/rules" label="规则" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/users" label="用户" onClick={() => setDrawerOpen(false)} />
+          <NavItem to="/bandwidth-profiles" label="限速" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/settings" label="设置" onClick={() => setDrawerOpen(false)} />
         </nav>
         <div className="mt-auto text-[11px] text-zinc-500 md:hidden">
@@ -130,6 +133,7 @@ function CurrentRoute() {
     '/nodes': '节点',
     '/rules': '规则',
     '/users': '用户',
+    '/bandwidth-profiles': '限速',
     '/settings': '设置',
   }
   const base = '/' + (loc.pathname.split('/')[1] || '')

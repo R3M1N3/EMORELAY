@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom'
 import { useToast } from '../lib/use-toast'
 import {
   ApiError,
+  bandwidthProfiles,
   formatBytes,
   nodes,
   rules,
-  shortTime,
+  type BandwidthProfileView,
   type CreateRuleRequest,
   type NodeView,
   type RuleView,
@@ -34,6 +35,7 @@ export default function Rules() {
   const toast = useToast()
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [nodeList, setNodeList] = useState<NodeView[]>([])
+  const [profileList, setProfileList] = useState<BandwidthProfileView[]>([])
   const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
@@ -71,6 +73,22 @@ export default function Rules() {
       })
       .catch(() => {
         // 节点拉取失败不阻塞规则列表，仅创建表单会缺下拉项。
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 限速配置列表只加载一次（创建/编辑表单下拉用）。
+  useEffect(() => {
+    let cancelled = false
+    bandwidthProfiles
+      .list({ page_size: 100 })
+      .then((r) => {
+        if (!cancelled) setProfileList(r.items)
+      })
+      .catch(() => {
+        // 拉取失败仅创建表单缺下拉项,不阻塞规则列表。
       })
     return () => {
       cancelled = true
@@ -299,6 +317,7 @@ export default function Rules() {
             mode={editing.mode}
             initial={editing.mode === 'edit' ? editing.rule : undefined}
             nodeList={nodeList}
+            profiles={profileList}
             onCancel={() => setEditing(null)}
             onSuccess={async () => {
               toast.success(editing.mode === 'create' ? '规则已创建' : '规则已保存')
@@ -371,7 +390,10 @@ function RuleRow({
       </td>
       <td className="px-4 py-3 align-top text-zinc-300">
         <div>{node?.name ?? `节点 #${rule.node_id}`}</div>
-        <div className="text-[11px] text-zinc-500 mt-0.5">{protoLabel}</div>
+        <div className="text-[11px] text-zinc-500 mt-0.5">
+          {protoLabel}
+          {rule.bandwidth_mbps != null && ` · ${rule.bandwidth_mbps} Mbps`}
+        </div>
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
         {rule.listen_ip}:{rule.listen_port}
@@ -384,9 +406,6 @@ function RuleRow({
           <StatusDot kind={rule.enabled ? 'on' : 'off'} />
           {rule.enabled ? '启用' : '禁用'}
         </span>
-        {rule.expires_at && (
-          <div className="text-[11px] text-zinc-500 mt-0.5">到期 {shortTime(rule.expires_at)}</div>
-        )}
       </td>
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>↓ {formatBytes(rule.rx_bytes)}</div>
@@ -439,21 +458,21 @@ interface RuleFormState {
   listen_port: string
   target_host: string
   target_port: string
-  expires_at: string
-  traffic_limit_bytes: string
-  bandwidth_limit_mbps: string
+  bandwidth_profile_id: string
 }
 
 function RuleForm({
   mode,
   initial,
   nodeList,
+  profiles,
   onCancel,
   onSuccess,
 }: {
   mode: 'create' | 'edit'
   initial?: RuleView
   nodeList: NodeView[]
+  profiles: BandwidthProfileView[]
   onCancel: () => void
   onSuccess: () => void | Promise<void>
 }) {
@@ -466,11 +485,8 @@ function RuleForm({
     listen_port: initial ? String(initial.listen_port) : '',
     target_host: initial?.target_host ?? '',
     target_port: initial ? String(initial.target_port) : '',
-    expires_at: initial?.expires_at ?? '',
-    traffic_limit_bytes:
-      initial?.traffic_limit_bytes != null ? String(initial.traffic_limit_bytes) : '',
-    bandwidth_limit_mbps:
-      initial?.bandwidth_limit_mbps != null ? String(initial.bandwidth_limit_mbps) : '',
+    bandwidth_profile_id:
+      initial?.bandwidth_profile_id != null ? String(initial.bandwidth_profile_id) : '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -485,25 +501,18 @@ function RuleForm({
     return n
   }
 
-  function parseOptionalInt(v: string, label: string): number | null | string {
-    if (v.trim() === '') return null
-    const n = Number(v)
-    if (!Number.isInteger(n) || n < 0) return `${label} 必须是非负整数`
-    return n
-  }
-
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const listenPort = parsePort(form.listen_port, '监听端口')
-    if (typeof listenPort === 'string') return setError(listenPort)
+    let listenPort: number | undefined
+    if (form.listen_port.trim() !== '') {
+      const parsed = parsePort(form.listen_port, '监听端口')
+      if (typeof parsed === 'string') return setError(parsed)
+      listenPort = parsed
+    }
     const targetPort = parsePort(form.target_port, '目标端口')
     if (typeof targetPort === 'string') return setError(targetPort)
-    const trafficLimit = parseOptionalInt(form.traffic_limit_bytes, '总流量上限')
-    if (typeof trafficLimit === 'string') return setError(trafficLimit)
-    const bandwidthLimit = parseOptionalInt(form.bandwidth_limit_mbps, '带宽上限')
-    if (typeof bandwidthLimit === 'string') return setError(bandwidthLimit)
 
     setSubmitting(true)
     try {
@@ -521,9 +530,9 @@ function RuleForm({
           listen_port: listenPort,
           target_host: form.target_host.trim(),
           target_port: targetPort,
-          expires_at: form.expires_at.trim() || null,
-          traffic_limit_bytes: trafficLimit,
-          bandwidth_limit_mbps: bandwidthLimit,
+          bandwidth_profile_id: form.bandwidth_profile_id
+            ? Number(form.bandwidth_profile_id)
+            : null,
         }
         await rules.create(payload)
       } else if (initial) {
@@ -532,20 +541,22 @@ function RuleForm({
           name: form.name.trim() !== initial.name ? form.name.trim() : undefined,
           listen_ip:
             form.listen_ip.trim() !== initial.listen_ip ? form.listen_ip.trim() : undefined,
-          listen_port: listenPort !== initial.listen_port ? listenPort : undefined,
+          listen_port:
+            listenPort !== undefined && listenPort !== initial.listen_port
+              ? listenPort
+              : undefined,
           target_host:
             form.target_host.trim() !== initial.target_host
               ? form.target_host.trim()
               : undefined,
           target_port: targetPort !== initial.target_port ? targetPort : undefined,
-          expires_at:
-            (form.expires_at.trim() || null) !== initial.expires_at
-              ? form.expires_at.trim() || null
+          bandwidth_profile_id:
+            (form.bandwidth_profile_id ? Number(form.bandwidth_profile_id) : 0) !==
+            (initial.bandwidth_profile_id ?? 0)
+              ? form.bandwidth_profile_id
+                ? Number(form.bandwidth_profile_id)
+                : 0
               : undefined,
-          traffic_limit_bytes:
-            trafficLimit !== initial.traffic_limit_bytes ? trafficLimit : undefined,
-          bandwidth_limit_mbps:
-            bandwidthLimit !== initial.bandwidth_limit_mbps ? bandwidthLimit : undefined,
         }
         await rules.update(initial.id, payload)
       }
@@ -617,7 +628,7 @@ function RuleForm({
         </div>
         <div>
           <label className={fieldLabelCls}>
-            监听端口 *
+            监听端口
             {selectedNode && (
               <span className="ml-1 text-zinc-500 font-normal">
                 {selectedNode.port_pool_min}-{selectedNode.port_pool_max}
@@ -628,11 +639,10 @@ function RuleForm({
             type="number"
             min={1}
             max={65535}
-            required
             value={form.listen_port}
             onChange={(e) => set('listen_port', e.target.value)}
             className={fieldInputCls}
-            placeholder="20000"
+            placeholder="留空 = 自动分配"
           />
         </div>
       </div>
@@ -663,38 +673,23 @@ function RuleForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <label className={fieldLabelCls}>到期时间</label>
-          <input
-            type="datetime-local"
-            value={toDatetimeLocal(form.expires_at)}
-            onChange={(e) => set('expires_at', e.target.value)}
-            className={fieldInputCls}
-          />
-        </div>
-        <div>
-          <label className={fieldLabelCls}>总流量 (bytes)</label>
-          <input
-            type="number"
-            min={0}
-            value={form.traffic_limit_bytes}
-            onChange={(e) => set('traffic_limit_bytes', e.target.value)}
-            className={fieldInputCls}
-            placeholder="留空 = 不限"
-          />
-        </div>
-        <div>
-          <label className={fieldLabelCls}>带宽 (Mbps)</label>
-          <input
-            type="number"
-            min={0}
-            value={form.bandwidth_limit_mbps}
-            onChange={(e) => set('bandwidth_limit_mbps', e.target.value)}
-            className={fieldInputCls}
-            placeholder="留空 = 不限"
-          />
-        </div>
+      <div>
+        <label className={fieldLabelCls}>限速配置</label>
+        <select
+          value={form.bandwidth_profile_id}
+          onChange={(e) => set('bandwidth_profile_id', e.target.value)}
+          className={fieldInputCls}
+        >
+          <option value="">不限速</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}（{p.bandwidth_mbps} Mbps）
+            </option>
+          ))}
+        </select>
+        <p className="text-[11px] text-zinc-500 mt-1">
+          在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
+        </p>
       </div>
 
       {error && (
@@ -722,10 +717,4 @@ function RuleForm({
       </div>
     </form>
   )
-}
-
-// 后端返回 ISO 字符串（含 'T' 或空格），datetime-local input 需要 'YYYY-MM-DDTHH:mm'。
-function toDatetimeLocal(s: string): string {
-  if (!s) return ''
-  return s.replace(' ', 'T').slice(0, 16)
 }
