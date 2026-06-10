@@ -10,6 +10,7 @@ import {
 } from '../lib/api'
 import { Modal, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
+import { bytesToGbString, gbToBytes, quotaPercent, quotaTone } from '../lib/quota'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; user: UserDetail } | null
 
@@ -131,6 +132,8 @@ export default function Users() {
                         <th className="px-4 py-2.5 text-left font-medium">角色</th>
                         <th className="px-4 py-2.5 text-right font-medium">规则数</th>
                         <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
+                        <th className="px-4 py-2.5 text-left font-medium">到期</th>
+                        <th className="px-4 py-2.5 text-left font-medium">30d 用量</th>
                         <th className="px-4 py-2.5 text-left font-medium">创建于</th>
                         <th className="px-4 py-2.5 text-left font-medium">更新于</th>
                         <th className="px-4 py-2.5 text-right font-medium">操作</th>
@@ -245,6 +248,12 @@ function UserRow({
       <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
         {formatBytes(user.total_traffic_bytes)}
       </td>
+      <td className="px-4 py-3 align-top text-[12px] text-zinc-300 whitespace-nowrap">
+        {user.expires_at ? shortTime(user.expires_at) : '不限'}
+      </td>
+      <td className="px-4 py-3 align-top min-w-[10rem]">
+        <QuotaBar used={user.period_used_bytes_cached} limit={user.traffic_limit_bytes_30d} />
+      </td>
       <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.created_at)}</td>
       <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.updated_at)}</td>
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
@@ -267,10 +276,38 @@ function UserRow({
   )
 }
 
+const TONE_CLS = {
+  green: 'bg-emerald-500',
+  amber: 'bg-amber-500',
+  red: 'bg-red-500',
+} as const
+
+function QuotaBar({ used, limit }: { used: number; limit: number | null }) {
+  const percent = quotaPercent(used, limit)
+  if (percent == null) {
+    return <span className="text-[12px] text-zinc-500">{formatBytes(used)} / 不限</span>
+  }
+  return (
+    <div>
+      <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+        <div
+          className={`h-full rounded-full ${TONE_CLS[quotaTone(percent)]}`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <div className="text-[11px] text-zinc-500 mt-1">
+        {formatBytes(used)} / {formatBytes(limit as number)}（{percent.toFixed(0)}%）
+      </div>
+    </div>
+  )
+}
+
 interface UserFormState {
   username: string
   password: string
   role: 'admin' | 'user'
+  expires_at: string
+  traffic_limit_gb: string
 }
 
 function UserForm({
@@ -288,6 +325,8 @@ function UserForm({
     username: initial?.username ?? '',
     password: '',
     role: initial?.role ?? 'user',
+    expires_at: initial?.expires_at ? initial.expires_at.replace(' ', 'T').slice(0, 16) : '',
+    traffic_limit_gb: bytesToGbString(initial?.traffic_limit_bytes_30d ?? null),
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -297,6 +336,12 @@ function UserForm({
     setError(null)
     setSubmitting(true)
     try {
+      const limitBytes = gbToBytes(form.traffic_limit_gb)
+      if (limitBytes === undefined) {
+        setError('30 天用量上限必须是非负数字')
+        setSubmitting(false)
+        return
+      }
       if (mode === 'create') {
         if (form.username.trim().length < 3) {
           setError('用户名长度需 3-32')
@@ -312,6 +357,8 @@ function UserForm({
           username: form.username.trim(),
           password: form.password,
           role: form.role,
+          expires_at: form.expires_at || null,
+          traffic_limit_bytes_30d: limitBytes,
         }
         await users.create(payload)
       } else if (initial) {
@@ -326,6 +373,16 @@ function UserForm({
           payload.password = form.password
         }
         if (form.role !== initial.role) payload.role = form.role
+        const initialExpiresLocal = initial.expires_at
+          ? initial.expires_at.replace(' ', 'T').slice(0, 16)
+          : ''
+        if (form.expires_at !== initialExpiresLocal) {
+          payload.expires_at = form.expires_at // '' = 清除
+        }
+        const initialLimit = initial.traffic_limit_bytes_30d
+        if ((limitBytes ?? 0) !== (initialLimit ?? 0)) {
+          payload.traffic_limit_bytes_30d = limitBytes ?? 0 // 0 = 清除
+        }
         if (Object.keys(payload).length === 0) {
           onCancel()
           return
@@ -388,6 +445,32 @@ function UserForm({
         <p className="text-[11px] text-zinc-500 mt-1">
           系统至少保留一个 admin;删除最后一个 admin 或将其降级会被拒绝。
         </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={fieldLabelCls}>到期时间 (UTC)</label>
+          <input
+            type="datetime-local"
+            value={form.expires_at}
+            onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
+            className={fieldInputCls}
+          />
+          <p className="text-[11px] text-zinc-500 mt-1">留空 = 永不到期。到期后规则自动停用、登录被拒。</p>
+        </div>
+        <div>
+          <label className={fieldLabelCls}>30 天用量上限 (GB)</label>
+          <input
+            type="number"
+            min={0}
+            step="0.5"
+            value={form.traffic_limit_gb}
+            onChange={(e) => setForm((f) => ({ ...f, traffic_limit_gb: e.target.value }))}
+            className={fieldInputCls}
+            placeholder="留空 = 不限"
+          />
+          <p className="text-[11px] text-zinc-500 mt-1">滚动 30 天窗口;超限后该用户全部规则自动停用。</p>
+        </div>
       </div>
 
       {error && (

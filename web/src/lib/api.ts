@@ -224,6 +224,11 @@ export interface UserDetail {
   updated_at: string
   rule_count: number
   total_traffic_bytes: number
+  expires_at: string | null
+  traffic_limit_bytes_30d: number | null
+  period_used_bytes_cached: number
+  period_used_calculated_at: string | null
+  period_remaining_bytes: number | null
 }
 
 export interface UserListResponse {
@@ -237,11 +242,17 @@ export interface CreateUserRequest {
   username: string
   password: string
   role: 'admin' | 'user'
+  expires_at?: string | null
+  traffic_limit_bytes_30d?: number | null
 }
 
 export interface UpdateUserRequest {
   password?: string
   role?: 'admin' | 'user'
+  /** '' = 清除到期 */
+  expires_at?: string
+  /** 0 = 清除限额 */
+  traffic_limit_bytes_30d?: number
 }
 
 export interface SystemOverview {

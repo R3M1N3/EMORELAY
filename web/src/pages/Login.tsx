@@ -20,7 +20,13 @@ export default function Login() {
       navigate('/', { replace: true })
     } catch (e) {
       if (e instanceof ApiError) {
-        setError(e.status === 401 ? '用户名或密码错误' : e.message)
+        if (e.status === 401 && e.message === 'account_expired') {
+          setError('账号已到期，请联系管理员')
+        } else if (e.status === 401) {
+          setError('用户名或密码错误')
+        } else {
+          setError(e.message)
+        }
       } else {
         setError('登录失败，请检查网络')
       }
