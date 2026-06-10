@@ -3,6 +3,9 @@
 //! rate = bandwidth_mbps * 125_000 B/s;burst = max(rate/5, 65536)
 //! (≈200ms 容量,下限 64KB 保证 UDP 最大单包可放行)。
 //! 用 tokio::time::Instant,测试可用 start_paused 虚拟时钟。
+//! 注意:acquire 不保证 FIFO 公平——并发等待者醒后重抢,可能交错分段。
+//! tcp_udp 共桶时 TCP 的阻塞式 acquire 会持续消费回填 token,饱和时 UDP(try_acquire
+//! 即查即丢)丢包率会显著高于均分直觉——这是 per-rule 总带宽语义的自然结果,非 bug。
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;

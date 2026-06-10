@@ -63,6 +63,7 @@ pub async fn start(
                             counter.connection_count.fetch_add(1, Ordering::Relaxed);
                             let target_host = target_host.clone();
                             let counter = counter.clone();
+                            // 限速变更走 re-apply 重建 listener+新桶,但存量连接持旧桶直到自然断开(沿用 stop 不断存量连接的 MVP 语义);新限速仅对新连接生效。
                             let bucket = bucket.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = bridge(client, target_host, target_port, counter.clone(), bucket).await {
