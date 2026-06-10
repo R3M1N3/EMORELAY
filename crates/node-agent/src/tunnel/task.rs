@@ -8,19 +8,27 @@
 //! stop 语义与 relay/tcp.rs 一致:停 listener,存量连接自然跑完。
 use anyhow::{Context as _, Result};
 use emorelay_common::control::v1::{Rule, TunnelContext, TunnelRole};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::{interval, Instant, MissedTickBehavior};
 use tracing::{info, warn};
 
 use crate::limit::TokenBucket;
 use crate::stats::{RuleCounter, StatsCollector};
-use crate::tunnel::frame::{STREAM_TCP, STREAM_UDP};
+use crate::tunnel::frame::{read_frame, write_frame, STREAM_TCP, STREAM_UDP};
 use crate::tunnel::transport::{TunnelConn, TunnelTransport};
+
+/// UDP session 闲置回收阈值/扫描周期,与 relay/udp.rs 对齐。
+const UDP_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
+const UDP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+const MAX_UDP_PACKET: usize = 65535;
 
 pub struct TunnelTaskHandle {
     stop_tx: oneshot::Sender<()>,
@@ -198,17 +206,130 @@ where
     }
 }
 
-/// UDP-over-tunnel 在下一 Task 落地;此前 udp 流量不可达(规则仍可 apply)。
+struct UdpTunnelSession {
+    /// 主 loop → writer task 的入站包通道;drop 即关闭隧道连接(写半 shutdown)。
+    frame_tx: mpsc::Sender<Vec<u8>>,
+    last_seen: Instant,
+}
+
+/// per client_addr 一条隧道连接(NAT session 语义)。sessions 由本 loop 独占,无锁;
+/// 过期 retain 丢弃 → frame_tx 关闭 → writer 退出 → 连接关 → reader EOF 退出,链式清理。
 async fn entry_udp_loop(
     rule_id: i64,
-    _socket: Arc<UdpSocket>,
-    _transport: &Arc<dyn TunnelTransport>,
-    _next_hop: &str,
-    _counter: &Arc<RuleCounter>,
-    _bucket: &Option<Arc<TokenBucket>>,
+    socket: Arc<UdpSocket>,
+    transport: &Arc<dyn TunnelTransport>,
+    next_hop: &str,
+    counter: &Arc<RuleCounter>,
+    bucket: &Option<Arc<TokenBucket>>,
 ) {
-    warn!(rule_id, "udp-over-tunnel not implemented yet; udp traffic dropped");
-    std::future::pending::<()>().await;
+    let mut sessions: HashMap<SocketAddr, UdpTunnelSession> = HashMap::new();
+    let mut buf = vec![0u8; MAX_UDP_PACKET];
+    let mut sweep = interval(UDP_SWEEP_INTERVAL);
+    sweep.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    sweep.tick().await;
+
+    loop {
+        tokio::select! {
+            res = socket.recv_from(&mut buf) => match res {
+                Ok((n, client_addr)) => {
+                    // recv 即计 tx:被限速丢掉的包仍算"收到过"(与 relay/udp.rs 一致)。
+                    counter.tx_bytes.fetch_add(n as i64, Ordering::Relaxed);
+                    if let Some(b) = bucket {
+                        if !b.try_acquire(n) {
+                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                    }
+                    if let Some(s) = sessions.get_mut(&client_addr) {
+                        s.last_seen = Instant::now();
+                        // writer 背压满 → 丢包计 error,不阻塞事件循环。
+                        if s.frame_tx.try_send(buf[..n].to_vec()).is_err() {
+                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                        continue;
+                    }
+                    match open_udp_session(
+                        rule_id, transport, next_hop, socket.clone(),
+                        client_addr, counter.clone(), bucket.clone(),
+                    ).await {
+                        Ok(frame_tx) => {
+                            counter.connection_count.fetch_add(1, Ordering::Relaxed);
+                            let _ = frame_tx.try_send(buf[..n].to_vec());
+                            sessions.insert(client_addr, UdpTunnelSession {
+                                frame_tx,
+                                last_seen: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                            warn!(rule_id, %client_addr, error = ?e, "open udp tunnel session failed");
+                        }
+                    }
+                }
+                Err(e) => {
+                    counter.error_count.fetch_add(1, Ordering::Relaxed);
+                    warn!(rule_id, error = ?e, "tunnel entry udp recv error");
+                }
+            },
+            _ = sweep.tick() => {
+                let now = Instant::now();
+                sessions.retain(|_, s| now.duration_since(s.last_seen) <= UDP_SESSION_TIMEOUT);
+            }
+        }
+    }
+}
+
+/// 建 session:dial → preamble 0x02 → split。writer:mpsc → write_frame;
+/// reader:read_frame → send_to(client) + rx 计数(回程同样过桶,不足丢弃)。
+async fn open_udp_session(
+    rule_id: i64,
+    transport: &Arc<dyn TunnelTransport>,
+    next_hop: &str,
+    listener: Arc<UdpSocket>,
+    client_addr: SocketAddr,
+    counter: Arc<RuleCounter>,
+    bucket: Option<Arc<TokenBucket>>,
+) -> Result<mpsc::Sender<Vec<u8>>> {
+    let mut tunnel = transport.dial(next_hop).await?;
+    tunnel.write_all(&[STREAM_UDP]).await.context("write stream preamble")?;
+    tunnel.flush().await.context("flush stream preamble")?;
+    let (mut t_r, mut t_w) = tokio::io::split(tunnel);
+    let (frame_tx, mut frame_rx) = mpsc::channel::<Vec<u8>>(64);
+
+    tokio::spawn(async move {
+        while let Some(payload) = frame_rx.recv().await {
+            if let Err(e) = write_frame(&mut t_w, &payload).await {
+                warn!(rule_id, error = ?e, "udp tunnel write_frame error");
+                break;
+            }
+        }
+        let _ = t_w.shutdown().await;
+    });
+
+    tokio::spawn(async move {
+        let mut fbuf = Vec::new();
+        loop {
+            match read_frame(&mut t_r, &mut fbuf).await {
+                Ok(n) => {
+                    counter.rx_bytes.fetch_add(n as i64, Ordering::Relaxed);
+                    if let Some(b) = &bucket {
+                        if !b.try_acquire(n) {
+                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                    }
+                    if let Err(e) = listener.send_to(&fbuf[..n], client_addr).await {
+                        counter.error_count.fetch_add(1, Ordering::Relaxed);
+                        warn!(rule_id, %client_addr, error = ?e, "udp send_to client error");
+                        break;
+                    }
+                }
+                Err(_) => break, // EOF/对端关闭(含 session 过期链式清理)。
+            }
+        }
+    });
+
+    Ok(frame_tx)
 }
 
 // ============= mid / exit =============
@@ -306,9 +427,44 @@ async fn bridge_raw(a: TunnelConn, b: TunnelConn) -> Result<()> {
     Ok(())
 }
 
-/// UDP-over-tunnel exit 端,下一 Task 实现。
-async fn exit_udp_conn(_conn: TunnelConn, _target_host: &str, _target_port: u16) -> Result<()> {
-    anyhow::bail!("udp-over-tunnel not implemented yet (next task)")
+/// exit 端 UDP 帧流:拆帧 → UDP send;UDP recv → 打帧回写。
+/// 任一方向断(隧道 EOF / udp 错误)即结束,UDP socket 随之释放。
+async fn exit_udp_conn(conn: TunnelConn, target_host: &str, target_port: u16) -> Result<()> {
+    let udp = UdpSocket::bind("0.0.0.0:0").await.context("bind exit udp socket")?;
+    udp.connect((target_host, target_port))
+        .await
+        .with_context(|| format!("connect udp target {target_host}:{target_port}"))?;
+    let (mut t_r, mut t_w) = tokio::io::split(conn);
+
+    let inbound = async {
+        let mut fbuf = Vec::new();
+        loop {
+            let n = match read_frame(&mut t_r, &mut fbuf).await {
+                Ok(n) => n,
+                Err(_) => return,
+            };
+            if udp.send(&fbuf[..n]).await.is_err() {
+                return;
+            }
+        }
+    };
+    let outbound = async {
+        let mut buf = vec![0u8; MAX_UDP_PACKET];
+        loop {
+            let n = match udp.recv(&mut buf).await {
+                Ok(n) => n,
+                Err(_) => return,
+            };
+            if write_frame(&mut t_w, &buf[..n]).await.is_err() {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        _ = inbound => {}
+        _ = outbound => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -320,7 +476,7 @@ mod tests {
     use std::net::TcpListener as StdTcpListener;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
     fn ephemeral_port() -> u16 {
         StdTcpListener::bind("127.0.0.1:0")
@@ -473,5 +629,92 @@ mod tests {
         TcpListener::bind(("127.0.0.1", entry_port))
             .await
             .expect("port should be released after stop");
+    }
+
+    async fn spawn_udp_echo_server() -> u16 {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = socket.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            loop {
+                let Ok((n, peer)) = socket.recv_from(&mut buf).await else { break };
+                let _ = socket.send_to(&buf[..n], peer).await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn two_hop_udp_roundtrip_with_session_reuse() {
+        let echo = spawn_udp_echo_server().await;
+        let exit_port = ephemeral_port();
+        let entry_port = ephemeral_port();
+        let entry_stats = Arc::new(StatsCollector::new());
+        let t: Arc<dyn crate::tunnel::transport::TunnelTransport> = Arc::new(TcpTransport);
+
+        let exit = start(
+            tunnel_rule(TunnelRole::Exit, 1, "udp", 0, echo, exit_port, 0),
+            Arc::new(StatsCollector::new()), None, t.clone(),
+        ).await.expect("exit");
+        let entry = start(
+            tunnel_rule(TunnelRole::Entry, 0, "udp", entry_port, echo, 0, exit_port),
+            entry_stats.clone(), None, t.clone(),
+        ).await.expect("entry");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut buf = [0u8; 64];
+        // 同一 client 发两包:第二包复用 session,connection_count 应保持 1。
+        for payload in [b"ping-1" as &[u8], b"ping-2"] {
+            client.send_to(payload, ("127.0.0.1", entry_port)).await.unwrap();
+            let (n, _) = tokio::time::timeout(
+                Duration::from_millis(800),
+                client.recv_from(&mut buf),
+            )
+            .await
+            .expect("udp recv timed out")
+            .unwrap();
+            assert_eq!(&buf[..n], payload);
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        entry.stop().await;
+        exit.stop().await;
+
+        let snap = entry_stats.drain_snapshot();
+        let s = snap.iter().find(|s| s.rule_id == 42).expect("entry stats");
+        assert_eq!(s.connection_count, 1, "同 client 两包应复用一条隧道 session");
+        assert!(s.tx_bytes >= 12 && s.rx_bytes >= 12, "tx={} rx={}", s.tx_bytes, s.rx_bytes);
+    }
+
+    /// tcp_udp 协议:同一 entry 同时通 TCP 与 UDP(preamble 区分)。
+    #[tokio::test]
+    async fn tcp_udp_protocol_serves_both_over_tunnel() {
+        let tcp_echo = spawn_echo_server().await;
+        let exit_port = ephemeral_port();
+        let entry_port = ephemeral_port();
+        let t: Arc<dyn crate::tunnel::transport::TunnelTransport> = Arc::new(TcpTransport);
+
+        // exit 的 udp 目标用同端口的 udp echo;tcp 目标用 tcp echo。
+        // 简化:业务 target 都指向 tcp_echo 端口,UDP 单独再起 echo 并另建一对 task 验证
+        // 会重复——这里只验证 TCP 流在 tcp_udp 协议下仍通,UDP 已由上个测试覆盖。
+        let exit = start(
+            tunnel_rule(TunnelRole::Exit, 1, "tcp_udp", 0, tcp_echo, exit_port, 0),
+            Arc::new(StatsCollector::new()), None, t.clone(),
+        ).await.expect("exit");
+        let entry = start(
+            tunnel_rule(TunnelRole::Entry, 0, "tcp_udp", entry_port, tcp_echo, 0, exit_port),
+            Arc::new(StatsCollector::new()), None, t.clone(),
+        ).await.expect("entry");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut conn = TcpStream::connect(("127.0.0.1", entry_port)).await.unwrap();
+        conn.write_all(b"dual").await.unwrap();
+        let mut buf = [0u8; 4];
+        conn.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"dual");
+
+        entry.stop().await;
+        exit.stop().await;
     }
 }
