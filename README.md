@@ -76,7 +76,7 @@ EMORELAY/
 
 - [`plan.md`](./plan.md) — 项目设计蓝本 + 各 Phase 实施状态附录（MVP / P1 / P2 / P3a / P3b 控制面 / P3b 数据面 / P3c）
 - [`docs/superpowers/plans/2026-06-10-mvp-followups.md`](./docs/superpowers/plans/2026-06-10-mvp-followups.md) — MVP 后续阶段索引（P1 / P2 / P3）
-- [`docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`](./docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md) — P3 计划（P3a + P3b 控制面已交付；P3b 数据面 / P3c 待展开）
+- [`docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`](./docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md) — P3 计划（P3a / P3b / P3c 均已交付；P3c 展开版见 [`2026-06-11-p3c-tunnel-frontend-e2e.md`](./docs/superpowers/plans/2026-06-11-p3c-tunnel-frontend-e2e.md)）
 - [`docs/deployment.md`](./docs/deployment.md) — 部署与运维
 - [`docs/api.md`](./docs/api.md) — REST + gRPC API 参考
 
