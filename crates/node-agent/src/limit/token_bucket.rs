@@ -48,7 +48,7 @@ impl TokenBucket {
 
     /// TCP 路径:阻塞等待直到拿到 want 字节配额。
     /// want > burst 时分段按 burst 取,直到取满 want(防御死锁:桶容量上限是 burst,
-    /// 单次申请不能超过它;TCP chunk 8KB 远小于 burst 下限 64KB,正常不走分段)。
+    /// 单次申请不能超过它;限速 TCP chunk 64KB ≤ burst 下限 64KB,不触发分段)。
     pub async fn acquire(&self, want: usize) {
         let mut remaining = want as f64;
         while remaining > 0.0 {

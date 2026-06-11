@@ -3,7 +3,6 @@ use emorelay_common::control::v1::Rule;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -102,48 +101,31 @@ async fn bridge(
     let (mut s_r, mut s_w) = server.split();
 
     // 字段命名约定：tx = client → target（发送出去），rx = target → client。
-    match bucket {
-        // 限速:手动 chunk 循环,每块写前向共享桶取配额(rx+tx 同桶)。
-        Some(bucket) => {
-            let c2s = copy_limited(&mut c_r, &mut s_w, &bucket, &counter.tx_bytes);
-            let s2c = copy_limited(&mut s_r, &mut c_w, &bucket, &counter.rx_bytes);
-            tokio::try_join!(c2s, s2c)?;
-        }
-        // 不限速:维持 tokio::io::copy 快路径。
-        None => {
-            let tx_counter = counter.clone();
-            let c2s = async {
-                let n = tokio::io::copy(&mut c_r, &mut s_w).await?;
-                tx_counter.tx_bytes.fetch_add(n as i64, Ordering::Relaxed);
-                let _ = s_w.shutdown().await;
-                Ok::<u64, std::io::Error>(n)
-            };
-            let rx_counter = counter.clone();
-            let s2c = async {
-                let n = tokio::io::copy(&mut s_r, &mut c_w).await?;
-                rx_counter.rx_bytes.fetch_add(n as i64, Ordering::Relaxed);
-                let _ = c_w.shutdown().await;
-                Ok::<u64, std::io::Error>(n)
-            };
-            tokio::try_join!(c2s, s2c)?;
-        }
-    }
+    // 不限速用 256KB 大缓冲,把高吞吐下的 read/write syscall 次数压到最低
+    // (2Gbps 下 8KB 缓冲每秒数万次系统调用会烧满单核);限速路径用 64KB
+    // (吞吐本就受令牌桶约束,过大缓冲无益)。
+    let buf_size = if bucket.is_some() { 64 * 1024 } else { 256 * 1024 };
+    let c2s = pump(&mut c_r, &mut s_w, &counter.tx_bytes, bucket.as_deref(), buf_size);
+    let s2c = pump(&mut s_r, &mut c_w, &counter.rx_bytes, bucket.as_deref(), buf_size);
+    tokio::try_join!(c2s, s2c)?;
     Ok(())
 }
 
-/// 8KB chunk 复制:读 → acquire 配额 → 写 → 计数。EOF 时半关写端。
-async fn copy_limited<R, W>(
+/// 单向拷贝:读 → (可选)向令牌桶取配额 → 写 → 计数。EOF 时半关写端。
+/// buf_size 由调用方按是否限速选择,大缓冲是高吞吐下降低 CPU 的关键。
+async fn pump<R, W>(
     r: &mut R,
     w: &mut W,
-    bucket: &TokenBucket,
     counted: &std::sync::atomic::AtomicI64,
+    bucket: Option<&TokenBucket>,
+    buf_size: usize,
 ) -> std::io::Result<u64>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut buf = [0u8; 8192];
+    let mut buf = vec![0u8; buf_size];
     let mut total = 0u64;
     loop {
         let n = r.read(&mut buf).await?;
@@ -151,7 +133,9 @@ where
             let _ = w.shutdown().await;
             return Ok(total);
         }
-        bucket.acquire(n).await;
+        if let Some(b) = bucket {
+            b.acquire(n).await;
+        }
         w.write_all(&buf[..n]).await?;
         counted.fetch_add(n as i64, Ordering::Relaxed);
         total += n as u64;
