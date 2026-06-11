@@ -126,6 +126,8 @@ async fn main() -> Result<()> {
 
     // 用户级到期(60s)与 30 天配额(300s)双 tick sweeper;随 tokio runtime 一起 drop。
     panel_server::sweeper::user_quota::spawn_user_quota_sweeper(state.clone());
+    // 时序统计保留清理(默认每小时,按 stats_retention_days 删旧分钟桶)。
+    panel_server::sweeper::stats_retention::spawn_stats_retention_sweeper(state.clone());
 
     tokio::select! {
         res = http_task => match res {
