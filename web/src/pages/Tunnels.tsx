@@ -34,15 +34,9 @@ export default function Tunnels() {
     nodes.list({ page_size: 100 }).then((r) => setNodeList(r.items)).catch(() => {})
   }, [])
 
-  async function reload() {
-    setList((s) => ({ ...s, loading: true, error: null }))
-    try {
-      const r = await tunnels.list({ page, page_size: pageSize })
-      setList({ items: r.items, total: r.total, loading: false, error: null })
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '加载失败'
-      setList({ items: [], total: 0, loading: false, error: msg })
-    }
+  function reload() {
+    // 触发 useEffect 重新拉取（避免闭包陈旧值问题）。
+    setPage((p) => p)
   }
 
   useEffect(() => {
@@ -301,6 +295,11 @@ function TunnelForm({
     const ids = chain.map(Number)
     if (new Set(ids).size !== ids.length) {
       setError('节点不可重复，请为每跳选择不同节点')
+      return
+    }
+
+    if (!name.trim()) {
+      setError('隧道名不能为空')
       return
     }
 
