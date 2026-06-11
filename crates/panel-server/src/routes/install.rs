@@ -22,7 +22,7 @@ pub async fn install_sh(
 ) -> Result<Response, ApiError> {
     let node_id = q
         .node
-        .ok_or_else(|| ApiError::BadRequest("missing ?node=<id>".into()))?;
+        .ok_or_else(|| ApiError::BadRequest("缺少 ?node=<id> 参数".into()))?;
 
     // 从 system_settings 拉 agent_control_endpoint。
     let endpoint: Option<(String,)> = sqlx::query_as(

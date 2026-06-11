@@ -199,5 +199,5 @@ async fn create_tunnel_rejects_dialed_hop_without_public_ip() {
         Some(json!({ "name": "noip-t", "transport": "tcp", "node_ids": [n1, bare] }))).unwrap();
     let (status, body) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["message"].as_str().unwrap().contains("public_ip"));
+    assert!(body["message"].as_str().unwrap().contains("公网 IP"));
 }

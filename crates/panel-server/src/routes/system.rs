@@ -139,7 +139,7 @@ pub async fn audit_logs(
     if let Some(r) = q.result.as_deref() {
         if !matches!(r, "success" | "failure") {
             return Err(ApiError::BadRequest(
-                "result must be success or failure".into(),
+                "result 筛选必须是 success 或 failure".into(),
             ));
         }
     }
@@ -235,7 +235,7 @@ pub async fn update_settings(
 
     for (k, v) in req.settings.iter() {
         if !ALLOWED.contains(&k.as_str()) {
-            return Err(ApiError::BadRequest(format!("unknown setting key: {k}")));
+            return Err(ApiError::BadRequest(format!("未知设置项: {k}")));
         }
         validate_setting(k, v)?;
     }
@@ -289,12 +289,12 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
     match key {
         "reserved_ports" => {
             let ports: Vec<i64> = serde_json::from_str(value).map_err(|e| {
-                ApiError::BadRequest(format!("reserved_ports must be JSON int array: {e}"))
+                ApiError::BadRequest(format!("reserved_ports 必须是 JSON 整数数组: {e}"))
             })?;
             for p in &ports {
                 if !(1..=65535).contains(p) {
                     return Err(ApiError::BadRequest(format!(
-                        "reserved_ports element {p} out of range 1-65535"
+                        "保留端口 {p} 超出 1-65535 范围"
                     )));
                 }
             }
@@ -302,11 +302,11 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
         }
         "stats_retention_days" => {
             let n: i64 = value.parse().map_err(|e| {
-                ApiError::BadRequest(format!("stats_retention_days must be positive integer: {e}"))
+                ApiError::BadRequest(format!("stats_retention_days 必须是正整数: {e}"))
             })?;
             if n < 1 {
                 return Err(ApiError::BadRequest(
-                    "stats_retention_days must be >= 1".into(),
+                    "stats_retention_days 必须 >= 1".into(),
                 ));
             }
             Ok(())

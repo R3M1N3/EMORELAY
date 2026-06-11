@@ -49,7 +49,7 @@ async fn tcp_then_tcp_udp_rejected() {
     assert_eq!(s1, StatusCode::OK);
     let (s2, body) = create_rule(&app, node_id, "b", "tcp_udp", 20000).await;
     assert_eq!(s2, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("conflicts"));
+    assert!(body["message"].as_str().unwrap().contains("冲突"));
 }
 
 #[tokio::test]
@@ -60,7 +60,7 @@ async fn udp_then_tcp_udp_rejected() {
     assert_eq!(s1, StatusCode::OK);
     let (s2, body) = create_rule(&app, node_id, "b", "tcp_udp", 20001).await;
     assert_eq!(s2, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("conflicts"));
+    assert!(body["message"].as_str().unwrap().contains("冲突"));
 }
 
 #[tokio::test]
@@ -71,7 +71,7 @@ async fn tcp_udp_then_tcp_rejected() {
     assert_eq!(s1, StatusCode::OK);
     let (s2, body) = create_rule(&app, node_id, "b", "tcp", 20002).await;
     assert_eq!(s2, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("conflicts"));
+    assert!(body["message"].as_str().unwrap().contains("冲突"));
 }
 
 #[tokio::test]
@@ -82,7 +82,7 @@ async fn tcp_udp_then_udp_rejected() {
     assert_eq!(s1, StatusCode::OK);
     let (s2, body) = create_rule(&app, node_id, "b", "udp", 20003).await;
     assert_eq!(s2, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("conflicts"));
+    assert!(body["message"].as_str().unwrap().contains("冲突"));
 }
 
 #[tokio::test]
@@ -137,7 +137,7 @@ async fn update_listen_port_into_conflict_rejected() {
     .unwrap();
     let (status, body) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("conflicts"));
+    assert!(body["message"].as_str().unwrap().contains("冲突"));
 }
 
 #[tokio::test]
@@ -195,7 +195,7 @@ async fn update_listen_ip_into_conflict_rejected() {
     .unwrap();
     let (status, body) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("conflicts"));
+    assert!(body["message"].as_str().unwrap().contains("冲突"));
 }
 
 #[tokio::test]

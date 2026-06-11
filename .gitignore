@@ -35,3 +35,7 @@ agent-state.json
 
 # Logs
 *.log
+
+# Local review/test artifacts (playwright snapshots, throwaway test instance with self-signed TLS)
+/.playwright-cli/
+/data-uxtest/

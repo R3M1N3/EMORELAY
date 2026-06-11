@@ -125,18 +125,18 @@ pub async fn create(
     auth.require_admin()?;
     let name = req.name.trim();
     if name.is_empty() {
-        return Err(ApiError::BadRequest("name is required".into()));
+        return Err(ApiError::BadRequest("名称不能为空".into()));
     }
     if !matches!(req.transport.as_str(), "tcp" | "tls" | "wss") {
-        return Err(ApiError::BadRequest("transport must be tcp | tls | wss".into()));
+        return Err(ApiError::BadRequest("传输协议必须是 tcp | tls | wss".into()));
     }
     if req.node_ids.len() < 2 {
-        return Err(ApiError::BadRequest("tunnel needs at least 2 nodes".into()));
+        return Err(ApiError::BadRequest("隧道至少需要 2 个节点".into()));
     }
     let mut seen = std::collections::HashSet::new();
     for nid in &req.node_ids {
         if !seen.insert(*nid) {
-            return Err(ApiError::BadRequest("node_ids must be unique".into()));
+            return Err(ApiError::BadRequest("节点链中不能出现重复节点".into()));
         }
     }
     #[derive(sqlx::FromRow)]
@@ -147,16 +147,16 @@ pub async fn create(
         let row: Option<NodeRow> = sqlx::query_as(
             "SELECT id, status, public_ip, port_pool_min, port_pool_max FROM nodes WHERE id = ? AND deleted_at IS NULL",
         ).bind(nid).fetch_optional(&state.pool).await?;
-        let row = row.ok_or_else(|| ApiError::BadRequest(format!("node {nid} does not exist")))?;
+        let row = row.ok_or_else(|| ApiError::BadRequest(format!("节点 {nid} 不存在")))?;
         if row.status != "online" {
             return Err(ApiError::BadRequest(
-                "请确保链上所有节点都在线 (all nodes must be online)".into(),
+                "请确保链上所有节点都在线".into(),
             ));
         }
         // ordinal ≥ 1 的 hop 会被上一跳 dial,split 时 next_hop_addr 取它的 public_ip。
         if ordinal >= 1 && row.public_ip.trim().is_empty() {
             return Err(ApiError::BadRequest(format!(
-                "node {nid} needs a public_ip to be a dialed hop (ordinal >= 1)"
+                "节点 {nid} 作为第 2 跳起的中继必须配置公网 IP"
             )));
         }
         pools.insert(row.id, (row.port_pool_min, row.port_pool_max));
@@ -178,7 +178,7 @@ pub async fn create(
         let port = (lo..=hi).find(|p| {
             !reserved.contains(p) && !taken.contains(p) && !already.contains(p)
         }).ok_or_else(|| ApiError::BadRequest(format!(
-            "node {nid} port pool exhausted for inter_port allocation"
+            "节点 {nid} 端口池已无可用中继端口"
         )))?;
         hops.push((ordinal as i64, *nid, Some(port)));
     }
@@ -205,7 +205,7 @@ pub async fn update(
     auth.require_admin()?;
     if let Some(name) = req.name.as_deref() {
         if name.trim().is_empty() {
-            return Err(ApiError::BadRequest("name cannot be empty".into()));
+            return Err(ApiError::BadRequest("名称不能为空".into()));
         }
         let rows = Tunnel::update_name(&state.pool, id, name.trim()).await.map_err(map_sqlx_to_api)?;
         if rows == 0 { return Err(ApiError::NotFound); }
@@ -229,7 +229,7 @@ pub async fn delete(
     let refs = Tunnel::active_rule_refs(&state.pool, id).await?;
     if refs > 0 {
         return Err(ApiError::BadRequest(format!(
-            "tunnel is referenced by {refs} active rule(s); detach them first"
+            "隧道仍被 {refs} 条规则关联,请先解除关联"
         )));
     }
     let hop_nodes: Vec<i64> =
@@ -277,12 +277,12 @@ fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
             // SQLite unique violation 消息含冲突索引/列名;区分 inter_port 撞(并发)与 name 撞。
             if db.message().contains("inter_port") {
                 return ApiError::BadRequest(
-                    "inter_port allocation conflict (likely concurrent tunnel creation); please retry".into());
+                    "中继端口分配冲突(可能有并发创建),请重试".into());
             }
-            return ApiError::BadRequest("tunnel name already exists".into());
+            return ApiError::BadRequest("隧道名称已存在".into());
         }
         if db.is_check_violation() {
-            return ApiError::BadRequest("invalid tunnel fields (check constraint)".into());
+            return ApiError::BadRequest("隧道字段不满足约束".into());
         }
     }
     ApiError::Database(e)

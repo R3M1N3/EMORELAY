@@ -117,7 +117,7 @@ async fn create_duplicate_node_name_returns_400() {
     assert!(body["message"]
         .as_str()
         .unwrap()
-        .contains("already exists"));
+        .contains("已存在"));
 }
 
 #[tokio::test]

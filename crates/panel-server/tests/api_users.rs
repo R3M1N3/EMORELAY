@@ -243,6 +243,7 @@ async fn expired_user_cannot_login() {
 
     let login = Request::post("/api/auth/login")
         .header("content-type", "application/json")
+        .header("x-forwarded-for", "127.0.0.1")
         .body(Body::from(
             serde_json::to_vec(&json!({ "username": "expired1", "password": "password123" }))
                 .unwrap(),

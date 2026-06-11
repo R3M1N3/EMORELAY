@@ -115,7 +115,7 @@ async fn auto_alloc_pool_exhausted_returns_400() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["message"].as_str().unwrap().contains("port pool exhausted"), "{body}");
+    assert!(body["message"].as_str().unwrap().contains("无可用端口"), "{body}");
 }
 
 #[tokio::test]

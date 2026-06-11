@@ -8,25 +8,26 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ApiError {
-    #[error("internal error")]
+    #[error("服务器内部错误")]
     Internal(#[from] anyhow::Error),
 
-    #[error("database error")]
+    #[error("服务器内部错误")]
     Database(#[from] sqlx::Error),
 
-    #[error("bad request: {0}")]
+    // message 直接面向 UI 展示;机器可读类别在 ErrorBody.error 字段,不再拼前缀。
+    #[error("{0}")]
     BadRequest(String),
 
-    #[error("not found")]
+    #[error("资源不存在")]
     NotFound,
 
-    #[error("unauthorized")]
+    #[error("未登录或登录已过期")]
     Unauthorized,
 
     #[error("{0}")]
     UnauthorizedMsg(String),
 
-    #[error("forbidden")]
+    #[error("无权限执行此操作")]
     Forbidden,
 }
 

@@ -149,7 +149,7 @@ pub async fn import(
     auth.require_admin()?;
     let strategy = q.strategy.as_deref().unwrap_or("skip");
     if !matches!(strategy, "skip" | "overwrite") {
-        return Err(ApiError::BadRequest("strategy must be skip | overwrite".into()));
+        return Err(ApiError::BadRequest("导入策略必须是 skip 或 overwrite".into()));
     }
     let dry_run = q.dry_run.unwrap_or(1) != 0;
     let reserved = settings::reserved_ports(&state.pool).await;
@@ -164,24 +164,24 @@ pub async fn import(
         let planned = plan_item(&state, item, strategy, &reserved).await?;
         let (action, reason): (&'static str, String) = match planned {
             PlannedAction::Error(reason) => ("error", reason),
-            PlannedAction::Skip => ("skip", "binding already exists".into()),
+            PlannedAction::Skip => ("skip", "相同监听绑定已存在".into()),
             PlannedAction::Create { node_id, bandwidth_profile_id } => {
                 if dry_run {
                     ("create", String::new())
                 } else {
                     match execute_create(&state, &auth, item, node_id, bandwidth_profile_id).await {
                         Ok(()) => ("create", String::new()),
-                        Err(e) => ("error", format!("create failed: {e}")),
+                        Err(e) => ("error", format!("创建失败: {e}")),
                     }
                 }
             }
             PlannedAction::Overwrite { existing_id, bandwidth_profile_id } => {
                 if dry_run {
-                    ("overwrite", format!("will patch rule #{existing_id}"))
+                    ("overwrite", format!("将覆盖规则 #{existing_id}"))
                 } else {
                     match execute_overwrite(&state, item, existing_id, bandwidth_profile_id).await {
-                        Ok(()) => ("overwrite", format!("patched rule #{existing_id}")),
-                        Err(e) => ("error", format!("overwrite failed: {e}")),
+                        Ok(()) => ("overwrite", format!("已覆盖规则 #{existing_id}")),
+                        Err(e) => ("error", format!("覆盖失败: {e}")),
                     }
                 }
             }
@@ -228,40 +228,40 @@ async fn plan_item(
 ) -> ApiResult<PlannedAction> {
     if item.tunnel_name.as_deref().is_some_and(|t| !t.is_empty()) {
         return Ok(PlannedAction::Error(
-            "tunnel feature unavailable until P3".into(),
+            "导入暂不支持关联隧道的规则,请导入后手动重建关联".into(),
         ));
     }
     if item.name.trim().is_empty() {
-        return Ok(PlannedAction::Error("name is required".into()));
+        return Ok(PlannedAction::Error("名称不能为空".into()));
     }
     if !matches!(item.protocol.as_str(), "tcp" | "udp" | "tcp_udp") {
-        return Ok(PlannedAction::Error("protocol must be tcp | udp | tcp_udp".into()));
+        return Ok(PlannedAction::Error("协议必须是 tcp | udp | tcp_udp".into()));
     }
     if item.listen_port == 0 || item.target_port == 0 {
-        return Ok(PlannedAction::Error("ports must be 1-65535".into()));
+        return Ok(PlannedAction::Error("端口必须在 1-65535 之间".into()));
     }
     if !crate::util::is_valid_ip(&item.listen_ip) {
-        return Ok(PlannedAction::Error("listen_ip is not a valid IP".into()));
+        return Ok(PlannedAction::Error("监听 IP 不是合法 IP 地址".into()));
     }
     if !crate::util::is_valid_target_host(item.target_host.trim()) {
-        return Ok(PlannedAction::Error("target_host is not a valid IP or hostname".into()));
+        return Ok(PlannedAction::Error("目标主机不是合法 IP 或主机名".into()));
     }
 
     let Some(node) = Node::find_by_name(&state.pool, &item.node_name).await? else {
         return Ok(PlannedAction::Error(format!(
-            "node not found: {}",
+            "节点不存在: {}",
             item.node_name
         )));
     };
     let port = i64::from(item.listen_port);
     if port < node.port_pool_min || port > node.port_pool_max {
         return Ok(PlannedAction::Error(format!(
-            "listen_port {} outside node's port pool [{}-{}]",
+            "监听端口 {} 超出节点端口池 [{}-{}]",
             port, node.port_pool_min, node.port_pool_max
         )));
     }
     if reserved.contains(&port) {
-        return Ok(PlannedAction::Error(format!("listen_port {port} is reserved")));
+        return Ok(PlannedAction::Error(format!("监听端口 {port} 是保留端口,禁止监听")));
     }
 
     // profile 找不到 → NULL(不自动创建,避免误植)
@@ -310,7 +310,7 @@ async fn plan_item(
     }
     if mq.fetch_optional(&state.pool).await?.is_some() {
         return Ok(PlannedAction::Error(format!(
-            "listen_port {port} conflicts with an existing rule of a mutually-exclusive protocol"
+            "监听端口 {port} 与互斥协议的既有规则冲突"
         )));
     }
 

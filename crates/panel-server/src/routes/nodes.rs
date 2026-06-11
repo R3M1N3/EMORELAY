@@ -150,14 +150,14 @@ pub async fn list(
     let sort_field = q.sort.as_deref().unwrap_or("id");
     if !SORT_FIELDS.contains(&sort_field) {
         return Err(ApiError::BadRequest(format!(
-            "invalid sort field; allowed: {}",
+            "排序字段不合法,可用: {}",
             SORT_FIELDS.join(",")
         )));
     }
     let order_desc = match q.order.as_deref().unwrap_or("desc") {
         "asc" => false,
         "desc" => true,
-        _ => return Err(ApiError::BadRequest("order must be asc or desc".into())),
+        _ => return Err(ApiError::BadRequest("排序方向必须是 asc 或 desc".into())),
     };
 
     let nodes = Node::list_paged(&state.pool, sort_field, order_desc, page_size, offset).await?;
@@ -191,7 +191,7 @@ pub async fn create(
 ) -> ApiResult<Json<CreateNodeResponse>> {
     auth.require_admin()?;
     if req.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("name is required".into()));
+        return Err(ApiError::BadRequest("名称不能为空".into()));
     }
     let (port_min, port_max) =
         normalize_port_pool(req.port_pool_min, req.port_pool_max, 1, 65535)?;
@@ -253,21 +253,21 @@ pub async fn update(
     auth.require_admin()?;
     let trimmed_name = req.name.as_deref().map(str::trim);
     if matches!(trimmed_name, Some(n) if n.is_empty()) {
-        return Err(ApiError::BadRequest("name cannot be empty".into()));
+        return Err(ApiError::BadRequest("名称不能为空".into()));
     }
     let port_min = req.port_pool_min.map(i64::from);
     let port_max = req.port_pool_max.map(i64::from);
     if let (Some(lo), Some(hi)) = (port_min, port_max) {
         if lo < 1 || hi < 1 || lo > hi {
             return Err(ApiError::BadRequest(
-                "port_pool_min/max must be 1-65535 and min<=max".into(),
+                "端口池上下界必须在 1-65535 之间且下界不大于上界".into(),
             ));
         }
     } else if port_min.is_some() || port_max.is_some() {
         // 仅给一端时也要确保它合法（>=1 由 u16 保证 0-65535，需排除 0）
         if matches!(port_min, Some(v) if v == 0) || matches!(port_max, Some(v) if v == 0) {
             return Err(ApiError::BadRequest(
-                "port_pool bounds must be 1-65535".into(),
+                "端口池边界必须在 1-65535 之间".into(),
             ));
         }
     }
@@ -353,7 +353,7 @@ pub async fn delete(
     // 节点参与任一活跃隧道 → 拒删(P3b)。
     if crate::models::tunnel::TunnelHop::node_in_active_tunnel(&state.pool, id).await? {
         return Err(ApiError::BadRequest(
-            "节点正参与活跃隧道,请先删除相关隧道 (node is part of an active tunnel)".into()));
+            "节点正参与活跃隧道,请先删除相关隧道".into()));
     }
 
     let rows = Node::soft_delete(&state.pool, id).await?;
@@ -463,12 +463,12 @@ fn normalize_port_pool(
     let hi = max.unwrap_or(default_max);
     if lo == 0 || hi == 0 {
         return Err(ApiError::BadRequest(
-            "port_pool bounds must be 1-65535".into(),
+            "端口池边界必须在 1-65535 之间".into(),
         ));
     }
     if lo > hi {
         return Err(ApiError::BadRequest(
-            "port_pool_min must be <= port_pool_max".into(),
+            "端口池下界不能大于上界".into(),
         ));
     }
     Ok((i64::from(lo), i64::from(hi)))
@@ -477,10 +477,10 @@ fn normalize_port_pool(
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
     if let Some(db_err) = e.as_database_error() {
         if db_err.is_unique_violation() {
-            return ApiError::BadRequest("node name already exists".into());
+            return ApiError::BadRequest("节点名称已存在".into());
         }
         if db_err.is_check_violation() {
-            return ApiError::BadRequest("invalid node fields (check constraint)".into());
+            return ApiError::BadRequest("节点字段不满足约束".into());
         }
     }
     ApiError::Database(e)

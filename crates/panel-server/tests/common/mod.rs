@@ -99,8 +99,10 @@ pub async fn make_user_token(
 
 async fn login(app: &Router, username: &str, password: &str) -> Result<String> {
     let body = serde_json::json!({ "username": username, "password": password });
+    // login 路由带 per-IP governor;oneshot 无 ConnectInfo,靠转发头喂 IP。
     let req = Request::post("/api/auth/login")
         .header("content-type", "application/json")
+        .header("x-forwarded-for", "127.0.0.1")
         .body(Body::from(serde_json::to_vec(&body)?))?;
     let (status, value) = send(app.clone(), req).await?;
     assert_eq!(status, StatusCode::OK, "login failed: {value}");

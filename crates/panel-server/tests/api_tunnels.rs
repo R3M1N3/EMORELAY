@@ -121,7 +121,7 @@ async fn create_tunnel_rejects_short_chain_dup_and_offline() {
         Some(json!({ "name": "x", "transport": "tcp", "node_ids": [nodes[0], off] }))).unwrap();
     let (s, body) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["message"].as_str().unwrap().contains("online"));
+    assert!(body["message"].as_str().unwrap().contains("在线"));
 }
 
 #[tokio::test]
@@ -215,7 +215,7 @@ async fn rule_tunnel_id_must_match_entry_node() {
                      "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
     let (s, body) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["message"].as_str().unwrap().contains("entry"));
+    assert!(body["message"].as_str().unwrap().contains("入口"));
 }
 
 #[tokio::test]
@@ -334,5 +334,5 @@ async fn tunnel_rule_still_barred_from_reserved_port() {
                      "target_host": "1.2.3.4", "target_port": 443, "tunnel_id": tid }))).unwrap();
     let (s, body) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["message"].as_str().unwrap().contains("reserved"));
+    assert!(body["message"].as_str().unwrap().contains("保留端口"));
 }

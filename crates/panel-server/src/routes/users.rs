@@ -196,12 +196,12 @@ pub async fn create(
     let normalized_expires = match req.expires_at.as_deref() {
         None | Some("") => None,
         Some(s) => Some(crate::util::normalize_datetime(s).ok_or_else(|| {
-            ApiError::BadRequest("expires_at must be YYYY-MM-DDTHH:MM (UTC)".into())
+            ApiError::BadRequest("到期时间格式必须是 YYYY-MM-DDTHH:MM (UTC)".into())
         })?),
     };
     if matches!(req.traffic_limit_bytes_30d, Some(n) if n < 0) {
         return Err(ApiError::BadRequest(
-            "traffic_limit_bytes_30d must be >= 0".into(),
+            "30 天流量上限不能为负数".into(),
         ));
     }
     // create 时 0 与 None 等价(都是不限)
@@ -259,7 +259,7 @@ pub async fn update(
         // 与 delete 的自损保护对齐,统一拒绝(让用户请另一个 admin 操作)。
         if id == auth.0.sub && r != "admin" && existing.role == "admin" {
             return Err(ApiError::BadRequest(
-                "cannot demote yourself; ask another admin".into(),
+                "不能降级自己的管理员权限,请由其他管理员操作".into(),
             ));
         }
         // 把当前唯一 admin 降级为 user 会让系统失去所有管理员入口。
@@ -267,7 +267,7 @@ pub async fn update(
             let others = User::count_admins_excluding(&state.pool, id).await?;
             if others == 0 {
                 return Err(ApiError::BadRequest(
-                    "cannot demote the last admin".into(),
+                    "不能降级最后一个管理员".into(),
                 ));
             }
         }
@@ -278,12 +278,12 @@ pub async fn update(
         None => None,
         Some("") => Some(String::new()),
         Some(s) => Some(crate::util::normalize_datetime(s).ok_or_else(|| {
-            ApiError::BadRequest("expires_at must be YYYY-MM-DDTHH:MM (UTC)".into())
+            ApiError::BadRequest("到期时间格式必须是 YYYY-MM-DDTHH:MM (UTC)".into())
         })?),
     };
     if matches!(req.traffic_limit_bytes_30d, Some(n) if n < 0) {
         return Err(ApiError::BadRequest(
-            "traffic_limit_bytes_30d must be >= 0".into(),
+            "30 天流量上限不能为负数".into(),
         ));
     }
 
@@ -333,7 +333,7 @@ pub async fn delete(
 
     // 自删:管理员把自己删了会丢失会话且无回路。
     if id == auth.0.sub {
-        return Err(ApiError::BadRequest("cannot delete yourself".into()));
+        return Err(ApiError::BadRequest("不能删除自己的账号".into()));
     }
 
     let target = User::find_by_id(&state.pool, id)
@@ -345,7 +345,7 @@ pub async fn delete(
         let others = User::count_admins_excluding(&state.pool, id).await?;
         if others == 0 {
             return Err(ApiError::BadRequest(
-                "cannot delete the last admin".into(),
+                "不能删除最后一个管理员".into(),
             ));
         }
     }
@@ -375,12 +375,12 @@ fn validate_username(u: &str) -> ApiResult<()> {
     let len = u.chars().count();
     if !(3..=32).contains(&len) {
         return Err(ApiError::BadRequest(
-            "username length must be 3-32".into(),
+            "用户名长度必须在 3-32 字符之间".into(),
         ));
     }
     if u.chars().any(char::is_whitespace) {
         return Err(ApiError::BadRequest(
-            "username cannot contain whitespace".into(),
+            "用户名不能包含空白字符".into(),
         ));
     }
     Ok(())
@@ -389,7 +389,7 @@ fn validate_username(u: &str) -> ApiResult<()> {
 fn validate_password(p: &str) -> ApiResult<()> {
     if p.len() < 8 {
         return Err(ApiError::BadRequest(
-            "password length must be >= 8".into(),
+            "密码长度至少 8 个字符".into(),
         ));
     }
     Ok(())
@@ -399,17 +399,17 @@ fn validate_role(r: &str) -> ApiResult<()> {
     if matches!(r, "admin" | "user") {
         Ok(())
     } else {
-        Err(ApiError::BadRequest("role must be admin or user".into()))
+        Err(ApiError::BadRequest("角色必须是 admin 或 user".into()))
     }
 }
 
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
     if let Some(db_err) = e.as_database_error() {
         if db_err.is_unique_violation() {
-            return ApiError::BadRequest("username already exists".into());
+            return ApiError::BadRequest("用户名已存在".into());
         }
         if db_err.is_check_violation() {
-            return ApiError::BadRequest("invalid user fields (check constraint)".into());
+            return ApiError::BadRequest("用户字段不满足约束".into());
         }
     }
     ApiError::Database(e)

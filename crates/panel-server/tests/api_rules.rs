@@ -116,7 +116,7 @@ async fn create_rule_with_reserved_port_rejected() {
     .unwrap();
     let (status, body) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("reserved"));
+    assert!(body["message"].as_str().unwrap().contains("保留端口"));
 }
 
 #[tokio::test]
@@ -144,7 +144,7 @@ async fn duplicate_listen_binding_rejected() {
     assert!(body["message"]
         .as_str()
         .unwrap()
-        .contains("already exists"));
+        .contains("已存在"));
 }
 
 #[tokio::test]
@@ -178,7 +178,7 @@ async fn create_rule_outside_port_pool_rejected() {
     .unwrap();
     let (status, body) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["message"].as_str().unwrap().contains("port pool"));
+    assert!(body["message"].as_str().unwrap().contains("端口池"));
 }
 
 // P2: 规则级到期/流量/带宽三个限制字段已下线,对应 auto_stop 测试随之删除;

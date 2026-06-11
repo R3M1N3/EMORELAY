@@ -173,14 +173,14 @@ pub async fn list(
     let sort_field = q.sort.as_deref().unwrap_or("id");
     if !SORT_FIELDS.contains(&sort_field) {
         return Err(ApiError::BadRequest(format!(
-            "invalid sort field; allowed: {}",
+            "排序字段不合法,可用: {}",
             SORT_FIELDS.join(",")
         )));
     }
     let order_desc = match q.order.as_deref().unwrap_or("desc") {
         "asc" => false,
         "desc" => true,
-        _ => return Err(ApiError::BadRequest("order must be asc or desc".into())),
+        _ => return Err(ApiError::BadRequest("排序方向必须是 asc 或 desc".into())),
     };
     if let Some(p) = q.protocol.as_deref() {
         validate_protocol(p)?;
@@ -239,43 +239,43 @@ pub async fn create(
     // 普通用户可以为自己创建规则;rule.user_id 设为 claims.sub。
     let name = req.name.trim();
     if name.is_empty() {
-        return Err(ApiError::BadRequest("name is required".into()));
+        return Err(ApiError::BadRequest("名称不能为空".into()));
     }
     validate_protocol(&req.protocol)?;
     if matches!(req.listen_port, Some(0)) || req.target_port == 0 {
         return Err(ApiError::BadRequest(
-            "listen_port and target_port must be 1-65535".into(),
+            "监听端口与目标端口必须在 1-65535 之间".into(),
         ));
     }
     if !is_valid_ip(&req.listen_ip) {
-        return Err(ApiError::BadRequest("listen_ip is not a valid IP".into()));
+        return Err(ApiError::BadRequest("监听 IP 不是合法 IP 地址".into()));
     }
     if !is_valid_target_host(&req.target_host) {
         return Err(ApiError::BadRequest(
-            "target_host is not a valid IP or hostname".into(),
+            "目标主机不是合法 IP 或主机名".into(),
         ));
     }
     let node = Node::find_by_id(&state.pool, req.node_id)
         .await?
-        .ok_or_else(|| ApiError::BadRequest("node_id does not exist".into()))?;
+        .ok_or_else(|| ApiError::BadRequest("节点不存在".into()))?;
     // 关联隧道:tunnel_id 给定时,node_id 必须 = 隧道入口(ordinal 0)节点。
     if let Some(tid) = req.tunnel_id {
         use crate::models::tunnel::TunnelHop;
         let hops = TunnelHop::list_for_tunnel(&state.pool, tid).await?;
         let entry = hops.iter().find(|h| h.ordinal == 0)
-            .ok_or_else(|| ApiError::BadRequest("tunnel_id does not exist".into()))?;
+            .ok_or_else(|| ApiError::BadRequest("隧道不存在".into()))?;
         if entry.node_id != req.node_id {
             return Err(ApiError::BadRequest(
-                "rule.node_id must equal the tunnel entry (ordinal 0) node".into()));
+                "规则节点必须是隧道入口(第 1 跳)节点".into()));
         }
     }
     if let Some(pid) = req.bandwidth_profile_id {
         if pid <= 0 {
-            return Err(ApiError::BadRequest("bandwidth_profile_id must be > 0".into()));
+            return Err(ApiError::BadRequest("限速配置 ID 必须大于 0".into()));
         }
         crate::models::bandwidth_profile::BandwidthProfile::find_by_id(&state.pool, pid)
             .await?
-            .ok_or_else(|| ApiError::BadRequest("bandwidth_profile_id does not exist".into()))?;
+            .ok_or_else(|| ApiError::BadRequest("限速配置不存在".into()))?;
     }
     let reserved = settings::reserved_ports(&state.pool).await;
     let listen_port_i64 = match req.listen_port {
@@ -284,7 +284,7 @@ pub async fn create(
         Some(p) if req.tunnel_id.is_some() => {
             let p = i64::from(p);
             if reserved.contains(&p) {
-                return Err(ApiError::BadRequest(format!("listen_port {p} is reserved")));
+                return Err(ApiError::BadRequest(format!("监听端口 {p} 是保留端口,禁止监听")));
             }
             p
         }
@@ -292,12 +292,12 @@ pub async fn create(
             let p = i64::from(p);
             if p < node.port_pool_min || p > node.port_pool_max {
                 return Err(ApiError::BadRequest(format!(
-                    "listen_port {} outside node's port pool [{}-{}]",
+                    "监听端口 {} 超出节点端口池 [{}-{}]",
                     p, node.port_pool_min, node.port_pool_max
                 )));
             }
             if reserved.contains(&p) {
-                return Err(ApiError::BadRequest(format!("listen_port {p} is reserved")));
+                return Err(ApiError::BadRequest(format!("监听端口 {p} 是保留端口,禁止监听")));
             }
             p
         }
@@ -369,32 +369,32 @@ pub async fn update(
 
     if let Some(n) = req.name.as_deref() {
         if n.trim().is_empty() {
-            return Err(ApiError::BadRequest("name cannot be empty".into()));
+            return Err(ApiError::BadRequest("名称不能为空".into()));
         }
     }
     if let Some(ip) = req.listen_ip.as_deref() {
         if !is_valid_ip(ip) {
-            return Err(ApiError::BadRequest("listen_ip is not a valid IP".into()));
+            return Err(ApiError::BadRequest("监听 IP 不是合法 IP 地址".into()));
         }
     }
     if let Some(host) = req.target_host.as_deref() {
         if !is_valid_target_host(host.trim()) {
             return Err(ApiError::BadRequest(
-                "target_host is not a valid IP or hostname".into(),
+                "目标主机不是合法 IP 或主机名".into(),
             ));
         }
     }
     if matches!(req.listen_port, Some(0)) || matches!(req.target_port, Some(0)) {
-        return Err(ApiError::BadRequest("ports must be 1-65535".into()));
+        return Err(ApiError::BadRequest("端口必须在 1-65535 之间".into()));
     }
     if let Some(pid) = req.bandwidth_profile_id {
         if pid < 0 {
-            return Err(ApiError::BadRequest("bandwidth_profile_id must be >= 0".into()));
+            return Err(ApiError::BadRequest("限速配置 ID 不能为负数".into()));
         }
         if pid > 0 {
             crate::models::bandwidth_profile::BandwidthProfile::find_by_id(&state.pool, pid)
                 .await?
-                .ok_or_else(|| ApiError::BadRequest("bandwidth_profile_id does not exist".into()))?;
+                .ok_or_else(|| ApiError::BadRequest("限速配置不存在".into()))?;
         }
     }
 
@@ -406,14 +406,14 @@ pub async fn update(
         .ok_or(ApiError::NotFound)?;
     if effective_port < node.port_pool_min || effective_port > node.port_pool_max {
         return Err(ApiError::BadRequest(format!(
-            "listen_port {} outside node's port pool [{}-{}]",
+            "监听端口 {} 超出节点端口池 [{}-{}]",
             effective_port, node.port_pool_min, node.port_pool_max
         )));
     }
     let reserved = settings::reserved_ports(&state.pool).await;
     if reserved.contains(&effective_port) {
         return Err(ApiError::BadRequest(format!(
-            "listen_port {effective_port} is reserved"
+            "监听端口 {effective_port} 是保留端口,禁止监听"
         )));
     }
 
@@ -648,7 +648,7 @@ fn validate_protocol(p: &str) -> ApiResult<()> {
         Ok(())
     } else {
         Err(ApiError::BadRequest(
-            "protocol must be tcp | udp | tcp_udp".into(),
+            "协议必须是 tcp | udp | tcp_udp".into(),
         ))
     }
 }
@@ -691,8 +691,7 @@ async fn ensure_no_protocol_conflict(
     }
     if q.fetch_optional(pool).await?.is_some() {
         return Err(ApiError::BadRequest(format!(
-            "listen_port {listen_port} on this node conflicts with an existing rule \
-             (tcp_udp mutually excludes tcp/udp on the same port)"
+            "监听端口 {listen_port} 与该节点既有规则冲突(同端口上 tcp_udp 与 tcp/udp 互斥)"
         )));
     }
     Ok(())
@@ -753,7 +752,7 @@ async fn allocate_port(
         }
     }
     Err(ApiError::BadRequest(format!(
-        "port pool exhausted on node {} [{}-{}]",
+        "节点 {} 端口池 [{}-{}] 已无可用端口",
         node.id, node.port_pool_min, node.port_pool_max
     )))
 }
@@ -762,14 +761,14 @@ fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
     if let Some(db_err) = e.as_database_error() {
         if db_err.is_unique_violation() {
             return ApiError::BadRequest(
-                "rule binding already exists (same node/protocol/listen_ip/listen_port)".into(),
+                "相同节点/协议/监听 IP/监听端口的规则已存在".into(),
             );
         }
         if db_err.is_check_violation() {
-            return ApiError::BadRequest("rule fields violate check constraint".into());
+            return ApiError::BadRequest("规则字段不满足约束".into());
         }
         if db_err.is_foreign_key_violation() {
-            return ApiError::BadRequest("node_id or user_id does not exist".into());
+            return ApiError::BadRequest("节点或用户不存在".into());
         }
     }
     ApiError::Database(e)

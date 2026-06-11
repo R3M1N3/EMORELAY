@@ -68,13 +68,13 @@ fn validate_mbps(n: i64) -> ApiResult<()> {
     if n > 0 {
         Ok(())
     } else {
-        Err(ApiError::BadRequest("bandwidth_mbps must be > 0".into()))
+        Err(ApiError::BadRequest("带宽必须大于 0 Mbps".into()))
     }
 }
 
 fn validate_name(n: &str) -> ApiResult<()> {
     if n.trim().is_empty() {
-        Err(ApiError::BadRequest("name is required".into()))
+        Err(ApiError::BadRequest("名称不能为空".into()))
     } else {
         Ok(())
     }
@@ -200,7 +200,7 @@ pub async fn delete(
     let refs = BandwidthProfile::active_rule_refs(&state.pool, id).await?;
     if refs > 0 {
         return Err(ApiError::BadRequest(format!(
-            "bandwidth profile is referenced by {refs} active rule(s); detach them first"
+            "限速配置仍被 {refs} 条规则引用,请先解除关联"
         )));
     }
     let rows = BandwidthProfile::soft_delete(&state.pool, id).await?;
@@ -250,10 +250,10 @@ async fn dispatch_referencing_rules(state: &AppState, profile_id: i64) {
 fn map_sqlx_to_api(e: sqlx::Error) -> ApiError {
     if let Some(db_err) = e.as_database_error() {
         if db_err.is_unique_violation() {
-            return ApiError::BadRequest("profile name already exists".into());
+            return ApiError::BadRequest("限速配置名称已存在".into());
         }
         if db_err.is_check_violation() {
-            return ApiError::BadRequest("bandwidth_mbps must be > 0".into());
+            return ApiError::BadRequest("带宽必须大于 0 Mbps".into());
         }
     }
     ApiError::Database(e)

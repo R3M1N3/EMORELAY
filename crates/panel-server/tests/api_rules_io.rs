@@ -125,7 +125,7 @@ async fn import_marks_missing_node_as_error_without_write() {
     let (status, report) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{report}");
     assert_eq!(report["items"][0]["action"], "error");
-    assert!(report["items"][0]["reason"].as_str().unwrap().contains("node not found"));
+    assert!(report["items"][0]["reason"].as_str().unwrap().contains("节点不存在"));
 }
 
 #[tokio::test]
@@ -199,7 +199,7 @@ async fn import_rejects_tunnel_items_and_requires_admin() {
     .unwrap();
     let (_, report) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(report["items"][0]["action"], "error");
-    assert!(report["items"][0]["reason"].as_str().unwrap().contains("tunnel"));
+    assert!(report["items"][0]["reason"].as_str().unwrap().contains("隧道"));
 
     // 非 admin → 403
     let (_uid, token) = common::make_user_token(&app, "iouser", "password123").await.unwrap();
