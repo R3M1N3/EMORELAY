@@ -7,17 +7,21 @@
 ## 一、鉴权
 
 - 登录:`POST /api/auth/login` → `{ token, user }`,服务器使用 HS256 JWT。
-- 登录 401 的 `message` 有两种:`unauthorized`(常规失败)与 `account_expired`(密码正确但账号到期)。
+- 登录限速(P4):per-IP 稳态 1 次/秒、突发 10 次,超出返回 429(统一 JSON + `Retry-After` 头)。
+  限速键取 `X-Forwarded-For` 最左 IP(反代须**覆盖写**该头,见 `docker/web-nginx.conf`)。
+- 登录 401 的 `message`:常规失败为「未登录或登录已过期」;密码正确但账号到期为机器码 `account_expired`(前端按此码展示文案)。
 - 后续请求:`Authorization: Bearer <token>`。
 - 401 自动让前端清 token 并跳登录(`web/src/lib/api.ts`)。
-- 权限:`rules` 资源对普通用户(`role=user`)开放,但仅能操作自己名下规则;`users` / `nodes` / `bandwidth-profiles` / `settings` / `export` / `import` 为 admin only。
+- 权限:`rules` 对普通用户(`role=user`)开放,仅能操作自己名下规则;`nodes` 的 **GET(list/detail)对普通用户开放但响应净化**(见「节点」一节),其余 nodes 操作与 `users` / `bandwidth-profiles` / `tunnels` / `settings` / `export` / `import` 为 admin only。
 
 ---
 
 ## 二、统一错误格式
 
+P4 起用户可见 `message` 统一为中文;机器可读类别在 `error` 字段,集成方请匹配 `error` 而非 `message` 文本。
+
 ```json
-{ "error": "bad_request", "message": "listen_port outside node's port pool" }
+{ "error": "bad_request", "message": "监听端口 22 超出节点端口池 [20000-20100]" }
 ```
 
 | HTTP | `error` |
@@ -26,6 +30,7 @@
 | 401 | `unauthorized` |
 | 403 | `forbidden` |
 | 404 | `not_found` |
+| 429 | `too_many_requests`(仅登录限速) |
 | 500 | `internal_error` |
 
 ---
@@ -36,15 +41,20 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/auth/login` | 用户名+密码登录 |
+| POST | `/api/auth/login` | 用户名+密码登录(per-IP 限速) |
 | POST | `/api/auth/logout` | 无状态,前端清 token 即可 |
-| GET  | `/api/auth/me` | 当前 token 持有者 |
+| GET  | `/api/auth/me` | 当前 token 持有者(P4 起为扩展视图,见下) |
 
-### 节点 `nodes` (admin only)
+`GET /api/auth/me`(P4 扩展,用户自助概览数据源):除 `id`/`username`/`role` 外返回
+`expires_at`、`traffic_limit_bytes_30d`、`period_used_bytes_cached`、
+`period_used_calculated_at`、`rule_count`、`total_traffic_bytes`。
+登录响应里的 `user` 保持轻量三字段不变。
+
+### 节点 `nodes` (写操作 admin only;GET 对普通用户开放但净化)
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET    | `/api/nodes` | 分页(page, page_size, sort, order) |
+| GET    | `/api/nodes` | 分页(page, page_size, sort, order, search) |
 | POST   | `/api/nodes` | 创建,响应一次性返回四件套凭据(见下) |
 | GET    | `/api/nodes/{id}` | 详情 |
 | PATCH  | `/api/nodes/{id}` | 部分更新 |
@@ -58,6 +68,15 @@
 - `ca_pem` — 内置 CA 证书(Agent 用以校验 server)。
 - `client_cert_pem` — 该节点的 mTLS 客户端证书。
 - `client_key_pem` — 客户端私钥。**DB 永不持久化**,只存 `cert_serial` + `cert_fingerprint`;丢失即不可找回,只能走「轮换凭据」重签。
+
+P4 起的补充语义:
+
+- `search` 参数:服务端 LIKE 匹配 name / region / public_ip(`%`/`_` 按字面量处理)。
+- 响应新增 `agent_version`(Agent register 时上报落库;从未注册为空串)。
+- **普通用户视角净化**:`role=user` 调 GET 时响应形状不变,但
+  `grpc_endpoint`/`agent_version` 置空、`cpu_usage`/`memory_usage`/`load_average`/
+  `rx_bytes_total`/`tx_bytes_total` 置 0;保留 id/name/region/public_ip/status/
+  last_seen_at/port_pool(自助建规则所需)。`/api/nodes/{id}/stats` 仍 admin only。
 
 ### 转发规则 `rules` (普通用户可用,仅限自己名下规则;export/import 除外)
 
@@ -78,17 +97,18 @@
 
 创建/修改要点:
 
-- `listen_port` 可空 = 自动分配(节点池内最小可用,排除 reserved、协议互斥占用与该节点上活跃隧道 inter_port;池满 → 400 `port pool exhausted`)。
-- `bandwidth_profile_id` 创建可选;PATCH 传 `0` = 解除关联;不存在 → 400。
-- `tunnel_id` 创建可选,把该规则挂到一条隧道作为业务入口规则;**仅创建时设定,PATCH 不可改**。给定时 `node_id` 必须等于该隧道入口(ordinal 0)节点,否则 → 400(message 含 `entry`)。挂隧道的入口规则其 `listen_port` **豁免节点池范围检查**(隧道入口是面向业务的端口,与节点转发池相互独立),但仍受保留端口红线约束(22/80/443/3306/5432 一律拒绝)。
-- 响应含 `bandwidth_mbps`(关联 profile 的当前值,无关联/已删 → `null`)与 `tunnel_id`(未挂隧道 → `null`)。
+- `listen_port` 可空 = 自动分配(节点池内最小可用,排除 reserved、协议互斥占用与该节点上活跃隧道 inter_port;池满 → 400「已无可用端口」)。
+- `bandwidth_profile_id` 创建可选;PATCH 传 `0` = 解除关联;不存在 → 400。**仅 admin 可设/可改**(P4 收紧:普通用户传该字段一律 400,防止解除 admin 挂的限速)。
+- `tunnel_id` 创建可选,把该规则挂到一条隧道作为业务入口规则;**仅创建时设定,PATCH 不可改;仅 admin 可设**。给定时 `node_id` 必须等于该隧道入口(ordinal 0)节点,否则 → 400(message 含「入口」)。挂隧道的入口规则其 `listen_port` **豁免节点池范围检查**(隧道入口是面向业务的端口,与节点转发池相互独立),但仍受保留端口红线约束(22/80/443/3306/5432 一律拒绝)。
+- `user_id`(P4 新增,创建可选):**仅 admin** 可把规则归属到任意未删用户(规则计入该用户配额,随其到期/超额停用);普通用户传他人 id → 400(传自己 id 等价于不传)。归属创建后不可改。
+- 响应含 `bandwidth_mbps`(关联 profile 的当前值,无关联/已删 → `null`)、`tunnel_id`(未挂隧道 → `null`)与 `user_name`(P4 新增,归属用户名)。
 - 关联隧道的规则会拆成 entry/mid/exit 实例分发到链上各节点;流量统计与限速只在 entry 计。
 
 ### 用户 `users` (admin only)
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET    | `/api/users` | 分页 |
+| GET    | `/api/users` | 分页 + search(用户名 LIKE,通配符按字面量) |
 | POST   | `/api/users` | 创建,密码必须 ≥8 字符 |
 | GET    | `/api/users/{id}` | 详情 |
 | PATCH  | `/api/users/{id}` | 改密码 / 改角色 / 改到期与配额,禁止自降级,禁止降级最后一个 admin |
@@ -99,7 +119,9 @@
 - `expires_at` — 账号到期时刻(UTC),接受 `YYYY-MM-DDTHH:MM`;PATCH 传 `""` 清除。到期后登录被拒(401 `account_expired`),且 sweeper 自动停用名下全部规则。
 - `traffic_limit_bytes_30d` — 滚动 30 天流量配额(字节);PATCH 传 `0` 清除。超额后 sweeper 自动停用名下全部规则。
 - 响应附带只读字段:`period_used_bytes_cached`(最近一次计算的 30 天用量)、`period_used_calculated_at`(计算时刻)、`period_remaining_bytes`(剩余配额,无配额 → `null`)。
-- 滚动 30 天用量由 `rule_stats` 聚合(含已删规则的历史流量,防止"删规则绕配额");若将来把 stats 保留期配置为 < 30 天会截短配额窗口(当前版本未实现 retention 清理,仅为前瞻提示)。
+- 滚动 30 天用量由 `rule_stats` 聚合(含已删规则的历史流量,防止"删规则绕配额")。
+  **P4 起 `stats_retention_days` 清理任务已生效**:把保留期配置为 < 30 天会真实截短配额
+  计算窗口(用量被低估),设置页有同款警告;保留期相关行为见「系统」一节。
 
 ### 带宽模板 `bandwidth-profiles` (admin only)
 
@@ -131,10 +153,37 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET   | `/api/system/overview` | 总节点 / 在线 / 总规则 / 启用 / rx_tx 累计 |
+| GET   | `/api/system/overview` | 总节点 / 在线 / 总规则 / 启用 / rx_tx 累计 + `rx_bytes_24h`/`tx_bytes_24h`(P4:过去 24h **规则转发流量**,rule_stats 口径,区别于 nodes 表的网卡累计) |
 | GET   | `/api/system/audit-logs` | 分页 + 过滤(action, target_type, result) |
-| GET   | `/api/system/settings` | 当前 K/V 配置 |
+| GET   | `/api/system/settings` | 当前 K/V 配置(未配置过的 key 不出现在响应中) |
 | PATCH | `/api/system/settings` | 修改,key 走白名单 + 每键类型校验 |
+
+settings 白名单键:
+
+- `reserved_ports` — JSON 整数数组,规则监听端口黑名单。
+- `stats_retention_days` — 时序分钟桶保留天数(≥1,默认 30)。**P4 起生效**:后台每小时
+  (`PANEL_STATS_RETENTION_SWEEP_SECS`)分批删除 `rule_stats`/`node_stats` 超期行;
+  不清理 `audit_logs`。设 < 30 会截短 30 天滚动配额计算窗口。
+- `agent_control_endpoint` — Agent 连入地址,安装命令嵌入用(http/https)。
+- `notify_webhook_url`(P4 新增) — 出站通知地址(http/https,空 = 关闭),见「Webhook 通知」一节。
+
+### Webhook 通知(P4)
+
+配置 `notify_webhook_url` 后,以下事件以 `POST` JSON 推送(fire-and-forget,5s 超时,
+失败重试 1 次后丢弃;事件不保证必达):
+
+```json
+{ "event": "node.offline", "occurred_at": "2026-06-11T08:00:00+00:00", "data": { "node_id": 1, "name": "hk-a" } }
+```
+
+| event | 触发 | data |
+|---|---|---|
+| `node.offline` | 掉线 sweeper 把心跳超时(默认 120s)的 online 节点置 offline | `{node_id, name}` |
+| `node.online` | 离线节点经 register/心跳/统计上报恢复 | `{node_id}` |
+| `user.expired` | 到期用户名下规则被自动停用 | `{user_id, disabled_rule_count}` |
+| `user.quota_exceeded` | 超额用户名下规则被自动停用 | `{user_id, disabled_rule_count}` |
+
+https 端点须公网受信证书(rustls webpki roots,不读系统证书库);内网接收器可用 http。
 
 ### 健康检查
 
@@ -147,8 +196,8 @@
 ## 四、关键字段语义
 
 ### `nodes.status`
-- `online` — 最近一次 heartbeat / ReportNodeStats 在窗口内
-- `offline` — 超出窗口
+- `online` — register / heartbeat / ReportNodeStats 任一路径写入
+- `offline` — 掉线 sweeper(P4)检测到心跳超过 `PANEL_NODE_OFFLINE_AFTER_SECS`(默认 120s)后置位
 - `unknown` — 从未连接
 
 ### `forward_rules.protocol`
@@ -245,7 +294,7 @@ Rate limit：60 req/分钟/IP（看 §"Rate limit 与反代 header"）。
 
 - `name` 在活跃(未软删)profile 中唯一,重名 → 400。
 - `bandwidth_mbps` 必须 > 0。
-- DELETE 时若仍被活跃规则引用 → 400,message 含引用数(`referenced by N active rule(s)`),需先解除关联。
+- DELETE 时若仍被活跃规则引用 → 400,message 含引用数(「限速配置仍被 N 条规则引用」),需先解除关联。
 - PATCH 修改 `bandwidth_mbps` 后,引用该 profile 的活跃规则**即时重下发**(Agent 重建 token bucket)。注意:存量 TCP 连接持旧限速直到自然断开,新连接用新值;UDP 即时生效。
 - 规则侧用法见「转发规则」一节的 `bandwidth_profile_id`。
 
@@ -372,10 +421,10 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 
 - `name` 非空。
 - `transport` ∈ `{ tcp, tls, wss }`,全链路统一一种 transport。`wss` 不保证 TCP 半关语义,依赖半关的业务流选 `tcp` 或 `tls`。
-- `node_ids` 是有序链路(`[entry, mid…, exit]`),要求**≥2 个**、**不重复**、**全部 online**;任一不在线 → 400(message 含 `online`)。
+- `node_ids` 是有序链路(`[entry, mid…, exit]`),要求**≥2 个**、**不重复**、**全部 online**;任一不在线 → 400(message 含「在线」)。
 - `ordinal ≥ 1` 的节点必须有 `public_ip`(将被上一跳拨号),否则 → 400。
 - **inter_port 自动分配**:`ordinal ≥ 1` 的每个 hop 从**其自身节点**的 `port_pool` 分配一个 inter_port(排除 reserved + 该节点上活跃 `forward_rules.listen_port` + 该节点上活跃 `tunnel_hops.inter_port`);`ordinal 0`(入口)的 inter_port 为 `null`。
-- 整个创建是事务性的。并发创建撞同一端口由 DB 偏函数唯一索引(`tunnel_hops(node_id, inter_port) WHERE inter_port IS NOT NULL`)兜底 → 400(message:`inter_port allocation conflict (likely concurrent tunnel creation); please retry`)。
+- 整个创建是事务性的。并发创建撞同一端口由 DB 偏函数唯一索引(`tunnel_hops(node_id, inter_port) WHERE inter_port IS NOT NULL`)兜底 → 400(message:`中继端口分配冲突(可能有并发创建),请重试`)。
 
 ### 删除保护
 

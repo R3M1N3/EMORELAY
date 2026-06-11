@@ -13,6 +13,7 @@ interface SettingsFormState {
   reserved_ports: string
   stats_retention_days: string
   agent_control_endpoint: string
+  notify_webhook_url: string
 }
 
 interface SettingsState {
@@ -29,6 +30,7 @@ const EMPTY_FORM: SettingsFormState = {
   reserved_ports: '',
   stats_retention_days: '',
   agent_control_endpoint: '',
+  notify_webhook_url: '',
 }
 
 export default function Settings() {
@@ -69,6 +71,8 @@ export default function Settings() {
             reserved_ports: initial.reserved_ports ?? '',
             stats_retention_days: initial.stats_retention_days ?? '',
             agent_control_endpoint: initial.agent_control_endpoint ?? '',
+            // 未配置时 key 不存在于 settings 表,必须 ?? '' 兜底。
+            notify_webhook_url: initial.notify_webhook_url ?? '',
           },
           loading: false,
         }))
@@ -97,6 +101,7 @@ export default function Settings() {
         'reserved_ports',
         'stats_retention_days',
         'agent_control_endpoint',
+        'notify_webhook_url',
       ]
       for (const k of keys) {
         if (f[k] !== (init[k] ?? '')) diff[k] = f[k]
@@ -118,6 +123,7 @@ export default function Settings() {
           reserved_ports: resp.settings.reserved_ports ?? '',
           stats_retention_days: resp.settings.stats_retention_days ?? '',
           agent_control_endpoint: resp.settings.agent_control_endpoint ?? '',
+          notify_webhook_url: resp.settings.notify_webhook_url ?? '',
         },
         savedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
       }))
@@ -194,7 +200,28 @@ export default function Settings() {
             placeholder="30"
           />
           <p className="text-[11px] text-zinc-500 mt-1">
-            node_stats / rule_stats 表保留天数。默认 30。后续可加清理任务。
+            node_stats / rule_stats 分钟桶保留天数（默认 30），超期数据由后台每小时自动清理；
+            不清理审计日志。
+            <span className="text-amber-400/90">
+              注意：设为小于 30 天会蚕食「30 天滚动流量配额」的计算窗口，导致用户用量被低估。
+            </span>
+          </p>
+        </div>
+
+        <div>
+          <label className={fieldLabelCls}>通知 Webhook URL (notify_webhook_url)</label>
+          <input
+            type="text"
+            value={state.form.notify_webhook_url}
+            onChange={(e) => set('notify_webhook_url', e.target.value)}
+            className={fieldInputCls}
+            placeholder="https://example.com/hook（留空 = 关闭通知）"
+          />
+          <p className="text-[11px] text-zinc-500 mt-1">
+            节点掉线/恢复、用户超额/到期时 POST JSON{' '}
+            <code className="text-zinc-400">{'{event, occurred_at, data}'}</code> 到此地址。
+            事件：node.offline / node.online / user.quota_exceeded / user.expired。
+            https 端点需公网受信证书；内网接收器可用 http。发送失败重试 1 次后丢弃。
           </p>
         </div>
 

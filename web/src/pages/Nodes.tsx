@@ -402,6 +402,9 @@ function NodeRow({
         <div className="text-[11px] text-zinc-500 mt-0.5">
           {node.last_seen_at ? `最后心跳 ${shortTime(node.last_seen_at)}` : '从未上线'}
         </div>
+        {node.agent_version && (
+          <div className="text-[10px] text-zinc-600 mt-0.5">Agent v{node.agent_version}</div>
+        )}
       </td>
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>CPU {node.cpu_usage.toFixed(1)}%</div>

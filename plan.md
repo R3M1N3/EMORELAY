@@ -607,3 +607,18 @@ Agent 多跳隧道转发层 —— transport trait + TCP/TLS/WSS + TunnelTask en
 - **e2e 测试矩阵**（T8–T11）:`crates/panel-server/tests/tunnel_e2e.rs`（panel-server dev-dep node-agent，真 in-process gRPC server + 真 agent + 真流量，6 测试 ~2.6s）：双跳/三跳 TCP、双跳/三跳 TLS（凭据签发→下发→落盘→SNI/SAN 校验全自动真链路）、UDP-over-tunnel（2 字节长度前缀帧）、mTLS 真链路 register + 吊销后旧 cert PermissionDenied（含「吊销不动 token hash」不变式断言）。commits: 3d63eb0, a812e04, 69185c2, 6a091f4, 3251b80。
 - **范围外决策**:隧道侧 CRL 不在 P3c（凭据即时签发不入库、无吊销分发通道；SAN 校验已阻断横向移动）——留待「隧道凭据短有效期+定期轮换」后续方案;WSS e2e 不做（单测已覆盖三场景）。
 
+### Phase 4（UX 修复批次,2026-06-11 启动,同日交付）
+
+输入:`docs/ux-review-2026-06-11.md`（playwright 实测评审,P0=用户端断裂/零通知/retention 摆设 + 隐藏 bug「节点永不掉线」）。
+设计 `docs/superpowers/specs/2026-06-11-ux-fixes-design.md`,计划 `docs/superpowers/plans/2026-06-11-p4-ux-fixes.md`(8 Task,每 Task 子代理 review)。
+
+- **T1 错误中文化 + 登录限速**:ApiError 顶层与全部 routes 用户可见 message 中文化(机器码保留在 error 字段);`/api/auth/login` per-IP governor(1/s,burst 10),429 统一 JSON+Retry-After(review B1);nginx XFF 改覆盖写防伪造绕过(review I1)。commit: e5dc898。
+- **T2 stats retention 清理**:`sweeper/stats_retention.rs`,每小时按 `stats_retention_days` 分批(5000 行,id IN 子查询,PG 兼容)删 rule_stats/node_stats 超期桶;DB 读取失败跳过本 tick 不按默认值删(review 阻塞项)。修复「设置是摆设、时序表无限膨胀」。commit: 64aa0c6。
+- **T3 notify webhook**:`notify/mod.rs` fire-and-forget POST {event, occurred_at, data},5s 超时+重试 1 次;settings 白名单 + `notify_webhook_url` 校验;reqwest(rustls)。commit: f754a6e。
+- **T4 节点掉线检测 + agent_version + 四事件**:`sweeper/node_offline.rs`(心跳超 120s 置 offline,双重校验防误翻)修「节点永不掉线」bug;gRPC 三处 online 写入路径检测 offline→online 发恢复事件(prev SELECT 过滤软删,防幽灵心跳假事件,review B1);migration 0008 nodes.agent_version + register 落库;user_quota 接 user.expired/user.quota_exceeded。commit: a1d53ad。
+- **T5 REST 用户体系**:me 扩展 MeView(配额/用量/规则聚合);nodes GET 放行普通用户+sanitize(抹运维指标与控制面地址);rules 支持 admin 指定归属 user_id、普通用户传 user_id/profile/tunnel 一律 400(堵「用户自解限速」漏洞);RuleView.user_name;nodes/users 服务端 search(escape_like,rules 既有 search 一并补转义);overview +rx/tx_bytes_24h(rule_stats 口径)。commit: 877ae25。
+- **T6 前端角色体系**:导航按角色过滤;AdminRoute 兜底(裸 forbidden → 友好卡片);UserDashboard 自助概览(配额进度条/到期);Rules 双模式(user 可建规则、admin 归属列+下拉+隧道徽章);admin Dashboard 24h 卡片改 rule_stats 口径并标注。commit: 4072f7d。
+- **T7 体验止血**:useAutoRefresh(隐藏页跳过)接入全部列表/详情页(15-30s 静默,失败保留已有数据,review B3);节点/隧道/用户删除预检+误导文案修正;凭据 Modal 死路文案修正(review B2:轮换不补发 token,不承诺重新生成安装命令);shortTime 全站 UTC→本地时区;expires_at datetime-local 双向时区转换;Sparkline 单点不再渲染满幅三角+峰值标注;nodes/users 服务端搜索接线(effect 带 search 防翻页丢筛选,review B1);「网卡流量」列名+口径 title。commit: 5d38ca9。
+- **T8 设置页 + 文档**:设置页 webhook URL 字段+retention 蚕食配额警告;节点列表 Agent 版本;api.md(429/me 扩展/净化/user_id/search/overview 24h/webhook 事件/中文 message 契约)/README/.env.example(三个新 env)/本附录;评审报告逐项标注修复状态。
+- **范围外(评审 P1 待后续)**:多目标负载均衡/故障转移、图表库时序图、DNS 周期重解析、TOTP 2FA、节点分组、连接数限制、IP ACL、整库备份、Agent 自动升级、i18n、Telegram/邮件适配器、规则导入的隧道映射。
+
