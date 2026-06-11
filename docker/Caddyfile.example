@@ -16,7 +16,24 @@ emorelay.example.com {
     encode gzip zstd
 
     # /api/* 走 panel-server REST(compose 中已绑 127.0.0.1:8080)。
-    handle_path /api/* {
+    # 必须用 handle 而非 handle_path:panel-server 路由自带 /api 前缀,剥掉必 404。
+    handle /api/* {
+        reverse_proxy localhost:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Agent 一键安装脚本与二进制分发,不在 /api 前缀下;落到 web 容器会被
+    # SPA fallback 吞掉。X-Real-IP 供 rate limit 取真实客户端 IP,缺了限流键
+    # 会退化成反代 IP,所有客户端共享同一个 60 req/min 桶。
+    handle /install.sh {
+        reverse_proxy localhost:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+    handle /dist/* {
         reverse_proxy localhost:8080 {
             header_up X-Real-IP {remote_host}
             header_up X-Forwarded-Proto {scheme}
