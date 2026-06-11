@@ -1,6 +1,6 @@
 # EMORELAY
 
-开源流量转发管理面板。管理员在 Web 面板创建 TCP/UDP 端口转发规则,由分布在各节点上的 Rust Agent 实际执行转发并回报流量统计。设计与开发计划见 [`plan.md`](./plan.md)。
+开源流量转发管理面板。管理员在 Web 面板创建 TCP/UDP 端口转发规则,由分布在各节点上的 Rust Agent 实际执行转发并回报流量统计。
 
 参考形态:Flux-panel / Nyanpass / ForwardX / Aurora。
 
@@ -78,13 +78,11 @@ EMORELAY/
 
 ## 文档索引
 
-- [`plan.md`](./plan.md) — 项目设计蓝本 + 各 Phase 实施状态附录（MVP / P1 / P2 / P3a / P3b 控制面 / P3b 数据面 / P3c）
-- [`docs/superpowers/plans/2026-06-10-mvp-followups.md`](./docs/superpowers/plans/2026-06-10-mvp-followups.md) — MVP 后续阶段索引（P1 / P2 / P3）
-- [`docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md`](./docs/superpowers/plans/2026-06-10-mvp-followups-phase-3.md) — P3 计划（P3a / P3b / P3c 均已交付；P3c 展开版见 [`2026-06-11-p3c-tunnel-frontend-e2e.md`](./docs/superpowers/plans/2026-06-11-p3c-tunnel-frontend-e2e.md)）
 - [`docs/deployment.md`](./docs/deployment.md) — 部署与运维
 - [`docs/api.md`](./docs/api.md) — REST + gRPC API 参考
+- [`docs/ux-review-2026-06-11.md`](./docs/ux-review-2026-06-11.md) — 用户视角评审与修复状态(开发历程见 git history)
 
-## 验收状态(plan 第十三节,2026-06-09)
+## 验收状态(MVP,2026-06-09)
 
 | # | 验收项 | 状态 |
 |---|---|---|
@@ -100,7 +98,7 @@ EMORELAY/
 | 10 | Agent 重启恢复已有规则 | ✅(`agent-state.json` + `store.rs`) |
 | 11 | README 一键部署 + 开发启动步骤 | ✅ |
 
-MVP 之后已交付 P1（体验防呆）、P2（用户配额 + 限速 + 导入导出）、P3a（内置 CA + 默认 mTLS）、P3b 控制面（多跳隧道 DB/proto/REST）、P3b 数据面（Agent tunnel 模块 TCP/TLS/WSS + 凭据下发 + status 聚合）、P3c（隧道前端两页 + Rules 关联下拉 + client SAN 校验 + 命令重试队列 + e2e 测试矩阵）；逐 Phase 交付记录见 [`plan.md`](./plan.md) 附录·实施状态。
+MVP 之后已交付 P1（体验防呆）、P2（用户配额 + 限速 + 导入导出）、P3a（内置 CA + 默认 mTLS）、P3b 控制面（多跳隧道 DB/proto/REST）、P3b 数据面（Agent tunnel 模块 TCP/TLS/WSS + 凭据下发 + status 聚合）、P3c（隧道前端两页 + Rules 关联下拉 + client SAN 校验 + 命令重试队列 + e2e 测试矩阵）、P4（用户自助体系 + 掉线检测 + webhook 通知 + 统计清理 + 全面 UX 修复）；逐阶段交付记录见 git history。
 
 ## 安全
 

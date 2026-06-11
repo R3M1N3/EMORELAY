@@ -101,7 +101,7 @@ async fn bridge(
     let (mut c_r, mut c_w) = client.split();
     let (mut s_r, mut s_w) = server.split();
 
-    // 与 plan.md 字段命名对齐：tx = client → target（发送出去），rx = target → client。
+    // 字段命名约定：tx = client → target（发送出去），rx = target → client。
     match bucket {
         // 限速:手动 chunk 循环,每块写前向共享桶取配额(rx+tx 同桶)。
         Some(bucket) => {

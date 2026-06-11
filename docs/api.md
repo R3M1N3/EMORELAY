@@ -1,6 +1,6 @@
 # EMORELAY REST API 参考
 
-对应 plan.md 第七节。所有端点以 `/api` 为前缀,JSON in / JSON out。
+所有端点以 `/api` 为前缀,JSON in / JSON out。
 
 ---
 

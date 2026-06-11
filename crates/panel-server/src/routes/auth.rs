@@ -192,7 +192,7 @@ pub async fn me(
 }
 
 /// 无状态 JWT：服务器端无 session 可清，前端清掉本地 token 即注销。
-/// 此端点存在让 API 形态与 plan.md 第七节对齐，并允许未来切换 stateful session 时无需改路由。
+/// 此端点保持 REST 形态完整，并允许未来切换 stateful session 时无需改路由。
 pub async fn logout() -> ApiResult<Json<serde_json::Value>> {
     Ok(Json(json!({ "ok": true })))
 }

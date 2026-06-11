@@ -42,7 +42,7 @@ pub async fn run_agent(config: Config) -> Result<()> {
     let sampler = Arc::new(SystemSampler::new());
 
     // 启动时立刻加载本地规则并 apply，让转发任务在 server 未连通前已经在跑
-    // （plan.md 第四节"没有主控连接时保持已有规则继续运行"）。
+    // （设计约束:没有主控连接时保持已有规则继续运行）。
     let persisted = match store.load().await {
         Ok(rs) => rs,
         Err(e) => {
