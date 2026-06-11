@@ -373,6 +373,15 @@ async fn mtls_agent_register_and_revocation_rejects_old_cert() {
     wait_node_online(&app, node_id).await; // mTLS 真链路 register 成功
     agent.abort();
 
+    // 不变式:吊销只轮换证书,不轮换 agent_token——确保下方 PermissionDenied
+    // 来自 CRL 拒证而非 token 失效(两者错误码相同,需排除歧义)。前后各查一次。
+    let (hash_before,): (String,) =
+        sqlx::query_as("SELECT agent_token_hash FROM nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_one(&app.state.pool)
+            .await
+            .unwrap();
+
     // 吊销凭据:旧 fingerprint 进 CRL。
     let req = auth_req(
         Method::POST,
@@ -383,6 +392,14 @@ async fn mtls_agent_register_and_revocation_rejects_old_cert() {
     .unwrap();
     let (status, _) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::OK);
+
+    let (hash_after,): (String,) =
+        sqlx::query_as("SELECT agent_token_hash FROM nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_one(&app.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(hash_before, hash_after, "吊销不得改动 agent_token_hash");
 
     // 用旧 client cert 直连 register → CRL 拒证(PermissionDenied)。
     // TLS 握手层面旧证书链仍有效(CA 没换),拒绝发生在 register 的 CRL 检查。
