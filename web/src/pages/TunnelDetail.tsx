@@ -26,7 +26,7 @@ function hopRole(ordinal: number, total: number): string {
 
 function tunnelStatusKind(status: TunnelDetailView['status']): 'on' | 'off' | 'unknown' {
   if (status === 'up') return 'on'
-  if (status === 'down' || status === 'degraded') return 'off'
+  if (status === 'down') return 'off'
   return 'unknown'
 }
 
