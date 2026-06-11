@@ -284,6 +284,138 @@ async fn start_udp_echo() -> SocketAddr {
     addr
 }
 
+/// 起 in-process gRPC 控制面(mTLS:内置 CA server cert + 强制 client cert)。
+/// 返回 (绑定地址, JoinHandle) 供测试尾 abort。
+async fn start_grpc_mtls(app: &TestApp) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    use tonic::transport::{Certificate, Identity, ServerTlsConfig};
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    drop(l);
+    let ca = app.state.ca.clone();
+    let identity = Identity::from_pem(
+        ca.server_cert_pem.as_bytes(),
+        ca.server_key_pem.as_bytes(),
+    );
+    let tls = ServerTlsConfig::new()
+        .identity(identity)
+        .client_ca_root(Certificate::from_pem(ca.ca_pem.as_bytes()));
+    let svc = ControlPlaneServer::new(ControlPlaneImpl::new(app.state.clone()));
+    let handle = tokio::spawn(async move {
+        let _ = Server::builder()
+            .tls_config(tls)
+            .unwrap()
+            .add_service(svc)
+            .serve(addr)
+            .await;
+    });
+    // 等端口开放(裸 TCP 探测,不做 TLS 握手)。
+    for _ in 0..50 {
+        if TcpStream::connect(addr).await.is_ok() {
+            return (addr, handle);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("mtls grpc server not up at {addr}");
+}
+
+/// 真 agent 带 client cert 走 mTLS register → 在线;吊销后旧 cert 重连 register 被拒。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mtls_agent_register_and_revocation_rejects_old_cert() {
+    use emorelay_common::control::v1::control_plane_client::ControlPlaneClient;
+    use tonic::transport::{Certificate, ClientTlsConfig, Identity};
+
+    let app = make_app().await.unwrap();
+    let (grpc, grpc_handle) = start_grpc_mtls(&app).await;
+
+    // 创建节点拿四件套。
+    let req = auth_req(
+        Method::POST,
+        "/api/nodes",
+        &app.admin_token,
+        Some(json!({
+            "name": "e2e-mtls-node",
+            "public_ip": "127.0.0.1",
+            "grpc_endpoint": "127.0.0.1:0",
+            "port_pool_min": 26000,
+            "port_pool_max": 26099,
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let node_id = body["node"]["id"].as_i64().unwrap();
+    let token = body["agent_token"].as_str().unwrap().to_string();
+    let ca_pem = body["ca_pem"].as_str().unwrap().to_string();
+    let cert_pem = body["client_cert_pem"].as_str().unwrap().to_string();
+    let key_pem = body["client_key_pem"].as_str().unwrap().to_string();
+
+    // 四件套落盘到临时目录。
+    let dir = tempfile::TempDir::new().unwrap();
+    let base = dir.path().display().to_string().replace('\\', "/");
+    std::fs::write(format!("{base}/ca.pem"), &ca_pem).unwrap();
+    std::fs::write(format!("{base}/client.pem"), &cert_pem).unwrap();
+    std::fs::write(format!("{base}/client.key"), &key_pem).unwrap();
+
+    // 真 agent 带 client cert 以 mTLS 连接 gRPC 控制面。
+    let cfg = node_agent::config::Config {
+        node_id,
+        control_endpoint: format!("https://localhost:{}", grpc.port()),
+        token: token.clone(),
+        state_path: format!("{base}/agent-state.json"),
+        data_dir: base.clone(),
+        grpc_ca_cert: Some(format!("{base}/ca.pem")),
+        grpc_client_cert: Some(format!("{base}/client.pem")),
+        grpc_client_key: Some(format!("{base}/client.key")),
+    };
+    let agent = tokio::spawn(async move {
+        let _ = node_agent::run_agent(cfg).await;
+    });
+    wait_node_online(&app, node_id).await; // mTLS 真链路 register 成功
+    agent.abort();
+
+    // 吊销凭据:旧 fingerprint 进 CRL。
+    let req = auth_req(
+        Method::POST,
+        &format!("/api/nodes/{node_id}/revoke-credentials"),
+        &app.admin_token,
+        None,
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    // 用旧 client cert 直连 register → CRL 拒证(PermissionDenied)。
+    // TLS 握手层面旧证书链仍有效(CA 没换),拒绝发生在 register 的 CRL 检查。
+    let tls = ClientTlsConfig::new()
+        .ca_certificate(Certificate::from_pem(ca_pem.as_bytes()))
+        .identity(Identity::from_pem(cert_pem.as_bytes(), key_pem.as_bytes()))
+        .domain_name("localhost");
+    let channel = tonic::transport::Channel::from_shared(format!(
+        "https://localhost:{}",
+        grpc.port()
+    ))
+    .unwrap()
+    .tls_config(tls)
+    .unwrap()
+    .connect()
+    .await
+    .expect("TLS 握手层面旧证书仍有效(CA 链未变),握手应成功");
+    let mut client = ControlPlaneClient::new(channel);
+    // 注意:必须带原 token(吊销只轮换证书不轮换 agent_token);
+    // CRL 检查在 token 校验之后,token 错误会提前拒绝导致测不到 CRL 路径。
+    let err = client
+        .register(emorelay_common::control::v1::RegisterRequest {
+            node_id,
+            agent_token: token,
+            version: "e2e-revoked".into(),
+        })
+        .await
+        .expect_err("吊销后的证书必须被拒");
+    assert_eq!(err.code(), tonic::Code::PermissionDenied);
+
+    grpc_handle.abort();
+}
+
 /// 双跳 UDP-over-tunnel:UDP 包在 entry 打 2 字节长度前缀帧,经隧道流送 exit 拆帧
 /// 转发 target,回程同理(P3b frame.rs 协议的全链路实测)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
