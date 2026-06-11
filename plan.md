@@ -619,6 +619,6 @@ Agent 多跳隧道转发层 —— transport trait + TCP/TLS/WSS + TunnelTask en
 - **T5 REST 用户体系**:me 扩展 MeView(配额/用量/规则聚合);nodes GET 放行普通用户+sanitize(抹运维指标与控制面地址);rules 支持 admin 指定归属 user_id、普通用户传 user_id/profile/tunnel 一律 400(堵「用户自解限速」漏洞);RuleView.user_name;nodes/users 服务端 search(escape_like,rules 既有 search 一并补转义);overview +rx/tx_bytes_24h(rule_stats 口径)。commit: 877ae25。
 - **T6 前端角色体系**:导航按角色过滤;AdminRoute 兜底(裸 forbidden → 友好卡片);UserDashboard 自助概览(配额进度条/到期);Rules 双模式(user 可建规则、admin 归属列+下拉+隧道徽章);admin Dashboard 24h 卡片改 rule_stats 口径并标注。commit: 4072f7d。
 - **T7 体验止血**:useAutoRefresh(隐藏页跳过)接入全部列表/详情页(15-30s 静默,失败保留已有数据,review B3);节点/隧道/用户删除预检+误导文案修正;凭据 Modal 死路文案修正(review B2:轮换不补发 token,不承诺重新生成安装命令);shortTime 全站 UTC→本地时区;expires_at datetime-local 双向时区转换;Sparkline 单点不再渲染满幅三角+峰值标注;nodes/users 服务端搜索接线(effect 带 search 防翻页丢筛选,review B1);「网卡流量」列名+口径 title。commit: 5d38ca9。
-- **T8 设置页 + 文档**:设置页 webhook URL 字段+retention 蚕食配额警告;节点列表 Agent 版本;api.md(429/me 扩展/净化/user_id/search/overview 24h/webhook 事件/中文 message 契约)/README/.env.example(三个新 env)/本附录;评审报告逐项标注修复状态。
+- **T8 设置页 + 文档**:设置页 webhook URL 字段+retention 蚕食配额警告;节点列表 Agent 版本;api.md(429/me 扩展/净化/user_id/search/overview 24h/webhook 事件/中文 message 契约)/README/.env.example(三个新 env)/本附录;评审报告逐项标注修复状态。验收:cargo 32 测试组 + web build/lint/vitest(29) 全绿 + playwright 冒烟(用户自建规则闭环、杀 agent 15s 后 webhook node.offline 送达、页面零手动刷新自动变 offline)。commit: 3564e8e。
 - **范围外(评审 P1 待后续)**:多目标负载均衡/故障转移、图表库时序图、DNS 周期重解析、TOTP 2FA、节点分组、连接数限制、IP ACL、整库备份、Agent 自动升级、i18n、Telegram/邮件适配器、规则导入的隧道映射。
 
