@@ -16,13 +16,14 @@ pub struct Node {
     pub tx_bytes_total: i64,
     pub port_pool_min: i64,
     pub port_pool_max: i64,
+    pub agent_version: String,
     pub created_at: String,
     pub updated_at: String,
 }
 
 const NODE_COLUMNS: &str = "id, name, region, public_ip, grpc_endpoint, status, last_seen_at, \
     cpu_usage, memory_usage, load_average, rx_bytes_total, tx_bytes_total, \
-    port_pool_min, port_pool_max, created_at, updated_at";
+    port_pool_min, port_pool_max, agent_version, created_at, updated_at";
 
 /// 允许的排序字段白名单。SQL 拼接前必须经此过滤。
 pub const SORT_FIELDS: &[&str] = &["id", "name", "status", "region", "created_at", "updated_at"];

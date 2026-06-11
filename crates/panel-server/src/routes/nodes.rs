@@ -32,6 +32,7 @@ pub struct NodeView {
     pub tx_bytes_total: i64,
     pub port_pool_min: i64,
     pub port_pool_max: i64,
+    pub agent_version: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -53,6 +54,7 @@ impl From<Node> for NodeView {
             tx_bytes_total: n.tx_bytes_total,
             port_pool_min: n.port_pool_min,
             port_pool_max: n.port_pool_max,
+            agent_version: n.agent_version,
             created_at: n.created_at,
             updated_at: n.updated_at,
         }

@@ -1,21 +1,14 @@
 //! 用户级到期 / 滚动 30 天流量配额 sweeper(P2)。
 //! 取代已退役的规则级 expiry sweeper:一个 tokio task 内两个独立 interval,
 //! expiry 默认 60s(PANEL_USER_EXPIRY_SWEEP_SECS),quota 默认 300s(PANEL_USER_QUOTA_SWEEP_SECS)。
+use super::env_secs;
 use crate::{audit, models::rule::Rule, state::AppState};
 use std::time::Duration;
 use tracing::{info, warn};
 
-fn env_secs(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
-        .max(5)
-}
-
 pub fn spawn_user_quota_sweeper(state: AppState) {
-    let expiry_secs = env_secs("PANEL_USER_EXPIRY_SWEEP_SECS", 60);
-    let quota_secs = env_secs("PANEL_USER_QUOTA_SWEEP_SECS", 300);
+    let expiry_secs = env_secs("PANEL_USER_EXPIRY_SWEEP_SECS", 60, 5);
+    let quota_secs = env_secs("PANEL_USER_QUOTA_SWEEP_SECS", 300, 5);
     tokio::spawn(async move {
         let mut expiry_tick = tokio::time::interval(Duration::from_secs(expiry_secs));
         let mut quota_tick = tokio::time::interval(Duration::from_secs(quota_secs));
@@ -65,6 +58,11 @@ pub async fn expiry_tick_once(state: &AppState) -> anyhow::Result<u64> {
                 None,
             )
             .await;
+            crate::notify::spawn_send(
+                state.clone(),
+                "user.expired",
+                serde_json::json!({ "user_id": user_id, "disabled_rule_count": disabled }),
+            );
             info!(user_id, disabled, "expired user rules auto-disabled");
             hit += 1;
         }
@@ -119,6 +117,11 @@ pub async fn quota_tick_once(state: &AppState) -> anyhow::Result<u64> {
                 None,
             )
             .await;
+            crate::notify::spawn_send(
+                state.clone(),
+                "user.quota_exceeded",
+                serde_json::json!({ "user_id": user_id, "disabled_rule_count": disabled }),
+            );
             info!(user_id, disabled, "over-quota user rules auto-disabled");
             hit += 1;
         }

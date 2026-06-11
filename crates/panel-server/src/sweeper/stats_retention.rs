@@ -1,21 +1,14 @@
 //! rule_stats / node_stats 按 system_settings.stats_retention_days 滚动清理。
 //! 不清理 audit_logs(审计保留是合规属性,不在本任务语义内)。
+use super::env_secs;
 use crate::state::AppState;
 use std::time::Duration;
 use tracing::{info, warn};
 
 const BATCH: i64 = 5000;
 
-fn env_secs(key: &str, default: u64) -> u64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(default)
-        .max(5)
-}
-
 pub fn spawn_stats_retention_sweeper(state: AppState) {
-    let secs = env_secs("PANEL_STATS_RETENTION_SWEEP_SECS", 3600);
+    let secs = env_secs("PANEL_STATS_RETENTION_SWEEP_SECS", 3600, 5);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(secs));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

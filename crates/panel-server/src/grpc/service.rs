@@ -150,14 +150,32 @@ impl ControlPlane for ControlPlaneImpl {
             },
         );
 
-        // 标记 node 在线。
+        // 标记 node 在线(register 处同时落 agent 版本);offline→online 翻转发恢复事件。
+        // prev 读取失败只 warn(最坏漏发一次恢复事件,v1 事件允许丢失)。
+        let prev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL")
+                .bind(req.node_id)
+                .fetch_optional(&self.state.pool)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!(error = ?e, node_id = req.node_id, "prev status read failed");
+                    None
+                });
         let _ = sqlx::query(
             "UPDATE nodes SET status = 'online', last_seen_at = datetime('now'), \
-             updated_at = datetime('now') WHERE id = ?",
+             agent_version = ?, updated_at = datetime('now') WHERE id = ?",
         )
+        .bind(&req.version)
         .bind(req.node_id)
         .execute(&self.state.pool)
         .await;
+        if prev_status.as_deref() == Some("offline") {
+            crate::notify::spawn_send(
+                self.state.clone(),
+                "node.online",
+                serde_json::json!({ "node_id": req.node_id }),
+            );
+        }
 
         audit::record(
             &self.state.pool,
@@ -189,6 +207,16 @@ impl ControlPlane for ControlPlaneImpl {
             return Err(Status::permission_denied("session/node mismatch"));
         }
 
+        // offline→online 翻转(sweeper 误判后心跳把状态写回)也要发恢复事件。
+        let prev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL")
+                .bind(inner.node_id)
+                .fetch_optional(&self.state.pool)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!(error = ?e, node_id = inner.node_id, "prev status read failed");
+                    None
+                });
         sqlx::query(
             "UPDATE nodes SET cpu_usage = ?, memory_usage = ?, load_average = ?, \
              status = 'online', last_seen_at = datetime('now'), updated_at = datetime('now') \
@@ -201,6 +229,13 @@ impl ControlPlane for ControlPlaneImpl {
         .execute(&self.state.pool)
         .await
         .map_err(|e| Status::internal(format!("db: {e}")))?;
+        if prev_status.as_deref() == Some("offline") {
+            crate::notify::spawn_send(
+                self.state.clone(),
+                "node.online",
+                serde_json::json!({ "node_id": inner.node_id }),
+            );
+        }
 
         Ok(Response::new(HeartbeatResponse {
             server_time_unix: Utc::now().timestamp(),
@@ -263,6 +298,17 @@ impl ControlPlane for ControlPlaneImpl {
         req: Request<Streaming<NodeStatsBatch>>,
     ) -> Result<Response<Ack>, Status> {
         let session_node_id = self.verify_session(&req)?;
+        // 第三条把 status 写回 online 的路径(循环内逐 bucket UPDATE);
+        // 流开始前取一次旧状态,处理完若发生过 offline→online 翻转发恢复事件。
+        let prev_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL")
+                .bind(session_node_id)
+                .fetch_optional(&self.state.pool)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!(error = ?e, node_id = session_node_id, "prev status read failed");
+                    None
+                });
         let mut stream = req.into_inner();
         let mut total_buckets = 0usize;
         while let Some(batch) = stream
@@ -356,6 +402,13 @@ impl ControlPlane for ControlPlaneImpl {
                 }
                 total_buckets += 1;
             }
+        }
+        if total_buckets > 0 && prev_status.as_deref() == Some("offline") {
+            crate::notify::spawn_send(
+                self.state.clone(),
+                "node.online",
+                serde_json::json!({ "node_id": session_node_id }),
+            );
         }
         info!(node_id = session_node_id, buckets = total_buckets, "node stats persisted");
         Ok(Response::new(Ack {

@@ -128,6 +128,8 @@ async fn main() -> Result<()> {
     panel_server::sweeper::user_quota::spawn_user_quota_sweeper(state.clone());
     // 时序统计保留清理(默认每小时,按 stats_retention_days 删旧分钟桶)。
     panel_server::sweeper::stats_retention::spawn_stats_retention_sweeper(state.clone());
+    // 节点掉线检测(默认 30s 扫一次,心跳超 120s 置 offline 并发 webhook)。
+    panel_server::sweeper::node_offline::spawn_node_offline_sweeper(state.clone());
 
     tokio::select! {
         res = http_task => match res {
