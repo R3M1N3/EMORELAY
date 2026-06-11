@@ -255,10 +255,18 @@ collect_config() {
         BASE_URL="http://${PANEL_HOST}"
     fi
 
+    # Agent 接入主机名与 Web 域名分开问:Web 域名走 CDN/Cloudflare 橙云时,
+    # CDN 不转发 50051 且会终结 TLS,Agent 必须用直连源站的域名/IP。
     echo
-    warn "PANEL_PUBLIC_HOST=${PANEL_HOST} 会写入 gRPC server 证书 SAN,且【首次启动后固化】。"
+    info "Agent 通过 gRPC(:50051)直连本机,不经过 CDN。"
+    info "若上面的面板域名挂了 Cloudflare 橙云等代理,这里必须填能直连本机的域名或 IP(如灰云子域)。"
+    GRPC_HOST="$(prompt 'Agent 接入主机名/IP(gRPC)' "$PANEL_HOST")"
+    [[ -n "$GRPC_HOST" ]] || die "Agent 接入主机名不能为空。"
+
+    echo
+    warn "PANEL_PUBLIC_HOST=${GRPC_HOST} 会写入 gRPC server 证书 SAN,且【首次启动后固化】。"
     warn "之后更改需删除 ${DATA_DIR}/tls 重启,并给所有已接入 Agent 重装凭据。"
-    confirm "确认使用 ${PANEL_HOST} 作为 Agent 接入主机名/IP?" || die "已取消,请重新运行并填写正确地址。"
+    confirm "确认使用 ${GRPC_HOST} 作为 Agent 接入主机名/IP?" || die "已取消,请重新运行并填写正确地址。"
 
     ADMIN_PASSWORD="$(prompt_secret '管理员密码(留空自动生成)')"
     ADMIN_PASSWORD_GENERATED=0
@@ -285,9 +293,9 @@ print_summary() {
     else
         echo "   管理员密码 : (你刚才输入的密码)"
     fi
-    echo "   Agent 接入 : https://${PANEL_HOST}:50051 (mTLS 已默认强制)"
+    echo "   Agent 接入 : https://${GRPC_HOST}:50051 (mTLS 已默认强制)"
     echo
-    warn "请登录后到「系统设置」页将 Agent 控制端点设为 https://${PANEL_HOST}:50051"
+    warn "请登录后到「系统设置」页将 Agent 控制端点设为 https://${GRPC_HOST}:50051"
     if [[ "$mode" == "systemd" ]]; then
         echo "   常用命令   : systemctl status ${UNIT_NAME} / journalctl -u ${UNIT_NAME} -f"
     else
@@ -416,7 +424,7 @@ PANEL_JWT_SECRET=${JWT_SECRET}
 PANEL_BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 PANEL_CORS_ORIGIN=${BASE_URL}
 PANEL_PUBLIC_BASE_URL=${BASE_URL}
-PANEL_PUBLIC_HOST=${PANEL_HOST}
+PANEL_PUBLIC_HOST=${GRPC_HOST}
 RUST_LOG=info,sqlx=warn
 EOF
     umask 022
@@ -562,7 +570,7 @@ PANEL_BOOTSTRAP_ADMIN_USERNAME=admin
 # 首次成功登录后可清空本行(已建库即忽略),减少一处明文。
 PANEL_BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 PANEL_PUBLIC_BASE_URL=${BASE_URL}
-PANEL_PUBLIC_HOST=${PANEL_HOST}
+PANEL_PUBLIC_HOST=${GRPC_HOST}
 PANEL_DEV_DISABLE_MTLS=0
 EOF
     umask 022
