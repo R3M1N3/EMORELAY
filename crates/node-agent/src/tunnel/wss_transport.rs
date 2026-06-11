@@ -259,6 +259,42 @@ mod tests {
         server.await.unwrap();
     }
 
+    /// 同 CA、链合法、但 client SAN 指向 hop-7 而非上一跳 hop-0:
+    /// hop-1 WSS server 必须在 TLS 握手后、ws 升级前拒绝(SAN 校验)。
+    #[tokio::test]
+    async fn wss_server_rejects_client_cert_with_wrong_hop_san() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let data_dir = dir.path().display().to_string();
+        // hop-0 目录:client SAN 伪造为 hop-7;hop-1 目录正常。
+        crate::tunnel::testutil::write_hop_creds_matrix(&data_dir, 9, &[(0, 7), (1, 1)]).await;
+
+        let server_t = WssTransport::load(&data_dir, &ctx(1)).unwrap();
+        let client_t = WssTransport::load(&data_dir, &ctx(0)).unwrap();
+        let mut listener = server_t.bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client = tokio::spawn(async move {
+            // 链验证在握手层通过;server 拒绝后 ws 握手可能挂起或失败,忽略结果。
+            let _ = client_t.dial(&addr.to_string()).await;
+        });
+        assert!(
+            listener.accept().await.is_err(),
+            "client SAN 不是上一跳(hop-0)必须被拒"
+        );
+        client.abort();
+        let _ = client.await;
+    }
+
+    /// entry(self_ordinal=0)没有上一跳,不允许 bind 隧道 listener(防御)。
+    #[tokio::test]
+    async fn wss_entry_hop_must_not_bind() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let data_dir = dir.path().display().to_string();
+        write_hop_creds_pair(&data_dir, 9, 0, 1).await;
+        let t = WssTransport::load(&data_dir, &ctx(0)).unwrap();
+        assert!(t.bind("127.0.0.1:0").await.is_err());
+    }
+
     /// 大 payload(单次 write_all → 单条大 Binary 消息)完整往返;
     /// tungstenite 默认 max_message_size(64MB)远大于 256KB。
     #[tokio::test]
