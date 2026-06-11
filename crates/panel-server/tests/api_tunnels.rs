@@ -280,6 +280,47 @@ async fn tunnel_status_aggregates_hop_heartbeats() {
 }
 
 #[tokio::test]
+async fn tunnel_views_expose_rules_count_and_detail_rules() {
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "t-views", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (status, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tid = body["id"].as_i64().unwrap();
+
+    // 挂一条入口规则。
+    let req = common::auth_req(Method::POST, "/api/rules", &app.admin_token,
+        Some(json!({
+            "node_id": nodes[0], "name": "r-on-tunnel", "protocol": "tcp",
+            "listen_port": 30005, "target_host": "10.0.0.9", "target_port": 80,
+            "tunnel_id": tid,
+        }))).unwrap();
+    let (status, rule_body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{rule_body}");
+    let rule_id = rule_body["id"].as_i64().unwrap();
+
+    // list:rules_count = 1。
+    let req = common::auth_req(Method::GET, "/api/tunnels", &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let item = body["items"].as_array().unwrap().iter()
+        .find(|t| t["id"].as_i64() == Some(tid)).expect("tunnel in list");
+    assert_eq!(item["rules_count"].as_i64(), Some(1));
+
+    // detail:rules 数组含该规则的 id/name/protocol/listen_port/enabled。
+    let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid}"), &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["rules_count"].as_i64(), Some(1));
+    let rules = body["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0]["id"].as_i64(), Some(rule_id));
+    assert_eq!(rules[0]["name"].as_str(), Some("r-on-tunnel"));
+    assert_eq!(rules[0]["listen_port"].as_i64(), Some(30005));
+    assert_eq!(rules[0]["enabled"].as_bool(), Some(true));
+}
+
+#[tokio::test]
 async fn tunnel_rule_still_barred_from_reserved_port() {
     let app = common::make_app().await.unwrap();
     let nodes = seed_online_nodes(&app, 2).await;

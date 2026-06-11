@@ -16,6 +16,7 @@ pub struct TunnelView {
     pub transport: String,
     pub status: String,
     pub hops_count: i64,
+    pub rules_count: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -27,6 +28,16 @@ pub struct HopView {
     pub inter_port: Option<i64>,
 }
 
+/// 隧道详情里的关联规则摘要(前端详情页列表用,不暴露完整 RuleView)。
+#[derive(Serialize)]
+pub struct TunnelRuleRef {
+    pub id: i64,
+    pub name: String,
+    pub protocol: String,
+    pub listen_port: i64,
+    pub enabled: bool,
+}
+
 #[derive(Serialize)]
 pub struct TunnelDetail {
     pub id: i64,
@@ -34,6 +45,8 @@ pub struct TunnelDetail {
     pub transport: String,
     pub status: String,
     pub hops: Vec<HopView>,
+    pub rules_count: i64,
+    pub rules: Vec<TunnelRuleRef>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -68,9 +81,10 @@ pub async fn list(
     let mut items = Vec::with_capacity(tunnels.len());
     for t in tunnels {
         let hops = TunnelHop::list_for_tunnel(&state.pool, t.id).await?;
+        let rules_count = Tunnel::active_rule_refs(&state.pool, t.id).await?;
         items.push(TunnelView {
             id: t.id, name: t.name, transport: t.transport, status: t.status,
-            hops_count: hops.len() as i64, created_at: t.created_at, updated_at: t.updated_at,
+            hops_count: hops.len() as i64, rules_count, created_at: t.created_at, updated_at: t.updated_at,
         });
     }
     Ok(Json(TunnelListResponse { items, total, page, page_size }))
@@ -84,9 +98,22 @@ pub async fn get(
     let status = Tunnel::compute_status(&state.pool, id).await?;
     let _ = Tunnel::set_status(&state.pool, id, &status).await;
     let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
+    let rules: Vec<TunnelRuleRef> = crate::models::rule::Rule::list_active_for_tunnel(&state.pool, id)
+        .await?
+        .into_iter()
+        .map(|r| TunnelRuleRef {
+            id: r.id,
+            name: r.name,
+            protocol: r.protocol,
+            listen_port: r.listen_port,
+            enabled: r.enabled != 0,
+        })
+        .collect();
     Ok(Json(TunnelDetail {
         id: t.id, name: t.name, transport: t.transport, status,
         hops: hops.into_iter().map(|h| HopView { ordinal: h.ordinal, node_id: h.node_id, inter_port: h.inter_port }).collect(),
+        rules_count: rules.len() as i64,
+        rules,
         created_at: t.created_at, updated_at: t.updated_at,
     }))
 }
@@ -185,11 +212,12 @@ pub async fn update(
     }
     let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
     let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
+    let rules_count = Tunnel::active_rule_refs(&state.pool, id).await?;
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.update", Some("tunnel"), Some(id), None, true, None).await;
     Ok(Json(TunnelView {
         id: t.id, name: t.name, transport: t.transport, status: t.status,
-        hops_count: hops.len() as i64, created_at: t.created_at, updated_at: t.updated_at,
+        hops_count: hops.len() as i64, rules_count, created_at: t.created_at, updated_at: t.updated_at,
     }))
 }
 
