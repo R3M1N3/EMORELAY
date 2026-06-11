@@ -140,3 +140,87 @@ async fn node_stats_returns_empty_series_initially() {
     assert_eq!(body["current"]["status"], "unknown");
     assert_eq!(body["series"].as_array().unwrap().len(), 0);
 }
+
+// ============ P4: 普通用户净化视图 + 服务端搜索 ============
+
+#[tokio::test]
+async fn normal_user_gets_sanitized_node_list() {
+    let app = make_app().await.unwrap();
+    sqlx::query(
+        "INSERT INTO nodes (name, agent_token_hash, region, public_ip, grpc_endpoint, \
+                            cpu_usage, rx_bytes_total, agent_version, status) \
+         VALUES ('n1', 'x', 'HK', '1.2.3.4', 'https://internal:7001', 55.5, 999, '9.9.9', 'online')",
+    )
+    .execute(&app.state.pool)
+    .await
+    .unwrap();
+    let (_uid, token) = common::make_user_token(&app, "nuser", "password123").await.unwrap();
+
+    let req = auth_req(Method::GET, "/api/nodes?page_size=20", &token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "user 应可读节点列表: {body}");
+    let item = &body["items"][0];
+    // 净化:运维与控制面字段抹掉
+    assert_eq!(item["grpc_endpoint"], "");
+    assert_eq!(item["agent_version"], "");
+    assert_eq!(item["cpu_usage"], 0.0);
+    assert_eq!(item["rx_bytes_total"], 0);
+    // 自助建规则所需字段保留
+    assert_eq!(item["name"], "n1");
+    assert_eq!(item["region"], "HK");
+    assert_eq!(item["public_ip"], "1.2.3.4");
+    assert_eq!(item["status"], "online");
+    assert!(item.get("port_pool_min").is_some());
+
+    // 单条 GET 同样净化
+    let nid = item["id"].as_i64().unwrap();
+    let req = auth_req(Method::GET, &format!("/api/nodes/{nid}"), &token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["grpc_endpoint"], "");
+
+    // admin 视图不净化
+    let req = auth_req(Method::GET, "/api/nodes?page_size=20", &app.admin_token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["items"][0]["grpc_endpoint"], "https://internal:7001");
+    assert_eq!(body["items"][0]["agent_version"], "9.9.9");
+}
+
+#[tokio::test]
+async fn normal_user_still_cannot_mutate_nodes() {
+    let app = make_app().await.unwrap();
+    let (_uid, token) = common::make_user_token(&app, "nuser2", "password123").await.unwrap();
+    let req = auth_req(
+        Method::POST,
+        "/api/nodes",
+        &token,
+        Some(json!({ "name": "evil" })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn nodes_list_server_side_search() {
+    let app = make_app().await.unwrap();
+    for (name, region, ip) in [("hk-a", "HK", "1.1.1.1"), ("jp-b", "JP", "2.2.2.2")] {
+        sqlx::query("INSERT INTO nodes (name, agent_token_hash, region, public_ip) VALUES (?, 'x', ?, ?)")
+            .bind(name).bind(region).bind(ip)
+            .execute(&app.state.pool).await.unwrap();
+    }
+    // 命中 name
+    let req = auth_req(Method::GET, "/api/nodes?search=hk-", &app.admin_token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["total"], 1, "{body}");
+    assert_eq!(body["items"][0]["name"], "hk-a");
+    // 命中 IP
+    let req = auth_req(Method::GET, "/api/nodes?search=2.2.2", &app.admin_token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["items"][0]["name"], "jp-b");
+    // LIKE 通配符被转义:'%' 不应匹配所有
+    let req = auth_req(Method::GET, "/api/nodes?search=%25", &app.admin_token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["total"], 0, "通配符必须按字面量处理: {body}");
+}

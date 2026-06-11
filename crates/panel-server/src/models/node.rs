@@ -35,24 +35,41 @@ impl Node {
         order_desc: bool,
         limit: i64,
         offset: i64,
+        search: Option<&str>,
     ) -> sqlx::Result<Vec<Self>> {
         // sort_field 必须来自调用方白名单过滤；不能直接接收用户输入。
         let order = if order_desc { "DESC" } else { "ASC" };
+        let search_clause = if search.is_some() {
+            " AND (name LIKE ? ESCAPE '\\' OR region LIKE ? ESCAPE '\\' OR public_ip LIKE ? ESCAPE '\\')"
+        } else {
+            ""
+        };
         let sql = format!(
-            "SELECT {NODE_COLUMNS} FROM nodes WHERE deleted_at IS NULL \
+            "SELECT {NODE_COLUMNS} FROM nodes WHERE deleted_at IS NULL{search_clause} \
              ORDER BY {sort_field} {order} LIMIT ? OFFSET ?"
         );
-        sqlx::query_as::<_, Node>(&sql)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await
+        let mut q = sqlx::query_as::<_, Node>(&sql);
+        if let Some(s) = search {
+            let like = format!("%{}%", crate::util::escape_like(s));
+            q = q.bind(like.clone()).bind(like.clone()).bind(like);
+        }
+        q.bind(limit).bind(offset).fetch_all(pool).await
     }
 
-    pub async fn count(pool: &SqlitePool) -> sqlx::Result<i64> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nodes WHERE deleted_at IS NULL")
-            .fetch_one(pool)
-            .await
+    pub async fn count(pool: &SqlitePool, search: Option<&str>) -> sqlx::Result<i64> {
+        let search_clause = if search.is_some() {
+            " AND (name LIKE ? ESCAPE '\\' OR region LIKE ? ESCAPE '\\' OR public_ip LIKE ? ESCAPE '\\')"
+        } else {
+            ""
+        };
+        let sql =
+            format!("SELECT COUNT(*) FROM nodes WHERE deleted_at IS NULL{search_clause}");
+        let mut q = sqlx::query_scalar::<_, i64>(&sql);
+        if let Some(s) = search {
+            let like = format!("%{}%", crate::util::escape_like(s));
+            q = q.bind(like.clone()).bind(like.clone()).bind(like);
+        }
+        q.fetch_one(pool).await
     }
 
     pub async fn find_by_id(pool: &SqlitePool, id: i64) -> sqlx::Result<Option<Self>> {

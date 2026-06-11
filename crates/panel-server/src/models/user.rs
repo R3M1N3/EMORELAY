@@ -88,14 +88,6 @@ impl User {
         .await
     }
 
-    pub async fn count(pool: &SqlitePool) -> sqlx::Result<i64> {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL",
-        )
-        .fetch_one(pool)
-        .await
-    }
-
     /// 部分更新:None 字段不变,Some 字段写入。updated_at 由本方法刷新。
     /// 置空协议:expires_at 传 "" 清除;traffic_limit_bytes_30d 传 0 清除。
     pub async fn update(

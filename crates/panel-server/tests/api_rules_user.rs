@@ -232,3 +232,186 @@ async fn audit_logs_actor_ip_populated_via_xff_header() {
     let (actor_ip,) = row.expect("expected at least one auth.login audit row");
     assert_eq!(actor_ip.as_deref(), Some("203.0.113.5"));
 }
+
+// ============ P4: 规则归属与权限收紧 ============
+
+#[tokio::test]
+async fn admin_can_assign_rule_owner() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let (alice_id, _) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &app.admin_token,
+        Some(json!({
+            "node_id": node_id, "name": "for-alice", "protocol": "tcp",
+            "listen_port": 30030, "target_host": "1.2.3.4", "target_port": 80,
+            "user_id": alice_id,
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["user_id"], alice_id);
+    assert_eq!(body["user_name"], "alice");
+
+    // 不存在的归属用户 → 400
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &app.admin_token,
+        Some(json!({
+            "node_id": node_id, "name": "ghost-owner", "protocol": "tcp",
+            "listen_port": 30031, "target_host": "1.2.3.4", "target_port": 80,
+            "user_id": 99999,
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn user_cannot_assign_other_owner_or_profile_or_tunnel() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+
+    // 指定他人归属 → 400
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &alice_token,
+        Some(json!({
+            "node_id": node_id, "name": "x1", "protocol": "tcp",
+            "listen_port": 30040, "target_host": "1.2.3.4", "target_port": 80,
+            "user_id": app.admin_user_id,
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 自配限速 → 400
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &alice_token,
+        Some(json!({
+            "node_id": node_id, "name": "x2", "protocol": "tcp",
+            "listen_port": 30041, "target_host": "1.2.3.4", "target_port": 80,
+            "bandwidth_profile_id": 1,
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 自挂隧道 → 400
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &alice_token,
+        Some(json!({
+            "node_id": node_id, "name": "x3", "protocol": "tcp",
+            "listen_port": 30042, "target_host": "1.2.3.4", "target_port": 80,
+            "tunnel_id": 1,
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 显式传自己 id 放行(等价于不传)——覆盖 Some(uid)+非 admin+uid==sub 分支。
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &alice_token,
+        Some(json!({
+            "node_id": node_id, "name": "self-ok", "protocol": "tcp",
+            "listen_port": 30043, "target_host": "1.2.3.4", "target_port": 80,
+            "user_id": alice_id,
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["user_id"], alice_id);
+}
+
+#[tokio::test]
+async fn user_cannot_clear_admin_bandwidth_profile() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+
+    // admin 建限速档并把规则归 alice + 挂限速。
+    let req = auth_req(
+        Method::POST,
+        "/api/bandwidth-profiles",
+        &app.admin_token,
+        Some(json!({ "name": "cap10", "bandwidth_mbps": 10 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let pid = body["id"].as_i64().unwrap();
+
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &app.admin_token,
+        Some(json!({
+            "node_id": node_id, "name": "capped", "protocol": "tcp",
+            "listen_port": 30050, "target_host": "1.2.3.4", "target_port": 80,
+            "user_id": alice_id, "bandwidth_profile_id": pid,
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rule_id = body["id"].as_i64().unwrap();
+
+    // alice 尝试解除限速(bandwidth_profile_id=0) → 400;改名等普通字段仍可。
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        &alice_token,
+        Some(json!({ "bandwidth_profile_id": 0 })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        &alice_token,
+        Some(json!({ "name": "renamed-by-alice" })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["bandwidth_profile_id"], pid, "限速关联不受改名影响");
+}
+
+#[tokio::test]
+async fn rule_list_includes_owner_username_for_admin() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let (_, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    create_rule_as(&app, &alice_token, node_id, "alice-named", 30060).await;
+
+    let req = auth_req(Method::GET, "/api/rules", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let item = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "alice-named")
+        .expect("rule present");
+    assert_eq!(item["user_name"], "alice");
+}

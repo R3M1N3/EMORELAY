@@ -253,3 +253,31 @@ async fn expired_user_cannot_login() {
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     assert_eq!(body["message"], "account_expired");
 }
+
+// ============ P4: 服务端搜索 ============
+
+#[tokio::test]
+async fn users_list_server_side_search() {
+    let app = make_app().await.unwrap();
+    for name in ["alice", "bob"] {
+        let req = auth_req(
+            Method::POST,
+            "/api/users",
+            &app.admin_token,
+            Some(json!({ "username": name, "password": "password123", "role": "user" })),
+        )
+        .unwrap();
+        let (status, body) = send(app.app.clone(), req).await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let req = auth_req(Method::GET, "/api/users?search=ali", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 1, "{body}");
+    assert_eq!(body["items"][0]["username"], "alice");
+
+    // 通配符按字面量处理
+    let req = auth_req(Method::GET, "/api/users?search=%25", &app.admin_token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["total"], 0, "{body}");
+}

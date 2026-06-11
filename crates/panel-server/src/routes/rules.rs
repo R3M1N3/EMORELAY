@@ -24,6 +24,8 @@ use sqlx::prelude::FromRow;
 pub struct RuleView {
     pub id: i64,
     pub user_id: i64,
+    /// 归属用户名(列表/详情由 routes 层补查;不过滤软删,展示软删用户的原名)。
+    pub user_name: Option<String>,
     pub node_id: i64,
     pub name: String,
     pub protocol: String,
@@ -47,6 +49,7 @@ impl From<Rule> for RuleView {
         Self {
             id: r.id,
             user_id: r.user_id,
+            user_name: None,
             node_id: r.node_id,
             name: r.name,
             protocol: r.protocol,
@@ -98,6 +101,8 @@ pub struct CreateRuleRequest {
     pub target_port: u16,
     pub bandwidth_profile_id: Option<i64>,
     pub tunnel_id: Option<i64>,
+    /// 归属用户:仅 admin 可指定;普通用户只能为自己建(留空即可)。
+    pub user_id: Option<i64>,
 }
 
 fn default_listen_ip() -> String {
@@ -210,12 +215,39 @@ pub async fn list(
     )
     .await?;
 
+    // 批量补归属用户名(admin 列表「归属」列用),一次 IN 查询。
+    let mut views: Vec<RuleView> = items.into_iter().map(Into::into).collect();
+    let mut ids: Vec<i64> = views.iter().map(|v| v.user_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if !ids.is_empty() {
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("SELECT id, username FROM users WHERE id IN ({placeholders})");
+        let mut uq = sqlx::query_as::<_, (i64, String)>(&sql);
+        for id in &ids {
+            uq = uq.bind(id);
+        }
+        let map: std::collections::HashMap<i64, String> =
+            uq.fetch_all(&state.pool).await?.into_iter().collect();
+        for v in &mut views {
+            v.user_name = map.get(&v.user_id).cloned();
+        }
+    }
+
     Ok(Json(RuleListResponse {
-        items: items.into_iter().map(Into::into).collect(),
+        items: views,
         total,
         page,
         page_size,
     }))
+}
+
+/// 单条规则视图补归属用户名(get/create 用)。不过滤软删(FK 保证行存在,几乎恒 Some)。
+async fn lookup_username(pool: &sqlx::SqlitePool, user_id: i64) -> ApiResult<Option<String>> {
+    Ok(sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?)
 }
 
 pub async fn get(
@@ -227,7 +259,9 @@ pub async fn get(
         .await?
         .ok_or(ApiError::NotFound)?;
     ensure_can_touch(&auth, &rule)?;
-    Ok(Json(rule.into()))
+    let mut view = RuleView::from(rule);
+    view.user_name = lookup_username(&state.pool, view.user_id).await?;
+    Ok(Json(view))
 }
 
 pub async fn create(
@@ -236,7 +270,28 @@ pub async fn create(
     actor_ip: ActorIp,
     Json(req): Json<CreateRuleRequest>,
 ) -> ApiResult<Json<RuleView>> {
-    // 普通用户可以为自己创建规则;rule.user_id 设为 claims.sub。
+    // 归属:admin 可指定任意未删用户;普通用户只能是自己(显式传自己 id 也放行)。
+    let owner_id = match req.user_id {
+        Some(uid) if !auth.is_admin() => {
+            if uid != auth.0.sub {
+                return Err(ApiError::BadRequest("仅管理员可指定归属用户".into()));
+            }
+            uid
+        }
+        Some(uid) => {
+            crate::models::user::User::find_by_id(&state.pool, uid)
+                .await?
+                .ok_or_else(|| ApiError::BadRequest("归属用户不存在".into()))?;
+            uid
+        }
+        None => auth.0.sub,
+    };
+    // 收紧:限速档/隧道是 admin 管控资产,普通用户不得自配
+    // (否则可挂任意隧道或解除 admin 限速)。
+    if !auth.is_admin() && (req.bandwidth_profile_id.is_some() || req.tunnel_id.is_some()) {
+        return Err(ApiError::BadRequest("仅管理员可配置限速与隧道".into()));
+    }
+
     let name = req.name.trim();
     if name.is_empty() {
         return Err(ApiError::BadRequest("名称不能为空".into()));
@@ -318,7 +373,7 @@ pub async fn create(
 
     let new_id = Rule::create(
         &state.pool,
-        auth.0.sub,
+        owner_id,
         req.node_id,
         name,
         &req.protocol,
@@ -343,7 +398,7 @@ pub async fn create(
         "rule.create",
         Some("rule"),
         Some(new_id),
-        Some(name),
+        Some(&format!("{name},owner={owner_id}")),
         true,
         None,
     )
@@ -352,7 +407,9 @@ pub async fn create(
     // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
     let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
 
-    Ok(Json(rule.into()))
+    let mut view = RuleView::from(rule);
+    view.user_name = lookup_username(&state.pool, view.user_id).await?;
+    Ok(Json(view))
 }
 
 pub async fn update(
@@ -388,6 +445,10 @@ pub async fn update(
         return Err(ApiError::BadRequest("端口必须在 1-65535 之间".into()));
     }
     if let Some(pid) = req.bandwidth_profile_id {
+        // 收紧:普通用户不得改限速关联(否则可解除 admin 挂的限速档)。
+        if !auth.is_admin() {
+            return Err(ApiError::BadRequest("仅管理员可修改限速配置".into()));
+        }
         if pid < 0 {
             return Err(ApiError::BadRequest("限速配置 ID 不能为负数".into()));
         }

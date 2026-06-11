@@ -32,6 +32,21 @@ pub struct UserView {
     pub role: String,
 }
 
+/// /api/auth/me 的扩展视图:UserView + 配额/用量/规则聚合,
+/// 供普通用户自助概览页一次拿全(login 响应保持轻量 UserView 不变)。
+#[derive(Serialize)]
+pub struct MeView {
+    pub id: i64,
+    pub username: String,
+    pub role: String,
+    pub expires_at: Option<String>,
+    pub traffic_limit_bytes_30d: Option<i64>,
+    pub period_used_bytes_cached: i64,
+    pub period_used_calculated_at: Option<String>,
+    pub rule_count: i64,
+    pub total_traffic_bytes: i64,
+}
+
 pub async fn login(
     State(state): State<AppState>,
     actor_ip: ActorIp,
@@ -135,14 +150,44 @@ pub async fn login(
 pub async fn me(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
-) -> ApiResult<Json<UserView>> {
-    let user = User::find_by_id(&state.pool, claims.sub)
-        .await?
-        .ok_or(ApiError::Unauthorized)?;
-    Ok(Json(UserView {
-        id: user.id,
-        username: user.username,
-        role: user.role,
+) -> ApiResult<Json<MeView>> {
+    // 单行聚合,JOIN 结构与 users::list 同构(COUNT/SUM 预聚合避免笛卡尔积)。
+    type MeRow = (
+        i64,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        i64,
+        Option<String>,
+        i64,
+        i64,
+    );
+    let row: Option<MeRow> = sqlx::query_as(
+        "SELECT u.id, u.username, u.role, u.expires_at, u.traffic_limit_bytes_30d, \
+                u.period_used_bytes_cached, u.period_used_calculated_at, \
+                COALESCE(r.cnt, 0), COALESCE(r.tot, 0) \
+         FROM users u \
+         LEFT JOIN (SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
+                    FROM forward_rules WHERE deleted_at IS NULL GROUP BY user_id) r \
+           ON r.user_id = u.id \
+         WHERE u.id = ? AND u.deleted_at IS NULL",
+    )
+    .bind(claims.sub)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (id, username, role, expires_at, limit, used, used_at, rule_count, total) =
+        row.ok_or(ApiError::Unauthorized)?;
+    Ok(Json(MeView {
+        id,
+        username,
+        role,
+        expires_at,
+        traffic_limit_bytes_30d: limit,
+        period_used_bytes_cached: used,
+        period_used_calculated_at: used_at,
+        rule_count,
+        total_traffic_bytes: total,
     }))
 }
 

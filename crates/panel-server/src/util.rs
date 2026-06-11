@@ -24,6 +24,12 @@ pub fn is_valid_target_host(host: &str) -> bool {
     })
 }
 
+/// LIKE 模式转义:把 \ % _ 转义为字面量,配合 `LIKE ? ESCAPE '\'` 使用,
+/// 防用户输入通配符污染搜索语义。
+pub fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+}
+
 /// 规范化用户输入的到期时间为 SQLite `datetime('now')` 同款格式（UTC 语义）。
 /// 接受 "YYYY-MM-DDTHH:MM"(datetime-local) / "YYYY-MM-DDTHH:MM:SS" / "YYYY-MM-DD HH:MM:SS"。
 /// 统一输出 "YYYY-MM-DD HH:MM:SS"，可与 datetime('now') 直接字符串比较。

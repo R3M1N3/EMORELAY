@@ -101,6 +101,7 @@ impl From<UserListRow> for UserView {
 pub struct ListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
+    pub search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -139,10 +140,17 @@ pub async fn list(
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = page.saturating_sub(1).saturating_mul(page_size);
+    let search = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let search_clause = if search.is_some() {
+        " AND u.username LIKE ? ESCAPE '\\'"
+    } else {
+        ""
+    };
+    let like = search.map(|s| format!("%{}%", crate::util::escape_like(s)));
 
     // 一次 LEFT JOIN 拿到所有列表字段 + 规则数 + 累计流量。subquery 按 user_id
     // 预聚合(COUNT / SUM(rx+tx))避免 GROUP BY 在外层引入笛卡尔积。
-    let rows: Vec<UserListRow> = sqlx::query_as(
+    let sql = format!(
         "SELECT u.id, u.username, u.role, u.created_at, u.updated_at, \
                 COALESCE(r.cnt, 0) AS rule_count, \
                 COALESCE(r.tot, 0) AS total_traffic_bytes, \
@@ -153,14 +161,26 @@ pub async fn list(
              SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
              FROM forward_rules WHERE deleted_at IS NULL GROUP BY user_id \
          ) r ON r.user_id = u.id \
-         WHERE u.deleted_at IS NULL \
-         ORDER BY u.id DESC LIMIT ? OFFSET ?",
-    )
-    .bind(page_size)
-    .bind(offset)
-    .fetch_all(&state.pool)
-    .await?;
-    let total = User::count(&state.pool).await?;
+         WHERE u.deleted_at IS NULL{search_clause} \
+         ORDER BY u.id DESC LIMIT ? OFFSET ?"
+    );
+    let mut rows_q = sqlx::query_as::<_, UserListRow>(&sql);
+    if let Some(l) = &like {
+        rows_q = rows_q.bind(l.clone());
+    }
+    let rows: Vec<UserListRow> = rows_q
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await?;
+
+    let count_sql =
+        format!("SELECT COUNT(*) FROM users u WHERE u.deleted_at IS NULL{search_clause}");
+    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+    if let Some(l) = &like {
+        count_q = count_q.bind(l.clone());
+    }
+    let total = count_q.fetch_one(&state.pool).await?;
 
     Ok(Json(UserListResponse {
         items: rows.into_iter().map(Into::into).collect(),

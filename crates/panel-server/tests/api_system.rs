@@ -104,3 +104,36 @@ async fn agent_control_endpoint_empty_accepted() {
     let (status, _) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::OK);
 }
+
+// ============ P4: overview 24h 转发流量口径 ============
+
+#[tokio::test]
+async fn overview_includes_24h_forward_traffic() {
+    let app = make_app().await.unwrap();
+    sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('ovn', 'x')")
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO forward_rules (user_id, node_id, name, protocol, listen_ip, listen_port, target_host, target_port) \
+         VALUES (?, 1, 'ovr', 'tcp', '0.0.0.0', 21001, '1.2.3.4', 443)",
+    )
+    .bind(app.admin_user_id)
+    .execute(&app.state.pool)
+    .await
+    .unwrap();
+    // 1h 前(窗口内)与 25h 前(窗口外)各一桶
+    sqlx::query(
+        "INSERT INTO rule_stats (rule_id, bucket_at, rx_bytes, tx_bytes) \
+         VALUES (1, datetime('now','-1 hour'), 100, 200), (1, datetime('now','-25 hours'), 999, 999)",
+    )
+    .execute(&app.state.pool)
+    .await
+    .unwrap();
+
+    let req = auth_req(Method::GET, "/api/system/overview", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["rx_bytes_24h"], 100, "{body}");
+    assert_eq!(body["tx_bytes_24h"], 200, "{body}");
+}

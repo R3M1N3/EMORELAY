@@ -61,12 +61,28 @@ impl From<Node> for NodeView {
     }
 }
 
+impl NodeView {
+    /// 普通用户视角:保留自助建规则所需(身份/在线状态/端口池/入口 IP),
+    /// 抹掉运维指标与控制面信息。JSON 形状不变,前端类型零分叉。
+    fn sanitize_for_user(mut self) -> Self {
+        self.grpc_endpoint = String::new();
+        self.agent_version = String::new();
+        self.cpu_usage = 0.0;
+        self.memory_usage = 0.0;
+        self.load_average = 0.0;
+        self.rx_bytes_total = 0;
+        self.tx_bytes_total = 0;
+        self
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub page: Option<i64>,
     pub page_size: Option<i64>,
     pub sort: Option<String>,
     pub order: Option<String>,
+    pub search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -144,7 +160,7 @@ pub async fn list(
     auth: AuthUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<NodeListResponse>> {
-    auth.require_admin()?;
+    // 放行普通用户(自助建规则需要节点列表),但响应经 sanitize_for_user 净化。
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = page.saturating_sub(1).saturating_mul(page_size);
@@ -161,12 +177,19 @@ pub async fn list(
         "desc" => true,
         _ => return Err(ApiError::BadRequest("排序方向必须是 asc 或 desc".into())),
     };
+    let search = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-    let nodes = Node::list_paged(&state.pool, sort_field, order_desc, page_size, offset).await?;
-    let total = Node::count(&state.pool).await?;
+    let nodes =
+        Node::list_paged(&state.pool, sort_field, order_desc, page_size, offset, search).await?;
+    let total = Node::count(&state.pool, search).await?;
 
+    let sanitize = !auth.is_admin();
     Ok(Json(NodeListResponse {
-        items: nodes.into_iter().map(Into::into).collect(),
+        items: nodes
+            .into_iter()
+            .map(NodeView::from)
+            .map(|v| if sanitize { v.sanitize_for_user() } else { v })
+            .collect(),
         total,
         page,
         page_size,
@@ -178,11 +201,16 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<NodeView>> {
-    auth.require_admin()?;
+    // 放行普通用户,净化同 list。
     let node = Node::find_by_id(&state.pool, id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    Ok(Json(node.into()))
+    let view = NodeView::from(node);
+    Ok(Json(if auth.is_admin() {
+        view
+    } else {
+        view.sanitize_for_user()
+    }))
 }
 
 pub async fn create(

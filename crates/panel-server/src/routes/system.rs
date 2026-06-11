@@ -22,6 +22,10 @@ pub struct SystemOverview {
     pub enabled_rules: i64,
     pub rx_bytes_total: i64,
     pub tx_bytes_total: i64,
+    /// 过去 24h 规则转发流量(rule_stats 聚合)。注意与 nodes 表的网卡口径区分:
+    /// Dashboard 24h 卡片用这两个字段,不再混用节点系统流量。
+    pub rx_bytes_24h: i64,
+    pub tx_bytes_24h: i64,
 }
 
 pub async fn overview(
@@ -48,6 +52,13 @@ pub async fn overview(
     .fetch_one(&state.pool)
     .await?;
 
+    let (rx_24h, tx_24h): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(rx_bytes), 0), COALESCE(SUM(tx_bytes), 0) \
+         FROM rule_stats WHERE bucket_at >= datetime('now', '-1 day')",
+    )
+    .fetch_one(&state.pool)
+    .await?;
+
     Ok(Json(SystemOverview {
         total_nodes,
         online_nodes,
@@ -55,6 +66,8 @@ pub async fn overview(
         enabled_rules,
         rx_bytes_total: rx,
         tx_bytes_total: tx,
+        rx_bytes_24h: rx_24h,
+        tx_bytes_24h: tx_24h,
     }))
 }
 

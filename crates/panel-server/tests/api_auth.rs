@@ -17,6 +17,21 @@ async fn login_then_me_returns_admin() {
 }
 
 #[tokio::test]
+async fn me_returns_quota_and_rule_aggregates() {
+    let app = make_app().await.unwrap();
+    let req = auth_req(Method::GET, "/api/auth/me", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    // P4 扩展字段:配额/用量/规则聚合(用户自助概览数据源)。
+    assert!(body.get("expires_at").is_some(), "{body}");
+    assert!(body.get("traffic_limit_bytes_30d").is_some(), "{body}");
+    assert_eq!(body["period_used_bytes_cached"], 0);
+    assert!(body.get("period_used_calculated_at").is_some(), "{body}");
+    assert_eq!(body["rule_count"], 0);
+    assert_eq!(body["total_traffic_bytes"], 0);
+}
+
+#[tokio::test]
 async fn login_with_bad_password_returns_401() {
     let app = make_app().await.unwrap();
     let req = Request::post("/api/auth/login")

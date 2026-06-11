@@ -66,7 +66,7 @@ impl Rule {
         }
         if search.is_some() {
             where_parts.push(
-                "(name LIKE ? OR target_host LIKE ? OR CAST(listen_port AS TEXT) = ?)".into(),
+                "(name LIKE ? ESCAPE '\\' OR target_host LIKE ? ESCAPE '\\' OR CAST(listen_port AS TEXT) = ?)".into(),
             );
         }
         if restrict_user_id.is_some() {
@@ -84,7 +84,8 @@ impl Rule {
             q = q.bind(p);
         }
         if let Some(s) = search {
-            let like = format!("%{s}%");
+            // 转义 \ % _ 防通配符污染;裸 s 那个 bind 是端口精确匹配,不转义。
+            let like = format!("%{}%", crate::util::escape_like(s));
             q = q.bind(like.clone()).bind(like).bind(s.to_string());
         }
         if let Some(uid) = restrict_user_id {
@@ -109,7 +110,7 @@ impl Rule {
         }
         if search.is_some() {
             where_parts.push(
-                "(name LIKE ? OR target_host LIKE ? OR CAST(listen_port AS TEXT) = ?)".into(),
+                "(name LIKE ? ESCAPE '\\' OR target_host LIKE ? ESCAPE '\\' OR CAST(listen_port AS TEXT) = ?)".into(),
             );
         }
         if restrict_user_id.is_some() {
@@ -127,7 +128,8 @@ impl Rule {
             q = q.bind(p);
         }
         if let Some(s) = search {
-            let like = format!("%{s}%");
+            // 转义 \ % _ 防通配符污染;裸 s 那个 bind 是端口精确匹配,不转义。
+            let like = format!("%{}%", crate::util::escape_like(s));
             q = q.bind(like.clone()).bind(like).bind(s.to_string());
         }
         if let Some(uid) = restrict_user_id {
