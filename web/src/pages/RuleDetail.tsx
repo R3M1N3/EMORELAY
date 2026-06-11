@@ -11,6 +11,7 @@ import {
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
 import { StatusDot } from '../lib/ui'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 interface State {
   rule: RuleView | null
@@ -30,6 +31,9 @@ export default function RuleDetail() {
     loading: true,
     error: null,
   })
+  // 30s 静默刷新流量/状态/操作记录。
+  const [refreshTick, setRefreshTick] = useState(0)
+  useAutoRefresh(() => setRefreshTick((n) => n + 1), 30_000)
 
   useEffect(() => {
     let cancelled = false
@@ -49,12 +53,17 @@ export default function RuleDetail() {
         if (cancelled) return
         const msg =
           e instanceof ApiError ? e.message : e instanceof Error ? e.message : '加载失败'
-        setState({ rule: null, stats: null, logs: [], loading: false, error: msg })
+        // 静默刷新失败不打扰:同一规则已有数据则保留;首载或切换到新 id 失败才落错误态。
+        setState((prev) =>
+          prev.rule && prev.rule.id === ruleId
+            ? prev
+            : { rule: null, stats: null, logs: [], loading: false, error: msg },
+        )
       })
     return () => {
       cancelled = true
     }
-  }, [ruleId])
+  }, [ruleId, refreshTick])
 
   if (state.loading) return <div className="text-zinc-400">加载中…</div>
   if (state.error)
@@ -98,9 +107,10 @@ export default function RuleDetail() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <SeriesCard
-          title="过去 ~2.4 小时上下行 (bytes / 分钟)"
+          title={`上下行时序（最近 ${seriesAsc.length} 个分钟桶）`}
           rx={rxValues}
           tx={txValues}
+          format={formatBytes}
         />
         <SeriesCard
           title="错误次数 (per 分钟)"
@@ -127,7 +137,9 @@ function ConfigCard({ rule }: { rule: RuleView }) {
         <Row k="协议" v={protoLabel} />
         <Row k="监听" v={`${rule.listen_ip}:${rule.listen_port}`} mono />
         <Row k="目标" v={`${rule.target_host}:${rule.target_port}`} mono />
+        <Row k="隧道" v={rule.tunnel_id != null ? `隧道 #${rule.tunnel_id}（流量经隧道链转发）` : '直连'} />
         <Row k="限速" v={rule.bandwidth_mbps != null ? `${rule.bandwidth_mbps} Mbps` : '不限'} />
+        <Row k="归属" v={rule.user_name ?? `用户 #${rule.user_id}`} />
         <Row k="创建" v={shortTime(rule.created_at)} />
         <Row k="更新" v={shortTime(rule.updated_at)} />
       </dl>
@@ -157,6 +169,7 @@ function SeriesCard({
   txLabel = 'tx',
   txColor = 'stroke-emerald-400',
   txFill,
+  format,
 }: {
   title: string
   rx: number[]
@@ -165,6 +178,8 @@ function SeriesCard({
   txLabel?: string
   txColor?: string
   txFill?: string
+  /** 峰值标注格式化(传 formatBytes 等);不传则不显示峰值 */
+  format?: (n: number) => string
 }) {
   return (
     <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
@@ -173,12 +188,12 @@ function SeriesCard({
         {rx.length > 0 && (
           <div>
             {rxLabel && <div className="text-[11px] text-zinc-500 mb-1">↓ {rxLabel}</div>}
-            <Sparkline values={rx} colorClass="stroke-indigo-400" fillClass="fill-indigo-500/10" />
+            <Sparkline values={rx} colorClass="stroke-indigo-400" fillClass="fill-indigo-500/10" formatValue={format} />
           </div>
         )}
         <div>
           {txLabel && <div className="text-[11px] text-zinc-500 mb-1">↑ {txLabel}</div>}
-          <Sparkline values={tx} colorClass={txColor} fillClass={txFill ?? 'fill-emerald-500/10'} />
+          <Sparkline values={tx} colorClass={txColor} fillClass={txFill ?? 'fill-emerald-500/10'} formatValue={format} />
         </div>
       </div>
     </section>

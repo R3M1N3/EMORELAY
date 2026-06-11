@@ -11,6 +11,7 @@ import {
 import { Sparkline } from '../components/Sparkline'
 import { Modal, StatusDot } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 interface State {
   node: NodeView | null
@@ -39,6 +40,9 @@ export default function NodeDetail() {
   const [confirmingRevoke, setConfirmingRevoke] = useState(false)
   const [revoking, setRevoking] = useState(false)
   const [revokedCreds, setRevokedCreds] = useState<RevokedCreds | null>(null)
+  // 30s 静默刷新心跳/资源/时序。
+  const [refreshTick, setRefreshTick] = useState(0)
+  useAutoRefresh(() => setRefreshTick((n) => n + 1), 30_000)
 
   function copyCred(value: string, label: string) {
     navigator.clipboard
@@ -83,12 +87,17 @@ export default function NodeDetail() {
         if (cancelled) return
         const msg =
           e instanceof ApiError ? e.message : e instanceof Error ? e.message : '加载失败'
-        setState({ node: null, stats: null, loading: false, error: msg })
+        // 静默刷新失败不打扰(凭据 Modal 可能开着,整页错误态会把一次性私钥顶掉)。
+        setState((prev) =>
+          prev.node && prev.node.id === nodeId
+            ? prev
+            : { node: null, stats: null, loading: false, error: msg },
+        )
       })
     return () => {
       cancelled = true
     }
-  }, [nodeId])
+  }, [nodeId, refreshTick])
 
   if (state.loading) return <div className="text-zinc-400">加载中…</div>
   if (state.error)

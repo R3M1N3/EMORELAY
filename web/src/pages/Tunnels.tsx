@@ -12,6 +12,7 @@ import {
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 interface ListState {
   items: TunnelView[]
@@ -35,16 +36,22 @@ export default function Tunnels() {
   }, [])
 
   // 事件回调里的 reload() 走最新 closure 值,与 Nodes.tsx 模式一致。
-  async function reload() {
-    setList((s) => ({ ...s, loading: true, error: null }))
+  async function reload(opts: { silent?: boolean } = {}) {
+    if (!opts.silent) setList((s) => ({ ...s, loading: true, error: null }))
     try {
       const r = await tunnels.list({ page, page_size: pageSize })
       setList({ items: r.items, total: r.total, loading: false, error: null })
     } catch (e: unknown) {
+      if (opts.silent) return
       const msg = e instanceof ApiError ? e.message : '加载失败'
       setList({ items: [], total: 0, loading: false, error: msg })
     }
   }
+
+  // 隧道 status 随 hop 心跳聚合变化,30s 静默刷新。
+  useAutoRefresh(() => {
+    void reload({ silent: true })
+  }, 30_000)
 
   useEffect(() => {
     let cancelled = false
@@ -220,10 +227,19 @@ export default function Tunnels() {
 
       {confirming && (
         <Modal title="删除隧道" onClose={() => !busy && setConfirming(null)} size="sm">
-          <p className="text-sm text-zinc-300">
-            将删除隧道 <span className="text-white font-medium">{confirming.name}</span>。
-            关联规则将失去隧道绑定，请确认。
-          </p>
+          {/* 评审 P2-4:原文案「关联规则将失去隧道绑定」与后端行为(直接拒绝)相反。
+              rules_count 是列表自带数据,直接预检,有引用时禁用确认按钮。 */}
+          {confirming.rules_count > 0 ? (
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+              隧道 <span className="font-medium">{confirming.name}</span> 仍被{' '}
+              {confirming.rules_count} 条规则关联，无法删除。请先在规则页删除关联规则。
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-300">
+              将删除隧道 <span className="text-white font-medium">{confirming.name}</span>。
+              链上各节点的中继任务将被撤销，请确认。
+            </p>
+          )}
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
@@ -236,7 +252,7 @@ export default function Tunnels() {
             <button
               type="button"
               onClick={() => doDelete(confirming)}
-              disabled={busy}
+              disabled={busy || confirming.rules_count > 0}
               className="rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
             >
               {busy ? '删除中…' : '确认删除'}

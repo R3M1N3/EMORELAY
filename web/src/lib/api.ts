@@ -585,9 +585,16 @@ export const tunnels = {
 
 // ============ 工具 ============
 
-// 后端 SQLite 返回 'YYYY-MM-DD HH:MM:SS' 或 ISO，UI 上截到分钟即可。
+// 后端时间均为 UTC('YYYY-MM-DD HH:MM:SS' 或 ISO,无时区标记)。
+// 解析为 UTC 后按浏览器本地时区显示到分钟——评审发现 UI 直显 UTC 导致
+// 「最后心跳 03:48」实际是本地 11:48 的困惑。解析失败回退原样截断。
 export function shortTime(iso: string): string {
-  return iso.replace('T', ' ').slice(0, 16)
+  const normalized = iso.includes('T') ? iso : iso.replace(' ', 'T')
+  const withZone = /Z|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : normalized + 'Z'
+  const d = new Date(withZone)
+  if (Number.isNaN(d.getTime())) return iso.replace('T', ' ').slice(0, 16)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 export function formatBytes(n: number): string {

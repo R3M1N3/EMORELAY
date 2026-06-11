@@ -1,5 +1,6 @@
 // 极简 SVG 折线图。给详情页时序卡片用,不引图表库。
-// 输入一段 values:按时间升序的样本(空数组 → 显示 placeholder)。
+// 输入一段 values:按时间升序的样本(少于 2 个样本 → 显示 placeholder,
+// 单点画不出趋势——评审发现单点被渲染成铺满时间轴的实心三角,误导性强)。
 
 interface Props {
   values: number[]
@@ -9,8 +10,10 @@ interface Props {
   colorClass?: string
   /** Tailwind fill 颜色类(填面积)。默认透明。 */
   fillClass?: string
-  /** 若不传则在数据为空时显示该占位文案。 */
+  /** 数据不足(样本 < 2)时显示的占位文案。 */
   emptyLabel?: string
+  /** 峰值标注格式化(如 formatBytes);不传则不显示峰值。 */
+  formatValue?: (n: number) => string
 }
 
 export function Sparkline({
@@ -20,14 +23,15 @@ export function Sparkline({
   colorClass = 'stroke-indigo-400',
   fillClass,
   emptyLabel = '尚无时序数据',
+  formatValue,
 }: Props) {
-  if (values.length === 0) {
+  if (values.length < 2) {
     return (
       <div
         className="flex items-center justify-center text-[11px] text-zinc-500"
         style={{ width, height }}
       >
-        {emptyLabel}
+        {values.length === 0 ? emptyLabel : '数据不足(再等一个统计周期)'}
       </div>
     )
   }
@@ -35,7 +39,7 @@ export function Sparkline({
   const max = Math.max(...values, 1)
   const min = Math.min(...values, 0)
   const range = Math.max(max - min, 1)
-  const step = values.length > 1 ? width / (values.length - 1) : 0
+  const step = width / (values.length - 1)
 
   const points = values.map((v, i) => {
     const x = i * step
@@ -52,15 +56,22 @@ export function Sparkline({
     : null
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      width={width}
-      height={height}
-      aria-hidden
-      className="overflow-visible"
-    >
-      {areaPath && <path d={areaPath} className={`${fillClass} stroke-none`} />}
-      <path d={path} fill="none" strokeWidth={1.5} className={colorClass} />
-    </svg>
+    <div className="relative inline-block" style={{ width, height }}>
+      {formatValue && (
+        <span className="absolute right-0 -top-0.5 text-[10px] text-zinc-500">
+          峰值 {formatValue(Math.max(...values))}
+        </span>
+      )}
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width={width}
+        height={height}
+        aria-hidden
+        className="overflow-visible"
+      >
+        {areaPath && <path d={areaPath} className={`${fillClass} stroke-none`} />}
+        <path d={path} fill="none" strokeWidth={1.5} className={colorClass} />
+      </svg>
+    </div>
   )
 }

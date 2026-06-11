@@ -11,6 +11,7 @@ import {
   ApiError,
 } from '../lib/api'
 import { useAuth } from '../lib/use-auth'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 import UserDashboard from './UserDashboard'
 
 type Last24h = { rx: number; tx: number } | 'unavailable' | null
@@ -34,6 +35,9 @@ function AdminDashboard() {
   const [data, setData] = useState<Overview>({ nodes: [], rules: [], loading: true, error: null })
   const [last24h, setLast24h] = useState<Last24h>(null)
   const [recentErrors, setRecentErrors] = useState<RecentErrors>('loading')
+  // 30s 静默刷新:节点在线状态/流量卡片不再要求手动 F5。
+  const [refreshTick, setRefreshTick] = useState(0)
+  useAutoRefresh(() => setRefreshTick((n) => n + 1), 30_000)
 
   useEffect(() => {
     let cancelled = false
@@ -64,12 +68,14 @@ function AdminDashboard() {
       .catch((e: unknown) => {
         if (cancelled) return
         const msg = e instanceof ApiError ? e.message : '加载失败'
-        setData({ nodes: [], rules: [], loading: false, error: msg })
+        // 静默刷新失败不打扰:已有数据则保留,等下个周期自愈;仅首载落错误态。
+        setData((prev) => (prev.loading ? { nodes: [], rules: [], loading: false, error: msg } : prev))
       })
     return () => {
       cancelled = true
     }
-  }, [])
+    // refreshTick 驱动周期重拉;首次挂载 tick=0 也执行。
+  }, [refreshTick])
 
   if (data.loading) return <div className="text-zinc-400">加载中…</div>
   if (data.error)

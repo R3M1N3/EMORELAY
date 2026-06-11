@@ -9,6 +9,7 @@ import {
 } from '../lib/api'
 import { StatusDot } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 interface State {
   detail: TunnelDetailView | null
@@ -41,6 +42,9 @@ export default function TunnelDetail() {
     error: null,
   })
   const [restarting, setRestarting] = useState(false)
+  // 15s 静默刷新 hop 心跳聚合状态(隧道 up/degraded/down 变化较快)。
+  const [refreshTick, setRefreshTick] = useState(0)
+  useAutoRefresh(() => setRefreshTick((n) => n + 1), 15_000)
 
   useEffect(() => {
     let cancelled = false
@@ -61,12 +65,17 @@ export default function TunnelDetail() {
         if (cancelled) return
         const msg =
           e instanceof ApiError ? e.message : e instanceof Error ? e.message : '加载失败'
-        setState({ detail: null, nodeNames: new Map(), loading: false, error: msg })
+        // 静默刷新失败不打扰:同一隧道已有数据则保留。
+        setState((prev) =>
+          prev.detail && prev.detail.id === tunnelId
+            ? prev
+            : { detail: null, nodeNames: new Map(), loading: false, error: msg },
+        )
       })
     return () => {
       cancelled = true
     }
-  }, [tunnelId])
+  }, [tunnelId, refreshTick])
 
   async function doRestart() {
     if (!Number.isFinite(tunnelId)) return

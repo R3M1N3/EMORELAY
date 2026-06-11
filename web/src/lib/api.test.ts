@@ -27,15 +27,28 @@ describe('formatBytes', () => {
 })
 
 describe('shortTime', () => {
-  it('replaces T with space and slices to YYYY-MM-DD HH:MM', () => {
-    expect(shortTime('2026-06-09T14:23:45Z')).toBe('2026-06-09 14:23')
+  // P4 起 shortTime 把后端 UTC 时间转为浏览器本地时区显示。
+  // 断言以「与 Date 本地字段一致」表达,不绑死测试机时区。
+  function expectedLocal(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+
+  it('converts explicit-UTC ISO strings to local time', () => {
+    const input = '2026-06-09T14:23:45Z'
+    expect(shortTime(input)).toBe(expectedLocal(new Date(input)))
   })
 
-  it('passes through SQLite-style strings without T', () => {
-    expect(shortTime('2026-06-09 14:23:45')).toBe('2026-06-09 14:23')
+  it('treats SQLite-style strings (no zone marker) as UTC then localizes', () => {
+    const input = '2026-06-09 14:23:45'
+    expect(shortTime(input)).toBe(expectedLocal(new Date('2026-06-09T14:23:45Z')))
   })
 
-  it('truncates strings shorter than 16 chars to whatever fits', () => {
-    expect(shortTime('2026-06-09')).toBe('2026-06-09')
+  it('parses date-only strings as UTC midnight', () => {
+    expect(shortTime('2026-06-09')).toBe(expectedLocal(new Date('2026-06-09T00:00:00Z')))
+  })
+
+  it('falls back to raw truncation for unparseable strings', () => {
+    expect(shortTime('not-a-date')).toBe('not-a-date')
   })
 })

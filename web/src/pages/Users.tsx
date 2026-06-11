@@ -33,7 +33,7 @@ export default function Users() {
   async function reload() {
     setList((s) => ({ ...s, loading: true, error: null }))
     try {
-      const r = await users.list({ page, page_size: pageSize })
+      const r = await users.list({ page, page_size: pageSize, search: search.trim() || undefined })
       setList({ items: r.items, total: r.total, loading: false, error: null })
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '加载失败'
@@ -41,10 +41,11 @@ export default function Users() {
     }
   }
 
+  // 请求体带当前 search:翻页保留筛选;第 2+ 页搜索经 setPage(1) 由本 effect 单请求完成。
   useEffect(() => {
     let cancelled = false
     users
-      .list({ page, page_size: pageSize })
+      .list({ page, page_size: pageSize, search: search.trim() || undefined })
       .then((r) => {
         if (!cancelled) setList({ items: r.items, total: r.total, loading: false, error: null })
       })
@@ -56,6 +57,8 @@ export default function Users() {
     return () => {
       cancelled = true
     }
+    // search 不进 deps:打字不请求,提交时显式触发。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize])
 
   async function doDelete(user: UserDetail) {
@@ -94,80 +97,79 @@ export default function Users() {
         </div>
       )}
 
-      {(() => {
-        const needle = search.trim().toLowerCase()
-        const filtered = needle
-          ? list.items.filter((u) => u.username.toLowerCase().includes(needle))
-          : list.items
-        return (
-          <>
-            <div className="flex items-center gap-3 flex-wrap">
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索当前页 (用户名)"
-                className={`${fieldInputCls} max-w-sm`}
-              />
-              {needle && (
-                <span className="text-xs text-zinc-500">
-                  匹配 {filtered.length} / {list.items.length} 条 (仅当前页)
-                </span>
-              )}
-            </div>
+      {/* 服务端搜索:替换原「搜索当前页」本地过滤。 */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          // 第 2+ 页搜索由 setPage(1) 触发 effect 单请求;第 1 页直接 reload。
+          if (page !== 1) setPage(1)
+          else void reload()
+        }}
+        className="flex items-center gap-2 flex-wrap"
+      >
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索用户名"
+          className={`${fieldInputCls} max-w-sm`}
+        />
+        <button type="submit" className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm">
+          搜索
+        </button>
+      </form>
 
-            <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
-              {list.loading ? (
-                <div className="p-6 text-sm text-zinc-400">加载中…</div>
-              ) : list.items.length === 0 ? (
-                <div className="p-6 text-sm text-zinc-500">尚无用户。</div>
-              ) : filtered.length === 0 ? (
-                <div className="p-6 text-sm text-zinc-500">没有匹配的用户。</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
-                      <tr>
-                        <th className="px-4 py-2.5 text-left font-medium">用户名</th>
-                        <th className="px-4 py-2.5 text-left font-medium">角色</th>
-                        <th className="px-4 py-2.5 text-right font-medium">规则数</th>
-                        <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
-                        <th className="px-4 py-2.5 text-left font-medium">到期</th>
-                        <th className="px-4 py-2.5 text-left font-medium">30d 用量</th>
-                        <th className="px-4 py-2.5 text-left font-medium">创建于</th>
-                        <th className="px-4 py-2.5 text-left font-medium">更新于</th>
-                        <th className="px-4 py-2.5 text-right font-medium">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {filtered.map((u) => (
-                        <UserRow
-                          key={u.id}
-                          user={u}
-                          onEdit={() => setEditing({ mode: 'edit', user: u })}
-                          onDelete={() => setConfirming(u)}
-                        />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {!list.loading && list.items.length > 0 && (
-                <Pagination
-                  page={page}
-                  pageSize={pageSize}
-                  total={list.total}
-                  onChangePage={setPage}
-                  onChangePageSize={(n) => {
-                    setPageSize(n)
-                    setPage(1)
-                  }}
-                />
-              )}
-            </section>
-          </>
-        )
-      })()}
+      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+        {list.loading ? (
+          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+        ) : list.items.length === 0 ? (
+          <div className="p-6 text-sm text-zinc-500">
+            {search.trim() ? '没有匹配的用户。' : '尚无用户。'}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+                <tr>
+                  <th className="px-4 py-2.5 text-left font-medium">用户名</th>
+                  <th className="px-4 py-2.5 text-left font-medium">角色</th>
+                  <th className="px-4 py-2.5 text-right font-medium">规则数</th>
+                  <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
+                  <th className="px-4 py-2.5 text-left font-medium">到期</th>
+                  <th className="px-4 py-2.5 text-left font-medium" title="约每 5 分钟由后台刷新">
+                    30d 用量
+                  </th>
+                  <th className="px-4 py-2.5 text-left font-medium">创建于</th>
+                  <th className="px-4 py-2.5 text-left font-medium">更新于</th>
+                  <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {list.items.map((u) => (
+                  <UserRow
+                    key={u.id}
+                    user={u}
+                    onEdit={() => setEditing({ mode: 'edit', user: u })}
+                    onDelete={() => setConfirming(u)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!list.loading && list.items.length > 0 && (
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={list.total}
+            onChangePage={setPage}
+            onChangePageSize={(n) => {
+              setPageSize(n)
+              setPage(1)
+            }}
+          />
+        )}
+      </section>
 
       {editing && (
         <Modal
@@ -188,10 +190,17 @@ export default function Users() {
 
       {confirming && (
         <Modal title="删除用户" onClose={() => !busy && setConfirming(null)} size="sm">
-          <p className="text-sm text-zinc-300">
-            将删除用户 <span className="text-white font-medium">{confirming.username}</span>。
-            该用户名下的规则不会被自动清理,请先在「规则」页处理。
-          </p>
+          {confirming.rule_count > 0 ? (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              用户 <span className="font-medium">{confirming.username}</span> 名下仍有{' '}
+              {confirming.rule_count} 条规则。删除用户不会清理这些规则，建议先在「规则」页处理。
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-300">
+              将删除用户 <span className="text-white font-medium">{confirming.username}</span>
+              ，该账号将无法再登录，请确认。
+            </p>
+          )}
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
@@ -251,7 +260,14 @@ function UserRow({
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300 whitespace-nowrap">
         {user.expires_at ? shortTime(user.expires_at) : '不限'}
       </td>
-      <td className="px-4 py-3 align-top min-w-[10rem]">
+      <td
+        className="px-4 py-3 align-top min-w-[10rem]"
+        title={
+          user.period_used_calculated_at
+            ? `计算于 ${shortTime(user.period_used_calculated_at)},约每 5 分钟更新`
+            : '尚未计算(后台每 5 分钟刷新一次)'
+        }
+      >
         <QuotaBar used={user.period_used_bytes_cached} limit={user.traffic_limit_bytes_30d} />
       </td>
       <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.created_at)}</td>
@@ -302,6 +318,23 @@ function QuotaBar({ used, limit }: { used: number; limit: number | null }) {
   )
 }
 
+// 评审 P2-11:后端存 UTC,datetime-local 是本地时区——此前 UTC 字符串直塞输入框,
+// 用户得自己心算时区。两个 helper 负责双向转换。
+/** UTC 'YYYY-MM-DD HH:MM:SS' → datetime-local 本地值 'YYYY-MM-DDTHH:MM' */
+function utcToLocalInput(utc: string): string {
+  const d = new Date(utc.replace(' ', 'T') + 'Z')
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** datetime-local 本地值 → 后端要求的 UTC 'YYYY-MM-DDTHH:MM' */
+function localInputToUtc(local: string): string {
+  const d = new Date(local)
+  if (Number.isNaN(d.getTime())) return local
+  return d.toISOString().slice(0, 16)
+}
+
 interface UserFormState {
   username: string
   password: string
@@ -325,7 +358,8 @@ function UserForm({
     username: initial?.username ?? '',
     password: '',
     role: initial?.role ?? 'user',
-    expires_at: initial?.expires_at ? initial.expires_at.replace(' ', 'T').slice(0, 16) : '',
+    // 回填:后端 UTC → 本地时区输入值。
+    expires_at: initial?.expires_at ? utcToLocalInput(initial.expires_at) : '',
     traffic_limit_gb: bytesToGbString(initial?.traffic_limit_bytes_30d ?? null),
   })
   const [submitting, setSubmitting] = useState(false)
@@ -357,7 +391,7 @@ function UserForm({
           username: form.username.trim(),
           password: form.password,
           role: form.role,
-          expires_at: form.expires_at || null,
+          expires_at: form.expires_at ? localInputToUtc(form.expires_at) : null,
           traffic_limit_bytes_30d: limitBytes,
         }
         await users.create(payload)
@@ -374,10 +408,11 @@ function UserForm({
         }
         if (form.role !== initial.role) payload.role = form.role
         const initialExpiresLocal = initial.expires_at
-          ? initial.expires_at.replace(' ', 'T').slice(0, 16)
+          ? utcToLocalInput(initial.expires_at)
           : ''
         if (form.expires_at !== initialExpiresLocal) {
-          payload.expires_at = form.expires_at // '' = 清除
+          // '' = 清除;非空转回 UTC 提交。
+          payload.expires_at = form.expires_at ? localInputToUtc(form.expires_at) : ''
         }
         const initialLimit = initial.traffic_limit_bytes_30d
         if ((limitBytes ?? 0) !== (initialLimit ?? 0)) {
@@ -449,7 +484,7 @@ function UserForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>到期时间 (UTC)</label>
+          <label className={fieldLabelCls}>到期时间（本地时区）</label>
           <input
             type="datetime-local"
             value={form.expires_at}

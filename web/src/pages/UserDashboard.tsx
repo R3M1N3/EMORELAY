@@ -10,6 +10,7 @@ import {
 } from '../lib/api'
 import { Stat } from './Dashboard'
 import { StatusDot } from '../lib/ui'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 // 普通用户自助概览:自己的规则/用量/配额/到期。数据源 = me(扩展) + rules.list(后端已按 owner 过滤)。
 export default function UserDashboard() {
@@ -24,11 +25,18 @@ export default function UserDashboard() {
         setMyRules(r.items)
         setError(null)
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : '加载失败'))
+      .catch((e: unknown) =>
+        // 静默刷新失败不打扰:已有数据则保留,仅首载落错误态。
+        setMe((prev) => {
+          if (prev == null) setError(e instanceof Error ? e.message : '加载失败')
+          return prev
+        }),
+      )
   }, [])
   useEffect(() => {
     load()
   }, [load])
+  useAutoRefresh(load, 30_000)
 
   if (error)
     return (

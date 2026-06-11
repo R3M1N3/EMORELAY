@@ -5,6 +5,7 @@ import {
   formatBytes,
   nodes,
   renderInstallCommand,
+  rules,
   shortTime,
   system,
   type CreateNodeRequest,
@@ -14,6 +15,7 @@ import {
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; node: NodeView } | null
 
@@ -45,27 +47,32 @@ export default function Nodes() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [search, setSearch] = useState('')
+  // 删除预检:打开确认框时查询该节点的活跃规则数;null = 预检中/失败(交给后端兜底)。
+  const [deleteRefCount, setDeleteRefCount] = useState<number | null>(null)
 
   useEffect(() => {
     system.getSettings().then((r) => setSettings(r.settings)).catch(() => {})
   }, [])
 
-  async function reload() {
-    setList((s) => ({ ...s, loading: true, error: null }))
+  // silent=true 用于自动刷新:不置 loading 态,避免表格周期性闪烁。
+  async function reload(opts: { silent?: boolean } = {}) {
+    if (!opts.silent) setList((s) => ({ ...s, loading: true, error: null }))
     try {
-      const r = await nodes.list({ page, page_size: pageSize })
+      const r = await nodes.list({ page, page_size: pageSize, search: search.trim() || undefined })
       setList({ items: r.items, total: r.total, loading: false, error: null })
     } catch (e) {
+      if (opts.silent) return // 静默刷新失败不打扰,下个周期重试
       const msg = e instanceof ApiError ? e.message : '加载失败'
       setList({ items: [], total: 0, loading: false, error: msg })
     }
   }
 
-  // page / pageSize 变化均触发拉取;事件回调里的 reload() 走最新 closure 值,不在 effect 里。
+  // page / pageSize 变化均触发拉取;请求体带当前 search(翻页保留筛选,
+  // 第 2+ 页搜索经 setPage(1) 由本 effect 单请求完成,无并发竞态)。
   useEffect(() => {
     let cancelled = false
     nodes
-      .list({ page, page_size: pageSize })
+      .list({ page, page_size: pageSize, search: search.trim() || undefined })
       .then((r) => {
         if (!cancelled) setList({ items: r.items, total: r.total, loading: false, error: null })
       })
@@ -77,7 +84,37 @@ export default function Nodes() {
     return () => {
       cancelled = true
     }
+    // search 不进 deps:打字不请求,回车/点搜索按钮显式 reload。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize])
+
+  // 评审 P2-1:节点上线/掉线此前必须手动刷新才能看到。15s 静默轮询。
+  useAutoRefresh(() => {
+    void reload({ silent: true })
+  }, 15_000)
+
+  // 删除预检:用规则列表 total 判断引用数(page_size=1 最小开销)。
+  // 状态重置在事件回调(openConfirm/关闭)做,effect 只负责拉取。
+  useEffect(() => {
+    if (!confirming) return
+    let cancelled = false
+    rules
+      .list({ node_id: confirming.id, page_size: 1 })
+      .then((r) => {
+        if (!cancelled) setDeleteRefCount(r.total)
+      })
+      .catch(() => {
+        if (!cancelled) setDeleteRefCount(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [confirming])
+
+  function openDeleteConfirm(n: NodeView) {
+    setDeleteRefCount(null)
+    setConfirming(n)
+  }
 
   function copyCred(value: string, label: string) {
     navigator.clipboard
@@ -123,84 +160,79 @@ export default function Nodes() {
         </div>
       )}
 
-      {(() => {
-        const needle = search.trim().toLowerCase()
-        const filtered = needle
-          ? list.items.filter((n) =>
-              [n.name, n.region, n.public_ip, n.grpc_endpoint]
-                .some((s) => s.toLowerCase().includes(needle)),
-            )
-          : list.items
-        return (
-          <>
-            <div className="flex items-center gap-3 flex-wrap">
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索当前页 (名称 / 区域 / IP / gRPC)"
-                className={`${fieldInputCls} max-w-sm`}
-              />
-              {needle && (
-                <span className="text-xs text-zinc-500">
-                  匹配 {filtered.length} / {list.items.length} 条 (仅当前页)
-                </span>
-              )}
-            </div>
+      {/* 服务端搜索:替换原「搜索当前页」本地过滤(数据过百后会搜不到明明存在的节点)。 */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          // 第 2+ 页搜索:setPage(1) 触发上方 effect(带 search)单请求;
+          // 已在第 1 页则显式 reload。两条路径互斥,无并发竞态。
+          if (page !== 1) setPage(1)
+          else void reload()
+        }}
+        className="flex items-center gap-2 flex-wrap"
+      >
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索名称 / 区域 / IP"
+          className={`${fieldInputCls} max-w-sm`}
+        />
+        <button type="submit" className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm">
+          搜索
+        </button>
+      </form>
 
-            <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
-              {list.loading ? (
-                <div className="p-6 text-sm text-zinc-400">加载中…</div>
-              ) : list.items.length === 0 ? (
-                <div className="p-6 text-sm text-zinc-500">
-                  尚无节点。点击右上角「新增节点」开始。
-                </div>
-              ) : filtered.length === 0 ? (
-                <div className="p-6 text-sm text-zinc-500">没有匹配的节点。</div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
-                        <tr>
-                          <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                          <th className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
-                          <th className="px-4 py-2.5 text-left font-medium">gRPC</th>
-                          <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                          <th className="px-4 py-2.5 text-left font-medium">资源</th>
-                          <th className="px-4 py-2.5 text-left font-medium">流量</th>
-                          <th className="px-4 py-2.5 text-left font-medium">端口池</th>
-                          <th className="px-4 py-2.5 text-right font-medium">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {filtered.map((n) => (
-                          <NodeRow
-                            key={n.id}
-                            node={n}
-                            onEdit={() => setEditing({ mode: 'edit', node: n })}
-                            onDelete={() => setConfirming(n)}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <Pagination
-                    page={page}
-                    pageSize={pageSize}
-                    total={list.total}
-                    onChangePage={setPage}
-                    onChangePageSize={(n) => {
-                      setPageSize(n)
-                      setPage(1)
-                    }}
-                  />
-                </>
-              )}
-            </section>
+      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+        {list.loading ? (
+          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+        ) : list.items.length === 0 ? (
+          <div className="p-6 text-sm text-zinc-500">
+            {search.trim() ? '没有匹配的节点。' : '尚无节点。点击右上角「新增节点」开始。'}
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-medium">名称</th>
+                    <th className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
+                    <th className="px-4 py-2.5 text-left font-medium">gRPC</th>
+                    <th className="px-4 py-2.5 text-left font-medium">状态</th>
+                    <th className="px-4 py-2.5 text-left font-medium">资源</th>
+                    <th className="px-4 py-2.5 text-left font-medium" title="节点网卡总流量(含系统流量),非规则转发流量">
+                      网卡流量
+                    </th>
+                    <th className="px-4 py-2.5 text-left font-medium">端口池</th>
+                    <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {list.items.map((n) => (
+                    <NodeRow
+                      key={n.id}
+                      node={n}
+                      onEdit={() => setEditing({ mode: 'edit', node: n })}
+                      onDelete={() => openDeleteConfirm(n)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={list.total}
+              onChangePage={setPage}
+              onChangePageSize={(n) => {
+                setPageSize(n)
+                setPage(1)
+              }}
+            />
           </>
-        )
-      })()}
+        )}
+      </section>
 
       {editing && (
         <Modal
@@ -210,6 +242,7 @@ export default function Nodes() {
           <NodeForm
             mode={editing.mode}
             initial={editing.mode === 'edit' ? editing.node : undefined}
+            agentEndpointConfigured={Boolean(settings.agent_control_endpoint)}
             onCancel={() => setEditing(null)}
             onSuccess={async (createdToken) => {
               setEditing(null)
@@ -222,10 +255,18 @@ export default function Nodes() {
 
       {confirming && (
         <Modal title="删除节点" onClose={() => !busy && setConfirming(null)} size="sm">
-          <p className="text-sm text-zinc-300">
-            将删除节点 <span className="text-white font-medium">{confirming.name}</span>。
-            该节点上的规则将无法继续下发，请确认。
-          </p>
+          {/* 评审 P2-4:原文案暗示可删,点确认才被后端拒。预检后直接说清楚。 */}
+          {deleteRefCount != null && deleteRefCount > 0 ? (
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+              节点 <span className="font-medium">{confirming.name}</span> 上仍有{' '}
+              {deleteRefCount} 条规则，无法删除。请先在规则页删除或迁移这些规则。
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-300">
+              将删除节点 <span className="text-white font-medium">{confirming.name}</span>。
+              删除后该节点不再出现在面板中，请确认。
+            </p>
+          )}
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
@@ -238,7 +279,7 @@ export default function Nodes() {
             <button
               type="button"
               onClick={() => doDelete(confirming)}
-              disabled={busy}
+              disabled={busy || (deleteRefCount != null && deleteRefCount > 0)}
               className="rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
             >
               {busy ? '删除中…' : '确认删除'}
@@ -258,9 +299,12 @@ export default function Nodes() {
           {(() => {
             const endpoint = settings.agent_control_endpoint || ''
             if (!endpoint) {
+              // 评审 P2-3:原文案说「再回到这里」,但本 Modal 关闭即永久消失(凭据一次性),
+              // 是条死路。注意:轮换凭据只重签证书不补发 token,不能承诺「重新生成安装命令」。
               return (
                 <p className="mt-3 text-[11px] text-amber-300">
-                  提示：请先到「设置」配 Agent 上报端点，再回到这里复制安装命令。
+                  未配置 Agent 上报端点，无法生成一键安装命令，本节点请用下方凭据手动部署。
+                  到「设置」页配置端点后，之后新建的节点会自动附带安装命令。
                 </p>
               )
             }
@@ -437,11 +481,14 @@ interface NodeFormState {
 function NodeForm({
   mode,
   initial,
+  agentEndpointConfigured = true,
   onCancel,
   onSuccess,
 }: {
   mode: 'create' | 'edit'
   initial?: NodeView
+  /** 设置页 agent_control_endpoint 是否已配置;未配则创建前预警(安装命令将不可用)。 */
+  agentEndpointConfigured?: boolean
   onCancel: () => void
   onSuccess: (createdCreds: CreatedCreds | null) => void | Promise<void>
 }) {
@@ -522,6 +569,12 @@ function NodeForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
+      {mode === 'create' && !agentEndpointConfigured && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          尚未配置 Agent 上报端点，创建后将无法生成一键安装命令（凭据仍可手动保存）。
+          建议先到「设置」页配置后再创建节点。
+        </p>
+      )}
       <div>
         <label className={fieldLabelCls}>名称 *</label>
         <input

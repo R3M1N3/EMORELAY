@@ -22,6 +22,7 @@ import {
 } from '../lib/api'
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
+import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; rule: RuleView } | null
 
@@ -65,8 +66,8 @@ export default function Rules() {
 
   const nodesById = useMemo(() => new Map(nodeList.map((n) => [n.id, n])), [nodeList])
 
-  async function reload() {
-    setList((s) => ({ ...s, loading: true, error: null }))
+  async function reload(opts: { silent?: boolean } = {}) {
+    if (!opts.silent) setList((s) => ({ ...s, loading: true, error: null }))
     try {
       const r = await rules.list({
         page,
@@ -77,10 +78,16 @@ export default function Rules() {
       })
       setList({ items: r.items, total: r.total, loading: false, error: null })
     } catch (e) {
+      if (opts.silent) return
       const msg = e instanceof ApiError ? e.message : '加载失败'
       setList({ items: [], total: 0, loading: false, error: msg })
     }
   }
+
+  // 流量/连接数列随 Agent 上报变化,30s 静默刷新(保留当前筛选与分页)。
+  useAutoRefresh(() => {
+    void reload({ silent: true })
+  }, 30_000)
 
   // 节点列表只加载一次（创建/编辑表单与节点筛选下拉都要用）。
   useEffect(() => {
@@ -745,11 +752,9 @@ export function RuleForm({
   }
 
   // 选隧道时自动填入口节点并锁定节点下拉。
+  // 取消选择时的 entryNodeId 重置在 select onChange 回调里做(effect 内同步 setState 触发级联渲染)。
   useEffect(() => {
-    if (!form.tunnel_id) {
-      setEntryNodeId(null)
-      return
-    }
+    if (!form.tunnel_id) return
     let cancelled = false
     tunnels
       .get(Number(form.tunnel_id))
@@ -889,7 +894,10 @@ export function RuleForm({
           <select
             id="rule-tunnel"
             value={form.tunnel_id}
-            onChange={(e) => set('tunnel_id', e.target.value)}
+            onChange={(e) => {
+              set('tunnel_id', e.target.value)
+              if (!e.target.value) setEntryNodeId(null)
+            }}
             disabled={mode === 'edit'}
             className={fieldInputCls}
           >
