@@ -117,10 +117,10 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET    | `/api/tunnels` | 列表,每项含 `hops_count` |
+| GET    | `/api/tunnels` | 列表,每项含 `hops_count` + `rules_count` |
 | POST   | `/api/tunnels` | 创建 `{ name, transport, node_ids: [...] }` |
-| GET    | `/api/tunnels/{id}` | 详情,含 hops 明细(含 `inter_port`) |
-| PATCH  | `/api/tunnels/{id}` | 仅改 `name` |
+| GET    | `/api/tunnels/{id}` | 详情,含 hops 明细(含 `inter_port`) + `rules_count` + `rules[]` |
+| PATCH  | `/api/tunnels/{id}` | 仅改 `name`,响应含 `rules_count` |
 | DELETE | `/api/tunnels/{id}` | 软删,被活跃规则引用时拒绝(400) |
 | POST   | `/api/tunnels/{id}/restart` | 重签凭据 + per-hop 重启,返回 `dispatched` |
 | GET    | `/api/tunnels/{id}/status` | 实时聚合 hop 心跳并回写,返回 `{ id, status }` |
@@ -354,10 +354,10 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET    | `/api/tunnels` | 列表,每项含 `hops_count`(链路节点数) |
+| GET    | `/api/tunnels` | 列表,每项含 `hops_count`(链路节点数)+ `rules_count`(关联规则数) |
 | POST   | `/api/tunnels` | 创建 `{ name, transport, node_ids: [...] }` |
-| GET    | `/api/tunnels/{id}` | 详情,含 hops 明细(`ordinal` / `node_id` / `inter_port`) |
-| PATCH  | `/api/tunnels/{id}` | 仅可改 `name`(链路拓扑不可后改) |
+| GET    | `/api/tunnels/{id}` | 详情,含 hops 明细(`ordinal` / `node_id` / `inter_port`)+ `rules_count` + `rules[]` |
+| PATCH  | `/api/tunnels/{id}` | 仅可改 `name`(链路拓扑不可后改),响应含 `rules_count` |
 | DELETE | `/api/tunnels/{id}` | 软删,被活跃规则引用时拒绝(400) |
 | POST   | `/api/tunnels/{id}/restart` | 重签下发 hop 凭据 + 对隧道全部活跃规则 per-hop 重启,返回 `dispatched` |
 | GET    | `/api/tunnels/{id}/status` | 实时聚合 hop 心跳,刷新并**回写** `tunnels.status`,返回 `{ id, status }` |
@@ -388,6 +388,8 @@ P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自
 - `tunnels.status` — `up` / `degraded` / `down` / `unknown`。由 hop 心跳聚合得出(最近 30s 内收到心跳 = 该 hop 存活):全部存活 → `up`;部分存活 → `degraded`;全部超窗 → `down`;无 hop → `unknown`(防御值)。`GET /api/tunnels/{id}` 与 `GET /api/tunnels/{id}/status` 均**实时计算并写回**存储值——即这两个 GET 端点有写副作用;`GET /api/tunnels`(列表)返回上次刷新写入的存储值,避免分页 N 次聚合。
 - `tunnel_hops.ordinal` — 链路序号,`0` = 入口。
 - `tunnel_hops.inter_port` — 该 hop 监听的链路内部端口;入口(ordinal 0)为 `null`。
+- `rules_count` — 挂在该隧道下的活跃转发规则数(列表 TunnelView + 详情 TunnelDetail + PATCH 响应均含此字段)。
+- `rules` — 仅 `GET /api/tunnels/{id}`（TunnelDetail）含此字段,为该隧道关联规则简要列表,每项结构：`{ id, name, protocol, listen_port, enabled }`。
 
 ### 规则关联隧道
 

@@ -592,5 +592,18 @@ Agent 多跳隧道转发层 —— transport trait + TCP/TLS/WSS + TunnelTask en
 - 线协议:entry dial 下一跳后先写 1 字节 stream preamble(`0x01`=TCP / `0x02`=UDP),exit 读后定模式,mid 纯字节 bridge 不感知;UDP 帧 = 2 字节大端长度前缀 + payload,per-client 一条隧道连接(120s 闲置回收)。
 - reconcile 扩展:`reconcile_commands_for_node` 覆盖非隧道规则 + 节点参与的全部活跃隧道(凭据先行,再发本 hop 拆分 Rule;mid/exit 节点无 forward_rules 行,从 tunnel_hops 反查)。
 - status 聚合:30s 心跳窗口;`GET /api/tunnels/{id}` 与 `/status` 端点实时计算并写回 `tunnels.status`;list 返回上次写入值。
-- P3c（隧道前端 + e2e）待展开。
+- P3c（隧道前端 + e2e）已交付。
+
+### Phase 3c（2026-06-11 启动,同日交付）
+
+隧道前端两页 + Rules 关联下拉 + Agent 安全收紧 + e2e 测试矩阵,全部交付。
+
+- Plan: `docs/superpowers/plans/2026-06-11-p3c-tunnel-frontend-e2e.md`（12 Task TDD）
+- **安全收紧①**（T1）:Agent 隧道 TLS/WSS server 端 accept 后用 x509-parser 校验 client cert SAN = 上一跳（`tunnel-<id>-hop-<ordinal-1>.emorelay.internal`），阻断同 CA 凭据横向连入;entry hop（ordinal 0）禁止 bind 隧道 listener;TLS/WSS 双路径均有负路径测试。commits: 52bfdd9, 56d244b。
+- **agent lib 化**（T2）:新增 `lib.rs` / `agent.rs`，`run_agent(Config)` 可编程入口，`main.rs` 薄壳，供 e2e in-process 起真实 agent。commit: 6614aa8。
+- **命令失败重试队列**（T3）:新增 `retry.rs`（30s 延迟 ×5 次上限，同 rule 新命令 supersede 旧重试，凭据类命令不入队；会话断开队列丢弃、reconcile 兜底）。commit: e525018。
+- **后端 TunnelView 扩展**（T4）:`TunnelView.rules_count`（list/update）+ `TunnelDetail.rules_count` / `rules: Vec<TunnelRuleRef>{ id, name, protocol, listen_port, enabled }`。commit: 0e14307。
+- **前端**（T5–T7）:api.ts tunnels 类型+端点 + RuleView/CreateRuleRequest.tunnel_id；`/tunnels` 列表页（链式节点构造器：≥2 节点、不重复、仅在线节点、↑↓排序）+ `/tunnels/:id` 详情页（hops 表 Entry/Mid/Exit 角色标签 + 关联规则列表）+ sidebar「隧道」入口；Rules 表单「关联隧道」下拉（选隧道锁定入口节点，提交带 tunnel_id）。commits: 55995cb..4a4f6d9, a7a1770..07e4840, 28b3e0f。
+- **e2e 测试矩阵**（T8–T11）:`crates/panel-server/tests/tunnel_e2e.rs`（panel-server dev-dep node-agent，真 in-process gRPC server + 真 agent + 真流量，6 测试 ~2.6s）：双跳/三跳 TCP、双跳/三跳 TLS（凭据签发→下发→落盘→SNI/SAN 校验全自动真链路）、UDP-over-tunnel（2 字节长度前缀帧）、mTLS 真链路 register + 吊销后旧 cert PermissionDenied（含「吊销不动 token hash」不变式断言）。commits: 3d63eb0, a812e04, 69185c2, 6a091f4, 3251b80。
+- **范围外决策**:隧道侧 CRL 不在 P3c（凭据即时签发不入库、无吊销分发通道；SAN 校验已阻断横向移动）——留待「隧道凭据短有效期+定期轮换」后续方案;WSS e2e 不做（单测已覆盖三场景）。
 
