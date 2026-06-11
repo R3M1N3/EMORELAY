@@ -231,6 +231,7 @@ pub async fn update_settings(
         "reserved_ports",
         "stats_retention_days",
         "agent_control_endpoint",
+        "notify_webhook_url",
     ];
 
     for (k, v) in req.settings.iter() {
@@ -322,6 +323,20 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
                 "http" | "https" => Ok(()),
                 s => Err(ApiError::BadRequest(format!(
                     "agent_control_endpoint scheme 必须是 http/https,得到 {s}"
+                ))),
+            }
+        }
+        "notify_webhook_url" => {
+            if value.is_empty() {
+                return Ok(()); // 空 = 关闭通知
+            }
+            let url = url::Url::parse(value).map_err(|e| {
+                ApiError::BadRequest(format!("notify_webhook_url 必须是合法 URL: {e}"))
+            })?;
+            match url.scheme() {
+                "http" | "https" => Ok(()),
+                s => Err(ApiError::BadRequest(format!(
+                    "notify_webhook_url scheme 必须是 http/https,得到 {s}"
                 ))),
             }
         }

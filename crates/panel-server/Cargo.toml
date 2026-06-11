@@ -30,6 +30,8 @@ hex = "0.4"
 sha2 = "0.10"
 url = "2"
 tower_governor = "0.8.0"
+# 出站 webhook 通知(notify 模块);rustls 避免 OpenSSL 链。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rcgen = "0.13"
 time = "0.3"
 

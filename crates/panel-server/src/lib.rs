@@ -12,6 +12,7 @@ pub mod db;
 pub mod error;
 pub mod grpc;
 pub mod models;
+pub mod notify;
 pub mod routes;
 pub mod state;
 pub mod sweeper;
