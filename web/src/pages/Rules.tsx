@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useToast } from '../lib/use-toast'
+import { useAuth } from '../lib/use-auth'
 import {
   ApiError,
   bandwidthProfiles,
   formatBytes,
   nodes,
   rules,
+  tunnels,
   type BandwidthProfileView,
   type CreateRuleRequest,
   type ImportReport,
   type NodeView,
   type RuleExportItem,
   type RuleView,
+  type TunnelView,
   type UpdateRuleRequest,
 } from '../lib/api'
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
@@ -35,9 +38,11 @@ interface ListState {
 
 export default function Rules() {
   const toast = useToast()
+  const { user } = useAuth()
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [nodeList, setNodeList] = useState<NodeView[]>([])
   const [profileList, setProfileList] = useState<BandwidthProfileView[]>([])
+  const [tunnelList, setTunnelList] = useState<TunnelView[]>([])
   const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
@@ -104,6 +109,17 @@ export default function Rules() {
       cancelled = true
     }
   }, [])
+
+  // 隧道列表只加载一次（admin 权限才有，创建规则时关联隧道用）。
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    let cancelled = false
+    tunnels
+      .list({ page_size: 100 })
+      .then((r) => { if (!cancelled) setTunnelList(r.items) })
+      .catch(() => {}) // 非关键数据，失败静默（表单退化为无隧道下拉）
+    return () => { cancelled = true }
+  }, [user?.role])
 
   // 规则列表：筛选项 / 翻页 / pageSize 变化都重新拉取。
   // 内联 promise chain 避免 react-hooks/set-state-in-effect。
@@ -409,6 +425,7 @@ export default function Rules() {
             initial={editing.mode === 'edit' ? editing.rule : undefined}
             nodeList={nodeList}
             profiles={profileList}
+            tunnelList={tunnelList}
             onCancel={() => setEditing(null)}
             onSuccess={async () => {
               toast.success(editing.mode === 'create' ? '规则已创建' : '规则已保存')
@@ -629,13 +646,15 @@ interface RuleFormState {
   target_host: string
   target_port: string
   bandwidth_profile_id: string
+  tunnel_id: string
 }
 
-function RuleForm({
+export function RuleForm({
   mode,
   initial,
   nodeList,
   profiles,
+  tunnelList,
   onCancel,
   onSuccess,
 }: {
@@ -643,6 +662,7 @@ function RuleForm({
   initial?: RuleView
   nodeList: NodeView[]
   profiles: BandwidthProfileView[]
+  tunnelList: TunnelView[]
   onCancel: () => void
   onSuccess: () => void | Promise<void>
 }) {
@@ -657,13 +677,37 @@ function RuleForm({
     target_port: initial ? String(initial.target_port) : '',
     bandwidth_profile_id:
       initial?.bandwidth_profile_id != null ? String(initial.bandwidth_profile_id) : '',
+    tunnel_id: initial?.tunnel_id != null ? String(initial.tunnel_id) : '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 选中隧道时锁定的入口节点 ID。
+  const [entryNodeId, setEntryNodeId] = useState<number | null>(null)
 
   function set<K extends keyof RuleFormState>(k: K, v: RuleFormState[K]) {
     setForm((f) => ({ ...f, [k]: v }))
   }
+
+  // 选隧道时自动填入口节点并锁定节点下拉。
+  useEffect(() => {
+    if (!form.tunnel_id) {
+      setEntryNodeId(null)
+      return
+    }
+    let cancelled = false
+    tunnels
+      .get(Number(form.tunnel_id))
+      .then((d) => {
+        if (cancelled) return
+        const entry = d.hops.find((h) => h.ordinal === 0)
+        if (entry) {
+          setEntryNodeId(entry.node_id)
+          setForm((f) => ({ ...f, node_id: String(entry.node_id) }))
+        }
+      })
+      .catch(() => { if (!cancelled) setError('加载隧道入口节点失败') })
+    return () => { cancelled = true }
+  }, [form.tunnel_id])
 
   function parsePort(v: string, label: string): number | string {
     const n = Number(v)
@@ -703,6 +747,7 @@ function RuleForm({
           bandwidth_profile_id: form.bandwidth_profile_id
             ? Number(form.bandwidth_profile_id)
             : null,
+          tunnel_id: form.tunnel_id ? Number(form.tunnel_id) : null,
         }
         await rules.create(payload)
       } else if (initial) {
@@ -744,12 +789,13 @@ function RuleForm({
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>节点 *</label>
+          <label htmlFor="rule-node" className={fieldLabelCls}>节点 *</label>
           <select
+            id="rule-node"
             required
             value={form.node_id}
             onChange={(e) => set('node_id', e.target.value)}
-            disabled={mode === 'edit'}
+            disabled={mode === 'edit' || entryNodeId != null}
             className={fieldInputCls}
           >
             {nodeList.length === 0 && <option value="">无可用节点</option>}
@@ -775,9 +821,33 @@ function RuleForm({
         </div>
       </div>
 
+      {tunnelList.length > 0 && (
+        <div>
+          <label htmlFor="rule-tunnel" className={fieldLabelCls}>关联隧道</label>
+          <select
+            id="rule-tunnel"
+            value={form.tunnel_id}
+            onChange={(e) => set('tunnel_id', e.target.value)}
+            disabled={mode === 'edit'}
+            className={fieldInputCls}
+          >
+            <option value="">不走隧道</option>
+            {tunnelList.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}（{t.transport.toUpperCase()} · {t.hops_count} 跳）
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            选择隧道后，规则将落在隧道入口节点，流量经隧道链转发至目标。
+          </p>
+        </div>
+      )}
+
       <div>
-        <label className={fieldLabelCls}>规则名 *</label>
+        <label htmlFor="rule-name" className={fieldLabelCls}>规则名 *</label>
         <input
+          id="rule-name"
           required
           value={form.name}
           onChange={(e) => set('name', e.target.value)}
@@ -819,8 +889,9 @@ function RuleForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>目标主机 *</label>
+          <label htmlFor="rule-target-host" className={fieldLabelCls}>目标主机 *</label>
           <input
+            id="rule-target-host"
             required
             value={form.target_host}
             onChange={(e) => set('target_host', e.target.value)}
@@ -829,8 +900,9 @@ function RuleForm({
           />
         </div>
         <div>
-          <label className={fieldLabelCls}>目标端口 *</label>
+          <label htmlFor="rule-target-port" className={fieldLabelCls}>目标端口 *</label>
           <input
+            id="rule-target-port"
             type="number"
             min={1}
             max={65535}
