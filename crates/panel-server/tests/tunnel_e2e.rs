@@ -4,30 +4,30 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{auth_req, make_app, send, TestApp};
-use emorelay_common::control::v1::{
-    control_plane_server::ControlPlaneServer,
-};
+use emorelay_common::control::v1::control_plane_server::ControlPlaneServer;
 use panel_server::grpc::service::ControlPlaneImpl;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
 use tonic::transport::Server;
 
 /// 起 in-process gRPC 控制面(plaintext;tests/common 的 Config dev_disable_mtls=true)。
-async fn start_grpc(app: &TestApp) -> SocketAddr {
+/// 返回 (绑定地址, JoinHandle) 供测试尾 abort。
+async fn start_grpc(app: &TestApp) -> (SocketAddr, JoinHandle<()>) {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
     drop(l);
     let svc = ControlPlaneServer::new(ControlPlaneImpl::new(app.state.clone()));
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let _ = Server::builder().add_service(svc).serve(addr).await;
     });
     // 等 server 可连。
     for _ in 0..50 {
         if TcpStream::connect(addr).await.is_ok() {
-            return addr;
+            return (addr, handle);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -172,46 +172,98 @@ async fn create_tunnel_rule(
     body["id"].as_i64().unwrap()
 }
 
-/// 双跳 TCP:client → entry(n1, 21500) → exit(n2, inter_port) → echo。
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_hop_tcp_tunnel_end_to_end() {
+/// 矩阵驱动:n_hops 个节点 × transport,验证 TCP 字节往返。
+/// port_base:节点 i 的 pool = [port_base + i*100, port_base + i*100 + 99],
+/// entry listen = port_base + 900。
+async fn run_tcp_tunnel_matrix(n_hops: usize, transport: &str, port_base: u16) {
     let app = make_app().await.unwrap();
-    let grpc = start_grpc(&app).await;
+    let (grpc, grpc_handle) = start_grpc(&app).await;
 
-    let (n1, t1) = create_node(&app, "e2e-hop-0", (21000, 21099)).await;
-    let (n2, t2) = create_node(&app, "e2e-hop-1", (21100, 21199)).await;
-
-    let d1 = tempfile::TempDir::new().unwrap();
-    let d2 = tempfile::TempDir::new().unwrap();
-    let a1 = spawn_agent(grpc, n1, t1, &d1);
-    let a2 = spawn_agent(grpc, n2, t2, &d2);
-    wait_node_online(&app, n1).await;
-    wait_node_online(&app, n2).await;
+    let mut node_ids = Vec::new();
+    let mut agent_handles = Vec::new();
+    // dirs 必须持有到测试结束,tempdir drop 会删目录。
+    let mut dirs = Vec::new();
+    for i in 0..n_hops {
+        let lo = port_base + (i as u16) * 100;
+        let (nid, token) = create_node(
+            &app,
+            &format!("e2e-{transport}-{n_hops}h-{i}"),
+            (lo as i64, (lo + 99) as i64),
+        )
+        .await;
+        let dir = tempfile::TempDir::new().unwrap();
+        agent_handles.push(spawn_agent(grpc, nid, token, &dir));
+        dirs.push(dir);
+        node_ids.push(nid);
+    }
+    for nid in &node_ids {
+        wait_node_online(&app, *nid).await;
+    }
 
     let echo = start_tcp_echo().await;
-    let tid = create_tunnel(&app, "e2e-2hop-tcp", "tcp", &[n1, n2]).await;
-    create_tunnel_rule(&app, n1, tid, "tcp", 21500, echo).await;
+    let tid =
+        create_tunnel(&app, &format!("e2e-{transport}-{n_hops}hop"), transport, &node_ids).await;
+    let listen = port_base + 900;
+    create_tunnel_rule(&app, node_ids[0], tid, "tcp", listen, echo).await;
 
-    // 写读尝试多次:entry listener 就绪 ≠ exit listener 就绪(下一跳 Rule 可能稍后 apply)。
-    let mut passed = false;
-    for _ in 0..30 {
-        let mut s = connect_entry(21500).await;
-        let _ = s.write_all(b"hello-tunnel").await;
-        s.set_nodelay(true).ok();
-        // 设置读超时避免 entry 尚未转发时永久阻塞。
-        let mut buf = [0u8; 12];
-        match tokio::time::timeout(Duration::from_millis(500), s.read_exact(&mut buf)).await {
-            Ok(Ok(_)) if &buf == b"hello-tunnel" => {
-                passed = true;
-                break;
-            }
-            _ => {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+    // 用 60s 超时包裹整个连接+写读重试段,给 CI 慢机器明确失败上限。
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let payload = format!("ping-{transport}-{n_hops}");
+        let payload_bytes = payload.as_bytes().to_vec();
+        let mut passed = false;
+        // 写读尝试多次:entry listener 就绪 ≠ exit listener / 凭据就绪(下一跳异步 apply)。
+        for _ in 0..30 {
+            let mut s = connect_entry(listen).await;
+            // set_nodelay 在 connect 之后、首次 write 之前。
+            s.set_nodelay(true).ok();
+            let _ = s.write_all(&payload_bytes).await;
+            let mut buf = vec![0u8; payload_bytes.len()];
+            match tokio::time::timeout(Duration::from_millis(500), s.read_exact(&mut buf)).await {
+                Ok(Ok(_)) if buf == payload_bytes => {
+                    passed = true;
+                    break;
+                }
+                _ => {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
             }
         }
-    }
-    assert!(passed, "双跳 TCP 隧道必须把字节原样送达 echo 并返回");
+        passed
+    })
+    .await
+    .expect("60s 超时:矩阵驱动未在限时内完成");
 
-    a1.abort();
-    a2.abort();
+    assert!(
+        result,
+        "{n_hops}-hop {transport} 隧道必须把字节原样送达 echo 并返回"
+    );
+
+    for h in agent_handles {
+        h.abort();
+    }
+    grpc_handle.abort();
+}
+
+/// 双跳 TCP 隧道端到端(回归)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_hop_tcp_tunnel_end_to_end() {
+    run_tcp_tunnel_matrix(2, "tcp", 21000).await;
+}
+
+/// 三跳 TCP 隧道端到端。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn three_hop_tcp_tunnel_end_to_end() {
+    run_tcp_tunnel_matrix(3, "tcp", 22000).await;
+}
+
+/// 双跳 TLS 隧道端到端(凭据自动下发 → apply → TlsTransport)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_hop_tls_tunnel_end_to_end() {
+    run_tcp_tunnel_matrix(2, "tls", 23000).await;
+}
+
+/// 三跳 TLS 隧道端到端。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn three_hop_tls_tunnel_end_to_end() {
+    run_tcp_tunnel_matrix(3, "tls", 24000).await;
 }
