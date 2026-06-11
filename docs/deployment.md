@@ -2,6 +2,8 @@
 
 本文档覆盖一键编排、生产部署、反代/TLS、备份与故障排查。
 
+> **最快路径**:Debian 12/13 上直接 `curl -fsSL https://raw.githubusercontent.com/Remine1337/EMORELAY/master/deploy.sh | bash`,菜单选「快速安装」拉取 GitHub Release 预编译二进制(由 `.github/workflows/release.yml` 在打 `v*` tag 时构建,含双架构 musl 静态二进制 + 前端产物 + SHA256SUMS),免编译约 1 分钟装完。本文其余章节为 Docker/手动部署细节。
+
 ---
 
 ## 一、组件拓扑

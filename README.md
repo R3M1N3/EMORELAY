@@ -27,7 +27,15 @@
 - 体验（P4）：全站列表/详情 15-30s 静默自动刷新；登录 per-IP 限速防爆破；错误信息全中文；时间按浏览器时区显示。
 - 一键编排:`docker compose up -d`(panel-server + web + sqlite volume)。
 
-## 一键启动
+## 生产安装(VPS,Debian 12/13)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Remine1337/EMORELAY/master/deploy.sh | bash
+```
+
+菜单推荐「快速安装」:直接拉取 GitHub Release 预编译二进制(musl 静态,免 Rust/Node 工具链与 3GB 内存门槛,约 1 分钟装完);也可选 Docker Compose 或 systemd 源码编译。再次运行脚本进入升级/状态/备份/卸载菜单。详见 [`docs/deployment.md`](./docs/deployment.md)。
+
+## 一键启动(本机 Docker)
 
 ```sh
 cp .env.example .env

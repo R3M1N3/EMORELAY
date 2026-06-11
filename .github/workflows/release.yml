@@ -1,0 +1,56 @@
+# 发版构建:打 v* tag 时交叉编译双架构 musl 静态二进制 + 前端产物,上传 GitHub Release。
+# deploy.sh 的「快速安装」模式从这里产出的资产拉取,资产名是契约,改名需同步 deploy.sh。
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装交叉编译工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools gcc-aarch64-linux-gnu
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+      - name: 编译 panel-server + node-agent(双架构 musl 静态)
+        env:
+          CC_aarch64_unknown_linux_musl: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --locked -p panel-server -p node-agent --target x86_64-unknown-linux-musl
+          cargo build --release --locked -p panel-server -p node-agent --target aarch64-unknown-linux-musl
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 构建前端
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: 组装产物与校验和
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/panel-server  dist/panel-server-linux-amd64
+          cp target/aarch64-unknown-linux-musl/release/panel-server dist/panel-server-linux-arm64
+          cp target/x86_64-unknown-linux-musl/release/node-agent    dist/node-agent-linux-amd64
+          cp target/aarch64-unknown-linux-musl/release/node-agent   dist/node-agent-linux-arm64
+          tar czf dist/web-dist.tar.gz -C web/dist .
+          cd dist && sha256sum -- * > SHA256SUMS
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

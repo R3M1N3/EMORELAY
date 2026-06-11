@@ -70,7 +70,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 前端: `web/`（React 19 + Vite 8 + Tailwind 4 + TS）
 - 数据库: `migrations/0001_init.sql` → `0008`（基础 8 表 + 用户配额字段 + `bandwidth_profiles` + `nodes.cert_*` + `tunnels`/`tunnel_hops` + `nodes.agent_version` + WAL + 软删 + 部分唯一索引 + PG 兼容）
 - 安全: 内置 CA + 默认强制 mTLS（panel-server 启动自签 CA,gRPC 控制面强制 client cert + CRL 吊销;`PANEL_DEV_DISABLE_MTLS=1` 退 plaintext）;登录 per-IP 限速
-- 部署: `docker-compose.yml`、`docker/{panel-server,web}.Dockerfile`、`docker/Caddyfile.example`、`deploy.sh`
+- 部署: `docker-compose.yml`、`docker/{panel-server,web}.Dockerfile`、`docker/Caddyfile.example`、`deploy.sh`(快速安装=拉 GitHub Release 预编译 musl 静态二进制/Docker/systemd 源码编译三模式)、`.github/workflows/release.yml`(打 `v*` tag 发版)
 - 文档: `README.md`、`docs/deployment.md`、`docs/api.md`、`docs/ux-review-2026-06-11.md`、`.env.example`
 - 测试: `cargo test --workspace` 全绿（panel-server 集成 + `tunnel_e2e` 6 测试 + node-agent 单元 + common proto）+ web `vitest` + `eslint`
 

@@ -12,6 +12,8 @@ set -euo pipefail
 
 REPO_URL="https://github.com/Remine1337/EMORELAY.git"
 RAW_DEPLOY_URL="https://raw.githubusercontent.com/Remine1337/EMORELAY/master/deploy.sh"
+GH_REPO="Remine1337/EMORELAY"
+RELEASE_LATEST_URL="https://github.com/${GH_REPO}/releases/latest"
 INSTALL_DIR="/opt/emorelay"
 DATA_DIR="/var/lib/emorelay"
 ENV_DIR="/etc/emorelay"
@@ -155,15 +157,21 @@ check_ports() {
 }
 
 # 读取部署模式标记并与实际状态双重校验,漂移时清理标记视为未安装。
-# MODE_FILE 格式:第 1 行模式(docker/systemd),第 2 行安装目录(支持仓库内安装后异地重跑)。
+# MODE_FILE 格式:第 1 行模式(docker/systemd),第 2 行安装目录(支持仓库内安装后异地重跑),
+# 第 3 行安装通道(source/release,缺省 source,向后兼容旧标记)。
 detect_mode() {
     DEPLOY_MODE=""
+    INSTALL_CHANNEL="source"
     [[ -f "$MODE_FILE" ]] || return 0
     DEPLOY_MODE="$(head -n1 "$MODE_FILE")"
-    local recorded_dir
+    local recorded_dir recorded_channel
     recorded_dir="$(sed -n '2p' "$MODE_FILE")"
+    recorded_channel="$(sed -n '3p' "$MODE_FILE")"
     if [[ -n "$recorded_dir" && -d "$recorded_dir" ]]; then
         INSTALL_DIR="$recorded_dir"
+    fi
+    if [[ "$recorded_channel" == "release" ]]; then
+        INSTALL_CHANNEL="release"
     fi
     case "$DEPLOY_MODE" in
         systemd)
@@ -299,6 +307,84 @@ firewall_hint() {
     elif command -v nft >/dev/null 2>&1 && nft list ruleset 2>/dev/null | grep -q 'hook input'; then
         warn "检测到 nftables 有 input 规则,请确认已放行 TCP 端口: ${ports}"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# release 快速安装模式(预编译二进制,免 Rust/Node 工具链与 3GB 内存门槛)
+# ---------------------------------------------------------------------------
+# 跟随 /releases/latest 重定向解析最新 tag,无 release 时返回非零。
+resolve_release_tag() {
+    local url
+    url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$RELEASE_LATEST_URL" 2>/dev/null)" || return 1
+    [[ "$url" == */tag/* ]] || return 1
+    echo "${url##*/}"
+}
+
+# 下载 release 资产到 RELEASE_TMP 并做 SHA256 校验。资产名与 CI 产物是契约
+# (见 .github/workflows/release.yml),agent 双架构一次拉齐,免交叉编译。
+# 调用前若已置 RELEASE_TAG(升级路径先比版本)则不再重复解析。
+RELEASE_TMP=""
+fetch_release_assets() {
+    if [[ -z "${RELEASE_TAG:-}" ]]; then
+        RELEASE_TAG="$(resolve_release_tag)" \
+            || die "无法解析最新 release(仓库可能尚未发版或网络受限),请改用源码编译安装。"
+    fi
+    info "最新 release: ${RELEASE_TAG}"
+    RELEASE_TMP="$(mktemp -d)"
+    local base="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}"
+    local f
+    for f in "panel-server-linux-${ARCH}" node-agent-linux-amd64 node-agent-linux-arm64 web-dist.tar.gz SHA256SUMS; do
+        info "下载 ${f} ..."
+        curl -fSL --progress-bar -o "${RELEASE_TMP}/${f}" "${base}/${f}" \
+            || die "下载 ${f} 失败,请检查网络后重试。"
+    done
+    # --ignore-missing:SHA256SUMS 含另一架构 panel 二进制,本机不下载。
+    (cd "$RELEASE_TMP" && sha256sum -c --ignore-missing --quiet SHA256SUMS) \
+        || die "SHA256 校验失败,下载内容可能损坏或被篡改,已中止。"
+    info "SHA256 校验通过。"
+}
+
+deploy_release_artifacts() {
+    install -m 0755 "${RELEASE_TMP}/panel-server-linux-${ARCH}" "$PANEL_BIN"
+    install -d -m 0750 "${DATA_DIR}" "${DATA_DIR}/agent-dist"
+    install -m 0755 "${RELEASE_TMP}/node-agent-linux-amd64" \
+        "${DATA_DIR}/agent-dist/node-agent-linux-amd64"
+    install -m 0755 "${RELEASE_TMP}/node-agent-linux-arm64" \
+        "${DATA_DIR}/agent-dist/node-agent-linux-arm64"
+    chown -R emorelay:emorelay "$DATA_DIR"
+    # 前端原子替换,与 deploy_artifacts 同策略。
+    rm -rf "${WEB_ROOT}.new"
+    mkdir -p "${WEB_ROOT}.new"
+    tar xzf "${RELEASE_TMP}/web-dist.tar.gz" -C "${WEB_ROOT}.new"
+    if [[ -d "$WEB_ROOT" ]]; then
+        rm -rf "${WEB_ROOT}.old"
+        mv "$WEB_ROOT" "${WEB_ROOT}.old"
+    fi
+    mv "${WEB_ROOT}.new" "$WEB_ROOT"
+    rm -rf "${WEB_ROOT}.old"
+    chown -R caddy:caddy "$WEB_ROOT" 2>/dev/null || true
+    rm -rf "$RELEASE_TMP"
+}
+
+install_release_mode() {
+    check_ports "80 8080 50051"
+    ensure_base_pkgs
+    collect_config systemd
+    if (( USE_HTTPS )); then
+        check_ports "443"
+    fi
+    install_caddy
+    ensure_user
+    fetch_release_assets
+    deploy_release_artifacts
+    write_panel_env
+    write_unit
+    write_caddyfile
+    printf '%s\n%s\n%s\n' "systemd" "$INSTALL_DIR" "release" > "$MODE_FILE"
+    echo "$RELEASE_TAG" > "${ENV_DIR}/release-tag"
+    enable_services
+    wait_healthy || warn "可运行本脚本选「查看日志」排查。"
+    print_summary systemd
 }
 
 # ---------------------------------------------------------------------------
@@ -669,6 +755,26 @@ action_backup() {
 action_upgrade() {
     info "升级前先自动备份..."
     action_backup
+    if [[ "$DEPLOY_MODE" == "systemd" && "$INSTALL_CHANNEL" == "release" ]]; then
+        local current=""
+        [[ -f "${ENV_DIR}/release-tag" ]] && current="$(cat "${ENV_DIR}/release-tag")"
+        # 先比版本再下载,相同则免拉数十 MB 资产。
+        RELEASE_TAG="$(resolve_release_tag)" \
+            || die "无法解析最新 release,请检查网络后重试。"
+        if [[ -n "$current" && "$RELEASE_TAG" == "$current" ]]; then
+            info "已是最新版本(${current}),无需升级。"
+            return 0
+        fi
+        fetch_release_assets
+        info "升级 ${current:-未知版本} -> ${RELEASE_TAG},停止服务并替换产物(停机窗口为秒级)..."
+        run_systemctl stop "$UNIT_NAME"
+        deploy_release_artifacts
+        run_systemctl start "$UNIT_NAME"
+        echo "$RELEASE_TAG" > "${ENV_DIR}/release-tag"
+        wait_healthy || warn "升级后健康检查未通过,请查看日志。"
+        info "升级完成。"
+        return 0
+    fi
     info "拉取最新代码(git pull --ff-only)..."
     if ! git -C "$INSTALL_DIR" pull --ff-only; then
         die "git pull 失败(可能有本地改动或分叉),请到 ${INSTALL_DIR} 手动处理后重试。"
@@ -769,14 +875,16 @@ action_uninstall() {
 menu_not_installed() {
     echo
     echo "========== EMORELAY 部署菜单(未安装) =========="
-    echo "  1) 安装 — Docker Compose(推荐,免编译环境)"
-    echo "  2) 安装 — systemd 裸机(源码编译,Caddy 反代)"
+    echo "  1) 快速安装 — GitHub Release 预编译二进制(推荐,免编译)"
+    echo "  2) 安装 — Docker Compose(本机构建镜像)"
+    echo "  3) 安装 — systemd 裸机(源码编译,Caddy 反代)"
     echo "  0) 退出"
     local choice
     choice="$(prompt '请选择' '0')"
     case "$choice" in
-        1) install_docker_mode ;;
-        2) install_systemd_mode ;;
+        1) install_release_mode ;;
+        2) install_docker_mode ;;
+        3) install_systemd_mode ;;
         0) exit 0 ;;
         *) err "无效选项: $choice" ;;
     esac
@@ -790,7 +898,8 @@ menu_installed() {
     echo "  3) 查看日志"
     echo "  4) 备份数据"
     echo "  5) 卸载"
-    if [[ "$DEPLOY_MODE" == "systemd" ]]; then
+    # release 通道资产已含双架构 agent,且机器上没有 cargo,无补编场景。
+    if [[ "$DEPLOY_MODE" == "systemd" && "$INSTALL_CHANNEL" != "release" ]]; then
         echo "  6) 补编另一架构 agent 二进制"
     fi
     echo "  0) 退出"
@@ -803,7 +912,7 @@ menu_installed() {
         4) action_backup ;;
         5) action_uninstall ;;
         6)
-            if [[ "$DEPLOY_MODE" == "systemd" ]]; then
+            if [[ "$DEPLOY_MODE" == "systemd" && "$INSTALL_CHANNEL" != "release" ]]; then
                 build_agent_cross
             else
                 err "无效选项: $choice"
@@ -821,9 +930,10 @@ main() {
     check_arch
     detect_mode
     # 已安装时源码目录以标记安装位置为准(curl|bash 二次运行时 cwd 不在仓库内)。
+    # release 通道无源码目录,升级走 release 资产,不需要仓库。
     if [[ -n "$DEPLOY_MODE" && -d "${INSTALL_DIR}/.git" ]]; then
         :
-    elif [[ -n "$DEPLOY_MODE" ]]; then
+    elif [[ -n "$DEPLOY_MODE" && "$INSTALL_CHANNEL" != "release" ]]; then
         ensure_repo
     fi
     if [[ -z "$DEPLOY_MODE" ]]; then
