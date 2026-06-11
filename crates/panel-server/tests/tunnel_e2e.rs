@@ -267,3 +267,66 @@ async fn two_hop_tls_tunnel_end_to_end() {
 async fn three_hop_tls_tunnel_end_to_end() {
     run_tcp_tunnel_matrix(3, "tls", 24000).await;
 }
+
+/// 简单 UDP echo 目标服务。
+async fn start_udp_echo() -> SocketAddr {
+    let sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let addr = sock.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 65536];
+        loop {
+            let Ok((n, peer)) = sock.recv_from(&mut buf).await else {
+                break;
+            };
+            let _ = sock.send_to(&buf[..n], peer).await;
+        }
+    });
+    addr
+}
+
+/// 双跳 UDP-over-tunnel:UDP 包在 entry 打 2 字节长度前缀帧,经隧道流送 exit 拆帧
+/// 转发 target,回程同理(P3b frame.rs 协议的全链路实测)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_hop_udp_over_tunnel_end_to_end() {
+    let app = make_app().await.unwrap();
+    let (grpc, grpc_handle) = start_grpc(&app).await;
+
+    let (n1, t1) = create_node(&app, "e2e-udp-0", (25000, 25099)).await;
+    let (n2, t2) = create_node(&app, "e2e-udp-1", (25100, 25199)).await;
+    let d1 = tempfile::TempDir::new().unwrap();
+    let d2 = tempfile::TempDir::new().unwrap();
+    let a1 = spawn_agent(grpc, n1, t1, &d1);
+    let a2 = spawn_agent(grpc, n2, t2, &d2);
+    wait_node_online(&app, n1).await;
+    wait_node_online(&app, n2).await;
+
+    let echo = start_udp_echo().await;
+    let tid = create_tunnel(&app, "e2e-2hop-udp", "tcp", &[n1, n2]).await;
+    create_tunnel_rule(&app, n1, tid, "udp", 25900, echo).await;
+
+    // UDP 无连接,入口就绪不可探测:发包 + 限时等回包,失败重发(本地回环丢包率≈0,
+    // 重试覆盖的是 agent apply 异步延迟)。
+    let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    client.connect(("127.0.0.1", 25900)).await.unwrap();
+    let mut buf = [0u8; 16];
+    let mut got = None;
+    for _ in 0..50 {
+        let _ = client.send(b"udp-ping").await;
+        match tokio::time::timeout(Duration::from_millis(200), client.recv(&mut buf)).await {
+            Ok(Ok(n)) => {
+                got = Some(buf[..n].to_vec());
+                break;
+            }
+            _ => continue,
+        }
+    }
+    assert_eq!(
+        got.as_deref(),
+        Some(b"udp-ping".as_slice()),
+        "UDP 必须经隧道帧封装往返"
+    );
+
+    a1.abort();
+    a2.abort();
+    grpc_handle.abort();
+}
