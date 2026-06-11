@@ -36,6 +36,8 @@ services:
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
       PANEL_DATA_DIR: /var/lib/emorelay
       PANEL_PUBLIC_BASE_URL: ${PANEL_PUBLIC_BASE_URL:-}
+      # gRPC server 证书 SAN 的对外主机名;远程 Agent 接入必填,留空仅 127.0.0.1/localhost 可过校验。
+      PANEL_PUBLIC_HOST: ${PANEL_PUBLIC_HOST:-}
     volumes:
       - sqlite-data:/var/lib/emorelay
     ports:
