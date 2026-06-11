@@ -131,7 +131,7 @@ export default function RuleDetail() {
 function ConfigCard({ rule }: { rule: RuleView }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+    <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">配置</h3>
       <dl className="text-sm space-y-2">
         <Row k="协议" v={protoLabel} />
@@ -150,7 +150,7 @@ function ConfigCard({ rule }: { rule: RuleView }) {
 function TrafficCard({ stats }: { stats: RuleStatsResponse }) {
   const { current } = stats
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+    <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">累计</h3>
       <div className="grid grid-cols-3 gap-3 text-sm">
         <Stat label="下行 (rx)" value={formatBytes(current.rx_bytes)} />
@@ -182,13 +182,13 @@ function SeriesCard({
   format?: (n: number) => string
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+    <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">{title}</h3>
       <div className="space-y-2">
         {rx.length > 0 && (
           <div>
             {rxLabel && <div className="text-[11px] text-zinc-500 mb-1">↓ {rxLabel}</div>}
-            <Sparkline values={rx} colorClass="stroke-indigo-400" fillClass="fill-indigo-500/10" formatValue={format} />
+            <Sparkline values={rx} colorClass="stroke-accent" fillClass="fill-accent/10" formatValue={format} />
           </div>
         )}
         <div>
@@ -203,18 +203,18 @@ function SeriesCard({
 function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
   if (logs.length === 0)
     return (
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 text-sm text-zinc-500">
+      <section className="glass-card rise p-5 text-sm text-zinc-500">
         暂无操作历史。
       </section>
     )
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+    <section className="glass-card rise overflow-hidden">
       <div className="px-5 py-3 border-b border-white/5">
         <h3 className="text-sm font-medium text-zinc-200">最近操作</h3>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+          <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
             <tr>
               <th className="px-4 py-2 text-left font-medium">时间</th>
               <th className="px-4 py-2 text-left font-medium">操作</th>
@@ -263,7 +263,7 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/5 bg-zinc-950/40 p-3">
+    <div className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
       <div className="text-[11px] text-zinc-500">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>

@@ -105,6 +105,83 @@ async fn agent_control_endpoint_empty_accepted() {
     assert_eq!(status, StatusCode::OK);
 }
 
+// ============ ui_accent_color + 公开 ui-config ============
+
+#[tokio::test]
+async fn ui_accent_color_roundtrip_via_public_endpoint() {
+    let app = make_app().await.unwrap();
+    // 未配置时:公开端点免鉴权可访问,accent_color 为 null。
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/ui-config")
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["accent_color"], serde_json::Value::Null);
+
+    // admin 设置颜色后,公开端点应回显。
+    let req = auth_req(
+        Method::PATCH,
+        "/api/system/settings",
+        &app.admin_token,
+        Some(serde_json::json!({ "settings": { "ui_accent_color": "#67e8f9" } })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/ui-config")
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accent_color"], "#67e8f9");
+}
+
+#[tokio::test]
+async fn ui_accent_color_rejects_bad_format() {
+    let app = make_app().await.unwrap();
+    for bad in ["red", "#fff", "#12345g", "67e8f9", "#67e8f9aa"] {
+        let req = auth_req(
+            Method::PATCH,
+            "/api/system/settings",
+            &app.admin_token,
+            Some(serde_json::json!({ "settings": { "ui_accent_color": bad } })),
+        )
+        .unwrap();
+        let (status, _) = send(app.app.clone(), req).await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "应拒绝 {bad}");
+    }
+}
+
+#[tokio::test]
+async fn ui_accent_color_empty_resets_to_default() {
+    let app = make_app().await.unwrap();
+    // 先设置再清空,公开端点应回到 null(空字符串视为未配置)。
+    for v in ["#a1b2c3", ""] {
+        let req = auth_req(
+            Method::PATCH,
+            "/api/system/settings",
+            &app.admin_token,
+            Some(serde_json::json!({ "settings": { "ui_accent_color": v } })),
+        )
+        .unwrap();
+        let (status, _) = send(app.app.clone(), req).await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+    }
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/ui-config")
+        .body(Body::empty())
+        .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["accent_color"], serde_json::Value::Null);
+}
+
 // ============ P4: overview 24h 转发流量口径 ============
 
 #[tokio::test]

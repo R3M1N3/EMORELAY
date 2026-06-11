@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/use-auth'
 import { ApiError } from '../lib/api'
+import { Backdrop, fieldInputCls } from '../lib/ui'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -36,18 +37,18 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-svh bg-zinc-950 text-zinc-100 flex items-center justify-center px-4 relative overflow-hidden">
-      {/* 背景毛玻璃光晕 */}
-      <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-indigo-600/30 blur-3xl" aria-hidden />
-      <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-violet-600/30 blur-3xl" aria-hidden />
+    <div className="min-h-svh text-zinc-100 flex items-center justify-center px-4 relative overflow-hidden">
+      <Backdrop />
 
       <form
         onSubmit={onSubmit}
-        className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-zinc-900/60 backdrop-blur-xl p-8 shadow-2xl"
+        className="relative w-full max-w-sm glass-card rise p-8 shadow-2xl"
       >
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">EMORELAY</h1>
-          <p className="mt-1 text-sm text-zinc-400">流量转发管理面板</p>
+          <h1 className="text-2xl font-bold tracking-[0.14em] bg-gradient-to-r from-white via-accent-hi to-white bg-clip-text text-transparent">
+            EMORELAY
+          </h1>
+          <p className="mt-1.5 text-sm text-zinc-400">流量转发管理面板</p>
         </div>
 
         <label className="block text-xs font-medium text-zinc-300 mb-1.5">用户名</label>
@@ -57,7 +58,7 @@ export default function Login() {
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
-          className="w-full rounded-lg bg-zinc-800/80 border border-white/10 px-3 py-2 text-sm placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+          className={fieldInputCls}
           placeholder="admin"
         />
 
@@ -68,7 +69,7 @@ export default function Login() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
-          className="w-full rounded-lg bg-zinc-800/80 border border-white/10 px-3 py-2 text-sm placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+          className={fieldInputCls}
           placeholder="••••••••"
         />
 
@@ -78,11 +79,7 @@ export default function Login() {
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="mt-6 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium transition-colors"
-        >
+        <button type="submit" disabled={submitting} className="mt-6 w-full btn-accent">
           {submitting ? '登录中…' : '登录'}
         </button>
       </form>

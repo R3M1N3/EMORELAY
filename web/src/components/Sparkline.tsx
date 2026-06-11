@@ -6,7 +6,7 @@ interface Props {
   values: number[]
   width?: number
   height?: number
-  /** Tailwind stroke 颜色类,如 'stroke-indigo-400'。默认 indigo。 */
+  /** Tailwind stroke 颜色类,如 'stroke-accent'。默认 accent。 */
   colorClass?: string
   /** Tailwind fill 颜色类(填面积)。默认透明。 */
   fillClass?: string
@@ -20,7 +20,7 @@ export function Sparkline({
   values,
   width = 320,
   height = 64,
-  colorClass = 'stroke-indigo-400',
+  colorClass = 'stroke-accent',
   fillClass,
   emptyLabel = '尚无时序数据',
   formatValue,

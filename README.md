@@ -1,123 +1,55 @@
 # EMORELAY
 
-开源流量转发管理面板。管理员在 Web 面板创建 TCP/UDP 端口转发规则,由分布在各节点上的 Rust Agent 实际执行转发并回报流量统计。
+开源流量转发管理面板。在 Web 面板上创建 TCP/UDP 端口转发规则与多跳隧道，由部署在各台服务器上的 Rust Agent 实际执行转发并回报流量统计。
 
-参考形态:Flux-panel / Nyanpass / ForwardX / Aurora。
+适合管理自有服务器、NAT 节点和端口转发业务，参考形态：Flux-panel / Nyanpass / ForwardX / Aurora。
 
-## 特性
+## 它能做什么
 
-- **panel-server**(Rust + Axum + SQLx)REST API + gRPC 控制面,SQLite 优先(兼容 PostgreSQL 迁移)。
-- **node-agent**(Rust + Tokio)TCP/UDP relay,本地规则落盘,断开主控后继续运行。
-- **web**(React 19 + Vite + TS + Tailwind 4)深色现代控制台,登录 / 概览 / 节点 / 规则 / 用户 / 设置。
-- 鉴权:Argon2 密码哈希,JWT;Agent 注册 token DB 内只存 SHA-256 哈希。
-- 内置 CA + 默认 mTLS（节点证书自动签发 + 吊销）:gRPC 控制面强制双向认证,创建节点一次性下发四件套凭据,支持轮换/吊销。
-- 审计:所有写操作落 `audit_logs`;面板「设置」页可查最近 50 条。
-- 流量统计:60s 桶聚合,server 端事务 UPSERT,Dashboard 显示过去 24h 流量。
-- 通知：右上角全局 Toast 反馈所有写操作。
-- 节点安装：「设置」配 Agent 上报端点后，新建节点 Modal 一键复制安装命令，目标机 `curl ... | sudo bash` 完成接入。
-- 限速：带宽模板（bandwidth profiles）关联到规则，Agent 端 token bucket 实际执行限速。
-- 用户到期 / 滚动 30 天流量配额：到期或超额自动停用名下全部规则，到期账号登录直接拒绝。
-- 规则导入导出：JSON 导出（按名称跨实例映射）+ 导入 dry-run 预览（skip/overwrite 策略）。
-- 多跳隧道（TCP/TLS/WSS,UDP-over-tunnel）：Agent 多跳中继（entry/mid/exit）+ 隧道凭据自动签发下发 + hop 心跳聚合 status + 前端 `/tunnels` 创建·详情·规则关联两页 + 双/三跳 TCP/TLS/UDP/mTLS 端到端测试矩阵（6 e2e 测试,真 in-process 链路）。
-- 端口自动分配：创建规则不填监听端口时自动取节点池内最小可用端口。
-- 防呆：节点上仍有活跃规则时拒绝删除（删除弹窗预检直接说明并禁用确认）。
-- 用户自助（P4）：普通用户登录有自己的概览页（规则/用量/配额/到期）并可自建规则；admin 建规则可指定归属用户。
-- 节点掉线检测 + Webhook 通知（P4）：心跳超时自动置 offline；节点掉线/恢复、用户超额/到期 POST JSON 到可配置的 webhook。
-- 统计保留清理（P4）：`stats_retention_days` 由后台每小时真实清理超期分钟桶，时序表不再无限膨胀。
-- 体验（P4）：全站列表/详情 15-30s 静默自动刷新；登录 per-IP 限速防爆破；错误信息全中文；时间按浏览器时区显示。
-- 一键编排:`docker compose up -d`(panel-server + web + sqlite volume)。
+- **端口转发**：TCP / UDP 规则可视化管理，流量统计、连接数、启停一目了然
+- **多跳隧道**：TCP / TLS / WSS 多跳中继（入口 → 中转 → 出口），UDP-over-tunnel
+- **多用户**：普通用户自助建规则、看用量；支持账号到期与滚动 30 天流量配额，超限自动停用
+- **限速**：带宽模板关联规则，Agent 端实际执行
+- **安全默认**：gRPC 控制面内置 CA 强制 mTLS、节点凭据一键签发/轮换/吊销、全量审计日志、登录限速
+- **省心运维**：节点掉线检测 + Webhook 通知、统计数据自动清理、规则导入导出、Agent 断联后规则照常运行
+- **主题**：液态玻璃暗色界面，管理员可在设置页自定义全局强调色，所有客户端实时跟进
 
-## 生产安装(VPS,Debian 12/13)
+技术栈：Rust（Axum + Tokio + SQLx + tonic）+ React 19 + SQLite（兼容 PostgreSQL）。
+
+## 一键安装（推荐）
+
+准备一台 Debian 12/13 的 VPS，root 执行：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Remine1337/EMORELAY/master/deploy.sh | bash
 ```
 
-菜单推荐「快速安装」:直接拉取 GitHub Release 预编译二进制(musl 静态,免 Rust/Node 工具链与 3GB 内存门槛,约 1 分钟装完);也可选 Docker Compose 或 systemd 源码编译。再次运行脚本进入升级/状态/备份/卸载菜单。详见 [`docs/deployment.md`](./docs/deployment.md)。
+按菜单选择「快速安装」即可：直接下载 GitHub Release 预编译静态二进制（amd64 / arm64），不需要 Rust/Node 工具链，约 1 分钟完成。装完后：
 
-## 一键启动(本机 Docker)
+1. 浏览器打开 `http://<服务器IP>`，用安装时设置的管理员账号登录
+2. 在「设置」页填写 Agent 上报端点（如 `https://<服务器IP>:50051`）
+3. 「节点」页新建节点 → 复制安装命令 → 到目标服务器粘贴执行，节点即接入
+
+再次运行同一脚本可进入 **升级 / 状态 / 备份 / 卸载** 菜单。脚本也提供 Docker Compose 与源码编译两种安装方式。
+
+详细部署、反向代理与 HTTPS 配置见 [`docs/deployment.md`](./docs/deployment.md)。
+
+## 其它运行方式
 
 ```sh
-cp .env.example .env
-# 编辑 .env,设置 PANEL_JWT_SECRET 与 PANEL_BOOTSTRAP_ADMIN_PASSWORD
+# 本机 Docker 一键启动
+cp .env.example .env   # 设置 PANEL_JWT_SECRET 与管理员密码
 docker compose up -d --build
+# 打开 http://localhost
 ```
 
-打开 `http://localhost`,用 `.env` 里的 admin 凭据登录。详见 [`docs/deployment.md`](./docs/deployment.md)。
+开发模式（cargo run + vite dev）与 Agent 本地调试见 [`docs/deployment.md`](./docs/deployment.md)。
 
-## 开发模式
+## 文档
 
-```sh
-# 1. 后端
-cp .env.example .env
-# 编辑 .env(同上)
-cargo run -p panel-server
-
-# 2. 前端(另一窗口)
-cd web
-npm install
-npm run dev   # vite dev server: http://localhost:5173
-              # vite.config.ts 已把 /api 反代到 :8080
-
-# 3. Agent(另一窗口,可选)
-# 先在 Web 面板创建节点,复制返回的 agent_token
-AGENT_NODE_ID=1 \
-AGENT_TOKEN=<上一步的 token> \
-AGENT_CONTROL_ENDPOINT=http://127.0.0.1:50051 \
-cargo run -p node-agent
-```
-
-## 仓库结构
-
-```
-EMORELAY/
-  Cargo.toml              Rust workspace 根
-  crates/
-    panel-server/         主控 HTTP + gRPC(Axum + SQLx + tonic)
-    node-agent/           节点代理(Tokio TCP/UDP relay + tonic + sysinfo)
-    common/               共享 protobuf 生成代码
-  web/                    React + Vite + TS + Tailwind 前端
-  migrations/             SQLx 迁移
-  docker/                 Dockerfile + nginx + Caddy 反代示例
-  docs/                   部署与 API 文档
-  scripts/                辅助脚本(echo server 等)
-  docker-compose.yml      一键编排
-```
-
-## 文档索引
-
-- [`docs/deployment.md`](./docs/deployment.md) — 部署与运维
+- [`docs/deployment.md`](./docs/deployment.md) — 部署与运维手册
 - [`docs/api.md`](./docs/api.md) — REST + gRPC API 参考
-- [`docs/ux-review-2026-06-11.md`](./docs/ux-review-2026-06-11.md) — 用户视角评审与修复状态(开发历程见 git history)
-
-## 验收状态(MVP,2026-06-09)
-
-| # | 验收项 | 状态 |
-|---|---|---|
-| 1 | `docker compose up -d` 启动 panel-server + web + sqlite | ✅ |
-| 2 | 管理员能登录 Web 面板 | ✅ |
-| 3 | 能新增节点 | ✅ |
-| 4 | Agent 连接主控并显示在线 | ⚠ 代码就绪,端到端实跑 Agent 验证留作 manual smoke |
-| 5 | 能创建 TCP 转发规则 | ✅ |
-| 6 | Agent 实际监听对应端口 | ✅(`cargo test -p node-agent` 含 TCP/UDP loopback) |
-| 7 | TCP 流量能成功转发 | ✅(同上,TCP echo round-trip 验证) |
-| 8 | 前端能看到规则流量统计 | ✅ 行内累计 + Dashboard 24h 聚合 + 规则/节点详情页时序 svg |
-| 9 | 能禁用/启用/删除规则 | ✅ |
-| 10 | Agent 重启恢复已有规则 | ✅(`agent-state.json` + `store.rs`) |
-| 11 | README 一键部署 + 开发启动步骤 | ✅ |
-
-MVP 之后已交付 P1（体验防呆）、P2（用户配额 + 限速 + 导入导出）、P3a（内置 CA + 默认 mTLS）、P3b 控制面（多跳隧道 DB/proto/REST）、P3b 数据面（Agent tunnel 模块 TCP/TLS/WSS + 凭据下发 + status 聚合）、P3c（隧道前端两页 + Rules 关联下拉 + client SAN 校验 + 命令重试队列 + e2e 测试矩阵）、P4（用户自助体系 + 掉线检测 + webhook 通知 + 统计清理 + 全面 UX 修复）；逐阶段交付记录见 git history。
-
-## 安全
-
-- 密码 Argon2 哈希;JWT secret 强制环境变量。
-- 登录 per-IP 限速(1/s,突发 10;P4),429 统一 JSON + Retry-After;反代须覆盖写 X-Forwarded-For(见 `docker/web-nginx.conf`)。
-- 普通用户权限收紧(P4):规则的限速档/隧道/归属仅 admin 可配;节点列表对用户净化(运维指标与控制面地址不可见)。
-- Agent token DB 内只存 SHA-256 哈希,创建节点时面板**仅显示一次**明文。
-- 保留端口默认 22/80/443/3306/5432,可在「设置」页改。
-- 后端不拼 shell;Agent 只接受白名单 RPC(`ApplyRule`/`RemoveRule`/`EnableRule`/`DisableRule`/`RestartRule`)。
-- gRPC 控制面默认走内置 CA 强制 mTLS — 首次启动自动签发 CA + server 证书,创建节点一次性下发四件套凭据,支持轮换/吊销(CRL),配置见 [`docs/deployment.md` §4.5](./docs/deployment.md) 与 [`docs/api.md` §"mTLS 与节点凭据"](./docs/api.md)。`PANEL_DEV_DISABLE_MTLS=1` 退回 plaintext(仅供 dev)。旧的 `PANEL_GRPC_TLS_*` 已弃用。
 
 ## License
 
-MIT(占位)。
+MIT（占位）。

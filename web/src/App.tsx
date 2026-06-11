@@ -14,9 +14,12 @@ import TunnelDetail from './pages/TunnelDetail'
 import { AuthProvider } from './lib/auth'
 import { useAuth } from './lib/use-auth'
 import { ToastProvider } from './lib/toast'
-import { ForbiddenCard } from './lib/ui'
+import { Backdrop, ForbiddenCard } from './lib/ui'
+import { useThemeSync } from './lib/use-theme'
 
 export default function App() {
+  // 全局强调色:启动拉取 + 30s 轮询,管理员改色后所有客户端(含登录页)自动跟进。
+  useThemeSync()
   return (
     <ToastProvider>
       <AuthProvider>
@@ -73,17 +76,20 @@ function ProtectedShell() {
   if (!user) return <Navigate to="/login" replace />
 
   return (
-    <div className="min-h-svh bg-zinc-950 text-zinc-100 flex">
-      {/* Sidebar:大屏常驻;小屏隐藏(translate-x),由汉堡触发覆盖 drawer。 */}
+    <div className="min-h-svh text-zinc-100 flex gap-5 p-3 md:p-5 relative">
+      <Backdrop />
+      {/* Sidebar:大屏为悬浮玻璃板;小屏隐藏(translate-x),由汉堡触发覆盖 drawer。 */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-56 shrink-0 border-r border-white/5 bg-zinc-950/95 backdrop-blur p-4 flex flex-col transition-transform md:static md:translate-x-0 md:bg-zinc-950/80 ${
+        className={`fixed inset-y-0 left-0 z-30 w-56 shrink-0 p-4 flex flex-col transition-transform duration-300 glass-card rounded-none md:rounded-3xl md:translate-x-0 md:sticky md:top-5 md:inset-y-auto md:h-[calc(100svh-2.5rem)] md:self-start ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="px-2 py-1 mb-6 flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold tracking-tight">EMORELAY</div>
-            <div className="text-[11px] text-zinc-500">流量转发面板</div>
+            <div className="text-sm font-bold tracking-[0.14em] bg-gradient-to-r from-white via-accent-hi to-white bg-clip-text text-transparent">
+              EMORELAY
+            </div>
+            <div className="text-[11px] text-zinc-500 mt-0.5">流量转发面板</div>
           </div>
           <button
             onClick={() => setDrawerOpen(false)}
@@ -98,7 +104,7 @@ function ProtectedShell() {
             <NavItem key={n.to} to={n.to} label={n.label} onClick={() => setDrawerOpen(false)} />
           ))}
         </nav>
-        <div className="mt-auto text-[11px] text-zinc-500 md:hidden">
+        <div className="mt-auto pt-4 border-t border-white/5 text-[11px] text-zinc-500 md:hidden">
           <div className="truncate">{user.username} · {user.role}</div>
         </div>
       </aside>
@@ -112,13 +118,13 @@ function ProtectedShell() {
         />
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col relative">
         {/* 顶部状态栏:小屏左边汉堡;右边当前用户 + 登出。 */}
-        <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-white/5 bg-zinc-950/80 backdrop-blur px-4 py-2 md:px-8">
+        <header className="sticky top-3 md:top-5 z-10 glass-card flex items-center gap-3 px-4 py-2.5 md:px-6">
           <button
             onClick={() => setDrawerOpen(true)}
             aria-label="打开导航"
-            className="md:hidden rounded-md bg-zinc-800/60 hover:bg-zinc-800 px-2 py-1 text-zinc-200"
+            className="md:hidden rounded-md bg-white/5 hover:bg-white/10 px-2 py-1 text-zinc-200"
           >
             ☰
           </button>
@@ -130,14 +136,14 @@ function ProtectedShell() {
             </span>
             <button
               onClick={logout}
-              className="rounded-md bg-zinc-800/70 hover:bg-zinc-800 px-2.5 py-1 text-xs"
+              className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs transition-colors"
             >
               登出
             </button>
           </div>
         </header>
 
-        <main className="flex-1 min-w-0 p-6 md:p-8 overflow-auto">
+        <main className="flex-1 min-w-0 py-6 md:py-8 overflow-auto">
           <Outlet />
         </main>
       </div>
@@ -169,13 +175,25 @@ function NavItem({ to, label, hint, onClick }: { to: string; label: string; hint
       end={to === '/'}
       onClick={onClick}
       className={({ isActive }) =>
-        `flex items-center justify-between rounded-md px-2 py-1.5 ${
-          isActive ? 'bg-zinc-800/80 text-white' : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
+        `relative flex items-center justify-between rounded-xl px-3 py-2 transition-all duration-300 ${
+          isActive
+            ? 'text-white bg-gradient-to-r from-accent/15 to-accent/5 shadow-[inset_0_0_0_1px] shadow-accent/20'
+            : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200 hover:translate-x-1'
         }`
       }
     >
-      <span>{label}</span>
-      {hint && <span className="text-[10px] uppercase text-zinc-600">{hint}</span>}
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <span
+              className="absolute -left-[5px] top-1/4 bottom-1/4 w-[3px] rounded bg-gradient-to-b from-accent-hi to-accent shadow-[0_0_10px] shadow-accent/70"
+              aria-hidden
+            />
+          )}
+          <span>{label}</span>
+          {hint && <span className="text-[10px] uppercase text-zinc-600">{hint}</span>}
+        </>
+      )}
     </NavLink>
   )
 }

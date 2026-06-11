@@ -117,7 +117,7 @@ export default function Tunnels() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-2 text-sm font-medium shrink-0"
+          className="btn-accent shrink-0"
         >
           创建隧道
         </button>
@@ -129,7 +129,7 @@ export default function Tunnels() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+      <section className="glass-card rise overflow-hidden">
         {list.loading ? (
           <div className="p-6 text-sm text-zinc-400">加载中…</div>
         ) : list.items.length === 0 ? (
@@ -140,7 +140,7 @@ export default function Tunnels() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+                <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
                   <tr>
                     <th className="px-4 py-2.5 text-left font-medium">名称</th>
                     <th className="px-4 py-2.5 text-left font-medium">传输</th>
@@ -157,7 +157,7 @@ export default function Tunnels() {
                       <td className="px-4 py-3 align-top">
                         <Link
                           to={`/tunnels/${t.id}`}
-                          className="font-medium text-zinc-100 hover:text-indigo-300"
+                          className="font-medium text-zinc-100 hover:text-accent"
                         >
                           {t.name}
                         </Link>
@@ -181,7 +181,7 @@ export default function Tunnels() {
                         <button
                           type="button"
                           onClick={() => doRestart(t)}
-                          className="rounded-md bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-xs"
+                          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs"
                         >
                           重启
                         </button>
@@ -245,7 +245,7 @@ export default function Tunnels() {
               type="button"
               onClick={() => setConfirming(null)}
               disabled={busy}
-              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
             >
               取消
             </button>
@@ -392,7 +392,7 @@ function TunnelForm({
                 type="button"
                 onClick={() => moveUp(i)}
                 disabled={i === 0}
-                className="rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 px-2 py-1.5 text-xs"
+                className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-40 px-2 py-1.5 text-xs"
               >
                 ↑
               </button>
@@ -400,7 +400,7 @@ function TunnelForm({
                 type="button"
                 onClick={() => moveDown(i)}
                 disabled={i === chain.length - 1}
-                className="rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 px-2 py-1.5 text-xs"
+                className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-40 px-2 py-1.5 text-xs"
               >
                 ↓
               </button>
@@ -419,7 +419,7 @@ function TunnelForm({
         <button
           type="button"
           onClick={() => setChain((c) => [...c, ''])}
-          className="mt-2 rounded-md bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-xs"
+          className="mt-2 rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs"
         >
           + 添加节点
         </button>
@@ -439,14 +439,14 @@ function TunnelForm({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+          className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
         >
           取消
         </button>
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+          className="btn-accent"
         >
           {submitting ? '提交中…' : '创建'}
         </button>

@@ -35,7 +35,7 @@ export function Pagination({
             <select
               value={pageSize}
               onChange={(e) => onChangePageSize(Number(e.target.value))}
-              className="rounded-md bg-zinc-800 border border-white/10 px-1.5 py-0.5 text-xs"
+              className="rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-xs"
             >
               {pageSizeOptions.map((n) => (
                 <option key={n} value={n}>
@@ -49,7 +49,7 @@ export function Pagination({
           type="button"
           disabled={safePage <= 1}
           onClick={() => onChangePage(safePage - 1)}
-          className="rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5"
+          className="rounded-md bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5"
         >
           ← 上一页
         </button>
@@ -60,7 +60,7 @@ export function Pagination({
           type="button"
           disabled={safePage >= totalPages}
           onClick={() => onChangePage(safePage + 1)}
-          className="rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5"
+          className="rounded-md bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5"
         >
           下一页 →
         </button>

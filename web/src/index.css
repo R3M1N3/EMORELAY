@@ -1,5 +1,136 @@
 @import "tailwindcss";
 
+/* ============================================================
+   液态玻璃主题（方案 A 移植）
+   全站颜色由单一变量 --ui-accent 驱动：
+   管理员在设置页改色 → use-theme.ts 写入该变量 → 派生色全部联动。
+   ============================================================ */
+:root {
+  /* 默认强调色；运行时被 /api/ui-config 下发的 ui_accent_color 覆盖 */
+  --ui-accent: #67e8f9;
+  --accent: var(--ui-accent);
+  /* 静态回退（自定义属性层叠取最后一条,「回退在前」不适用,
+     故相对颜色语法版本放在下方 @supports 内覆盖） */
+  --accent-hi: var(--accent);
+  --line: color-mix(in oklab, var(--accent) 13%, rgb(255 255 255 / 0.03));
+  --glass: rgb(13 20 38 / 0.42);
+  --glass-hi: rgb(255 255 255 / 0.08);
+  --aurora-1: #0e4a6e;
+  --aurora-2: #134e4a;
+  --aurora-3: #1e3a8a;
+  /* 阻尼弹簧曲线：入场/悬停统一缓动 */
+  --spring: linear(0, 0.0185 1.8%, 0.0773 3.84%, 0.1971 6.61%, 0.3393 9.34%,
+    0.5018 12.22%, 0.6437 14.9%, 0.7763 17.63%, 0.8893 20.42%, 0.9794 23.26%,
+    1.0473 26.21%, 1.0934 29.32%, 1.1182 32.6%, 1.1245 36.21%, 1.1133 40.31%,
+    1.0876 45.15%, 1.0341 56.06%, 1.0102 65.41%, 0.9983 78.45%, 1);
+}
+
+/* 支持相对颜色语法的浏览器（2026 主流均支持）：派生高亮色与随强调色联动的极光三色 */
+@supports (color: oklch(from red l c h)) {
+  :root {
+    --accent-hi: oklch(from var(--accent) calc(l + 0.1) c h);
+    --aurora-1: oklch(from var(--accent) 0.34 calc(c * 0.65) h);
+    --aurora-2: oklch(from var(--accent) 0.32 calc(c * 0.6) calc(h - 38));
+    --aurora-3: oklch(from var(--accent) 0.3 calc(c * 0.7) calc(h + 42));
+  }
+}
+
+/* Tailwind v4 工具类映射：text-accent / bg-accent/10 / ring-accent 等 */
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-hi: var(--accent-hi);
+  --font-sans: "Hanken Grotesk", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Chivo Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ---------- 全局基底 ---------- */
+html { color-scheme: dark; }
+body { background: #04070f; }
+::selection { background: color-mix(in oklab, var(--accent) 35%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.14) transparent; }
+
+/* 自定义类必须进 @layer components:未分层声明会压过 Tailwind 分层工具类
+   (曾导致 glass-card 的 position:relative 击败 fixed/sticky,小屏 drawer 布局损坏)。 */
+@layer components {
+
+/* ---------- 极光背景层（Backdrop 组件使用） ---------- */
+.aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; filter: blur(90px) saturate(1.4); pointer-events: none; }
+.aurora i { position: absolute; border-radius: 50%; mix-blend-mode: screen; opacity: 0.5; will-change: transform; }
+.aurora i:nth-child(1) {
+  width: 55vw; height: 55vw; left: -12vw; top: -18vw;
+  background: radial-gradient(circle, var(--aurora-1) 0%, transparent 65%);
+  animation: drift-a 26s ease-in-out infinite alternate;
+}
+.aurora i:nth-child(2) {
+  width: 44vw; height: 44vw; right: -10vw; top: 4vw;
+  background: radial-gradient(circle, var(--aurora-2) 0%, transparent 65%);
+  animation: drift-b 31s ease-in-out infinite alternate;
+}
+.aurora i:nth-child(3) {
+  width: 38vw; height: 38vw; left: 28vw; bottom: -16vw;
+  background: radial-gradient(circle, var(--aurora-3) 0%, transparent 62%);
+  animation: drift-a 23s ease-in-out infinite alternate-reverse;
+}
+@keyframes drift-a { from { transform: translate(0, 0) scale(1); } to { transform: translate(9vw, 7vw) scale(1.25); } }
+@keyframes drift-b { from { transform: translate(0, 0) scale(1.1); } to { transform: translate(-11vw, 9vw) scale(0.85); } }
+
+/* 微弱网格 + 颗粒：空间参考系与物质感 */
+.grid-bg {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.35;
+  background:
+    linear-gradient(color-mix(in oklab, var(--accent) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--accent) 5%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, black 30%, transparent 80%);
+}
+.grain {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------- 玻璃面板组件类 ---------- */
+.glass-card {
+  position: relative; border-radius: 1.25rem;
+  background: var(--glass);
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 50px -20px rgb(0 0 0 / 0.7), inset 0 1px 0 var(--glass-hi);
+}
+/* 顶部受光高光弧线 */
+.glass-card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent 4%, rgb(255 255 255 / 0.32) 50%, transparent 96%);
+  opacity: 0.6;
+}
+/* 入场：弹簧上浮（数据刷新不重挂载，仅首载播放一次） */
+.rise { animation: rise 0.7s var(--spring) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(22px) scale(0.99); } to { opacity: 1; transform: none; } }
+
+/* 主按钮：强调色玻璃 */
+.btn-accent {
+  border-radius: 0.5rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500;
+  color: white; cursor: pointer;
+  background: linear-gradient(120deg,
+    color-mix(in oklab, var(--accent) 36%, transparent),
+    color-mix(in oklab, var(--accent) 20%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.12);
+  transition: filter 0.25s, transform 0.4s var(--spring);
+}
+.btn-accent:hover:not(:disabled) { filter: brightness(1.22); transform: translateY(-1px); }
+.btn-accent:disabled { opacity: 0.45; cursor: not-allowed; filter: saturate(0.4); }
+
+} /* @layer components */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01s !important; transition-duration: 0.01s !important;
+    animation-delay: 0s !important; animation-iteration-count: 1 !important;
+  }
+}
+
 @keyframes slide-in {
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }

@@ -76,6 +76,6 @@ function kindCls(k: ToastKind): string {
     case 'error':
       return 'border-red-500/40 bg-red-500/15 text-red-100'
     case 'info':
-      return 'border-zinc-500/40 bg-zinc-800/80 text-zinc-100'
+      return 'border-[var(--line)] bg-[var(--glass)] text-zinc-100'
   }
 }

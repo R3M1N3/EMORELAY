@@ -80,7 +80,7 @@ export default function UserDashboard() {
       </div>
 
       {quota != null && pct != null && (
-        <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+        <div className="glass-card rise p-5">
           <div className="flex items-center justify-between text-xs text-zinc-400 mb-2">
             <span>30 天滚动用量</span>
             <span>
@@ -96,12 +96,12 @@ export default function UserDashboard() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+      <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">我的规则</h3>
         {myRules.length === 0 ? (
           <p className="text-sm text-zinc-500">
             尚无规则。前往
-            <Link to="/rules" className="text-indigo-300 hover:text-indigo-200 mx-1">
+            <Link to="/rules" className="text-accent hover:text-accent-hi mx-1">
               规则页
             </Link>
             新建你的第一条转发。
@@ -111,14 +111,14 @@ export default function UserDashboard() {
             {myRules.map((r) => (
               <div
                 key={r.id}
-                className="flex items-center justify-between rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2 text-sm"
+                className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm"
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <StatusDot kind={r.enabled ? 'on' : 'off'} />
                   <div className="min-w-0">
                     <Link
                       to={`/rules/${r.id}`}
-                      className="font-medium truncate hover:text-indigo-300"
+                      className="font-medium truncate hover:text-accent"
                     >
                       {r.name}
                     </Link>

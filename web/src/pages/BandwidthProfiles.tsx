@@ -79,7 +79,7 @@ export default function BandwidthProfiles() {
         </div>
         <button
           onClick={() => setEditing({ mode: 'create' })}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-2 text-sm font-medium shrink-0"
+          className="btn-accent shrink-0"
         >
           新增限速配置
         </button>
@@ -91,7 +91,7 @@ export default function BandwidthProfiles() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+      <section className="glass-card rise overflow-hidden">
         {list.loading ? (
           <div className="p-6 text-sm text-zinc-400">加载中…</div>
         ) : list.items.length === 0 ? (
@@ -99,7 +99,7 @@ export default function BandwidthProfiles() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium">名称</th>
                   <th className="px-4 py-2.5 text-right font-medium">带宽 (Mbps)</th>
@@ -128,7 +128,7 @@ export default function BandwidthProfiles() {
                       <button
                         type="button"
                         onClick={() => setEditing({ mode: 'edit', profile: p })}
-                        className="rounded-md bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-xs"
+                        className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs"
                       >
                         编辑
                       </button>
@@ -189,7 +189,7 @@ export default function BandwidthProfiles() {
               type="button"
               onClick={() => setConfirming(null)}
               disabled={busy}
-              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
             >
               取消
             </button>
@@ -312,14 +312,14 @@ function ProfileForm({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+          className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
         >
           取消
         </button>
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+          className="btn-accent"
         >
           {submitting ? '提交中…' : mode === 'create' ? '创建' : '保存'}
         </button>

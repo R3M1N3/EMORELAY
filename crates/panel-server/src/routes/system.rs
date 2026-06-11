@@ -205,6 +205,27 @@ pub async fn audit_logs(
     }))
 }
 
+// ============= ui config (公开) =============
+
+#[derive(Serialize)]
+pub struct UiConfig {
+    /// 全局强调色(#rrggbb)。未配置时为 None,前端用内置默认色。
+    pub accent_color: Option<String>,
+}
+
+/// 免鉴权:登录页与普通用户都要能拿到管理员设置的主题色,
+/// 只暴露这一个非敏感字段,不暴露其余 settings。
+pub async fn ui_config(State(state): State<AppState>) -> ApiResult<Json<UiConfig>> {
+    let accent: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM system_settings WHERE key = 'ui_accent_color'",
+    )
+    .fetch_optional(&state.pool)
+    .await?;
+    Ok(Json(UiConfig {
+        accent_color: accent.filter(|v| !v.is_empty()),
+    }))
+}
+
 // ============= settings =============
 
 #[derive(Serialize)]
@@ -245,6 +266,7 @@ pub async fn update_settings(
         "stats_retention_days",
         "agent_control_endpoint",
         "notify_webhook_url",
+        "ui_accent_color",
     ];
 
     for (k, v) in req.settings.iter() {
@@ -338,6 +360,20 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
                     "agent_control_endpoint scheme 必须是 http/https,得到 {s}"
                 ))),
             }
+        }
+        "ui_accent_color" => {
+            if value.is_empty() {
+                return Ok(()); // 空 = 恢复默认色
+            }
+            let hex_ok = value.len() == 7
+                && value.starts_with('#')
+                && value[1..].chars().all(|c| c.is_ascii_hexdigit());
+            if !hex_ok {
+                return Err(ApiError::BadRequest(
+                    "ui_accent_color 必须是 #rrggbb 格式的十六进制颜色".into(),
+                ));
+            }
+            Ok(())
         }
         "notify_webhook_url" => {
             if value.is_empty() {

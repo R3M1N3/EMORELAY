@@ -8,12 +8,14 @@ import {
 } from '../lib/api'
 import { fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
+import { applyAccent } from '../lib/use-theme'
 
 interface SettingsFormState {
   reserved_ports: string
   stats_retention_days: string
   agent_control_endpoint: string
   notify_webhook_url: string
+  ui_accent_color: string
 }
 
 interface SettingsState {
@@ -31,6 +33,7 @@ const EMPTY_FORM: SettingsFormState = {
   stats_retention_days: '',
   agent_control_endpoint: '',
   notify_webhook_url: '',
+  ui_accent_color: '',
 }
 
 export default function Settings() {
@@ -73,6 +76,7 @@ export default function Settings() {
             agent_control_endpoint: initial.agent_control_endpoint ?? '',
             // 未配置时 key 不存在于 settings 表,必须 ?? '' 兜底。
             notify_webhook_url: initial.notify_webhook_url ?? '',
+            ui_accent_color: initial.ui_accent_color ?? '',
           },
           loading: false,
         }))
@@ -102,6 +106,7 @@ export default function Settings() {
         'stats_retention_days',
         'agent_control_endpoint',
         'notify_webhook_url',
+        'ui_accent_color',
       ]
       for (const k of keys) {
         if (f[k] !== (init[k] ?? '')) diff[k] = f[k]
@@ -124,9 +129,12 @@ export default function Settings() {
           stats_retention_days: resp.settings.stats_retention_days ?? '',
           agent_control_endpoint: resp.settings.agent_control_endpoint ?? '',
           notify_webhook_url: resp.settings.notify_webhook_url ?? '',
+          ui_accent_color: resp.settings.ui_accent_color ?? '',
         },
         savedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
       }))
+      // 本端立即生效,不等 30s 轮询;其余客户端由轮询跟进。
+      applyAccent(resp.settings.ui_accent_color ?? null)
       toast.success('设置已保存')
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '保存失败'
@@ -156,10 +164,7 @@ export default function Settings() {
 
       <SecurityCard data={security} />
 
-      <form
-        onSubmit={onSubmit}
-        className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 space-y-4 max-w-2xl"
-      >
+      <form onSubmit={onSubmit} className="glass-card rise p-5 space-y-4 max-w-2xl">
         <div>
           <label className={fieldLabelCls}>Agent 上报端点</label>
           <input
@@ -225,6 +230,40 @@ export default function Settings() {
           </p>
         </div>
 
+        <div>
+          <label className={fieldLabelCls}>全局强调色 (ui_accent_color)</label>
+          <div className="flex items-center gap-3">
+            <input
+              type="color"
+              value={/^#[0-9a-fA-F]{6}$/.test(state.form.ui_accent_color) ? state.form.ui_accent_color : '#67e8f9'}
+              onChange={(e) => set('ui_accent_color', e.target.value)}
+              aria-label="选择强调色"
+              className="h-9 w-12 cursor-pointer rounded-lg border border-white/10 bg-white/[0.04] p-1"
+            />
+            <input
+              type="text"
+              value={state.form.ui_accent_color}
+              onChange={(e) => set('ui_accent_color', e.target.value.trim())}
+              className={`${fieldInputCls} font-mono max-w-[10rem]`}
+              placeholder="#67e8f9（留空 = 默认）"
+            />
+            {state.form.ui_accent_color !== '' && (
+              <button
+                type="button"
+                onClick={() => set('ui_accent_color', '')}
+                className="text-xs text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
+              >
+                恢复默认
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            #rrggbb 格式。保存后全站配色（按钮/导航/背景极光）随之联动，
+            所有已登录客户端最迟 30 秒内自动跟进，无需刷新。
+            建议选用较亮的颜色，深色会降低暗底上的文字对比度。
+          </p>
+        </div>
+
         {state.saveError && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {state.saveError}
@@ -237,17 +276,13 @@ export default function Settings() {
         )}
 
         <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={state.saving}
-            className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium"
-          >
+          <button type="submit" disabled={state.saving} className="btn-accent">
             {state.saving ? '保存中…' : '保存设置'}
           </button>
         </div>
       </form>
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+      <section className="glass-card rise overflow-hidden">
         <div className="px-5 py-3 border-b border-white/5">
           <h3 className="text-sm font-medium text-zinc-200">最近审计日志</h3>
           <p className="text-[11px] text-zinc-500">最近 50 条操作记录</p>
@@ -313,7 +348,7 @@ export default function Settings() {
 function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
   if (data === 'loading') {
     return (
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 text-sm text-zinc-400">
+      <section className="glass-card p-5 text-sm text-zinc-400">
         安全状态加载中…
       </section>
     )
@@ -349,17 +384,17 @@ function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
         hint: '开发模式(PANEL_DEV_DISABLE_MTLS=1);生产移除该 env 即默认启用内置 CA mTLS',
       }
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+    <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">安全状态</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2">
+        <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
           <div className="text-[11px] text-zinc-500">JWT 密钥</div>
           <div className={`text-sm mt-0.5 ${jwtStatus.cls}`}>{jwtStatus.text}</div>
           <div className="text-[11px] text-zinc-500 mt-0.5">
             长度 {data.jwt_secret_length} 字节 · 过期 {data.jwt_expiry_hours} 小时
           </div>
         </div>
-        <div className="rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2">
+        <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
           <div className="text-[11px] text-zinc-500">Agent 鉴权方式</div>
           <div className={`text-sm mt-0.5 ${tlsStatus.cls}`}>{tlsStatus.text}</div>
           <div className="text-[11px] text-zinc-500 mt-0.5">{tlsStatus.hint}</div>

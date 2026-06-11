@@ -119,7 +119,7 @@ function AdminDashboard() {
         <Stat label="24h 转发流量" value={today} hint={todayHint} accent="sky" />
       </div>
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+      <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">节点状态</h3>
         {data.nodes.length === 0 ? (
           <p className="text-sm text-zinc-500">尚无节点。前往节点页添加。</p>
@@ -132,7 +132,7 @@ function AdminDashboard() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+      <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">最近错误</h3>
         {recentErrors === 'loading' ? (
           <p className="text-sm text-zinc-500">加载中…</p>
@@ -153,7 +153,7 @@ function AdminDashboard() {
 }
 
 const ACCENT: Record<string, string> = {
-  indigo: 'from-indigo-500/15 ring-indigo-500/30',
+  indigo: 'from-accent/15 ring-accent/30',
   violet: 'from-violet-500/15 ring-violet-500/30',
   emerald: 'from-emerald-500/15 ring-emerald-500/30',
   amber: 'from-amber-500/15 ring-amber-500/30',
@@ -200,7 +200,7 @@ function NodeRow({ node }: { node: NodeView }) {
       ? 'bg-zinc-500'
       : 'bg-amber-400'
   return (
-    <div className="flex items-center justify-between rounded-lg border border-white/5 bg-zinc-900/60 px-3 py-2">
+    <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
       <div className="flex items-center gap-3 min-w-0">
         <span className={`inline-block h-2 w-2 rounded-full shadow ${dot}`} aria-hidden />
         <div className="min-w-0">

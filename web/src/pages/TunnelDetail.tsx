@@ -131,11 +131,11 @@ export default function TunnelDetail() {
       </div>
 
       {/* hop 链表 */}
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+      <section className="glass-card rise overflow-hidden">
         <h3 className="px-5 py-3 text-sm font-medium text-zinc-200 border-b border-white/5">节点链</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+            <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
               <tr>
                 <th className="px-4 py-2.5 text-left font-medium">序号</th>
                 <th className="px-4 py-2.5 text-left font-medium">角色</th>
@@ -164,7 +164,7 @@ export default function TunnelDetail() {
       </section>
 
       {/* 关联规则表 */}
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+      <section className="glass-card rise overflow-hidden">
         <h3 className="px-5 py-3 text-sm font-medium text-zinc-200 border-b border-white/5">
           关联规则
           <span className="ml-2 text-xs text-zinc-500">({detail.rules_count})</span>
@@ -174,7 +174,7 @@ export default function TunnelDetail() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium">名称</th>
                   <th className="px-4 py-2.5 text-left font-medium">协议</th>
@@ -188,7 +188,7 @@ export default function TunnelDetail() {
                     <td className="px-4 py-3">
                       <Link
                         to={`/rules/${r.id}`}
-                        className="font-medium text-zinc-100 hover:text-indigo-300"
+                        className="font-medium text-zinc-100 hover:text-accent"
                       >
                         {r.name}
                       </Link>
@@ -217,7 +217,7 @@ export default function TunnelDetail() {
 function HopRoleBadge({ role }: { role: string }) {
   const cls =
     role === 'Entry'
-      ? 'bg-indigo-500/20 text-indigo-300'
+      ? 'bg-accent/10 text-accent'
       : role === 'Exit'
         ? 'bg-emerald-500/20 text-emerald-300'
         : 'bg-zinc-700/50 text-zinc-300'

@@ -297,11 +297,11 @@ export default function Rules() {
                     toast.error(e instanceof ApiError ? e.message : '导出失败')
                   }
                 }}
-                className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+                className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
               >
                 导出
               </button>
-              <label className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm cursor-pointer">
+              <label className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm cursor-pointer">
                 导入
                 <input
                   type="file"
@@ -316,7 +316,7 @@ export default function Rules() {
             onClick={() => setEditing({ mode: 'create' })}
             disabled={nodeList.length === 0}
             title={nodeList.length === 0 ? '请先创建节点' : ''}
-            className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium shrink-0"
+            className="btn-accent shrink-0"
           >
             新增规则
           </button>
@@ -378,7 +378,7 @@ export default function Rules() {
           </div>
           <button
             type="submit"
-            className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
           >
             搜索
           </button>
@@ -391,7 +391,7 @@ export default function Rules() {
         </div>
       )}
 
-      <section className="rounded-2xl border border-white/10 bg-zinc-900/40 overflow-hidden">
+      <section className="glass-card rise overflow-hidden">
         {list.loading ? (
           <div className="p-6 text-sm text-zinc-400">加载中…</div>
         ) : list.items.length === 0 ? (
@@ -403,7 +403,7 @@ export default function Rules() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium">名称</th>
                   {isAdmin && <th className="px-4 py-2.5 text-left font-medium">归属</th>}
@@ -489,7 +489,7 @@ export default function Rules() {
               type="button"
               onClick={() => setConfirming(null)}
               disabled={busy}
-              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
             >
               取消
             </button>
@@ -529,7 +529,8 @@ export default function Rules() {
           </div>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80 sticky top-0">
+              {/* sticky 表头必须近实底:Modal 底色变透明后,半透明表头滚动时会与行文字叠影。 */}
+              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-950 sticky top-0">
                 <tr>
                   <th className="px-3 py-2 text-left font-medium">#</th>
                   <th className="px-3 py-2 text-left font-medium">规则</th>
@@ -568,7 +569,7 @@ export default function Rules() {
               type="button"
               onClick={() => setImporting(null)}
               disabled={importing.submitting}
-              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
             >
               取消
             </button>
@@ -576,7 +577,7 @@ export default function Rules() {
               type="button"
               onClick={() => void confirmImport()}
               disabled={importing.submitting || refreshing}
-              className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+              className="btn-accent"
             >
               {importing.submitting ? '导入中…' : refreshing ? '刷新中…' : '确认导入'}
             </button>
@@ -616,7 +617,7 @@ function RuleRow({
       <td className="px-4 py-3 align-top">
         <Link
           to={`/rules/${rule.id}`}
-          className="font-medium text-zinc-100 hover:text-indigo-300"
+          className="font-medium text-zinc-100 hover:text-accent"
         >
           {rule.name}
         </Link>
@@ -659,7 +660,7 @@ function RuleRow({
           type="button"
           onClick={onToggle}
           disabled={acting}
-          className="rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 px-2.5 py-1 text-xs"
+          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
         >
           {rule.enabled ? '禁用' : '启用'}
         </button>
@@ -667,7 +668,7 @@ function RuleRow({
           type="button"
           onClick={onRestart}
           disabled={acting}
-          className="ml-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 px-2.5 py-1 text-xs"
+          className="ml-1.5 rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
         >
           重启
         </button>
@@ -675,7 +676,7 @@ function RuleRow({
           type="button"
           onClick={onEdit}
           disabled={acting}
-          className="ml-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 px-2.5 py-1 text-xs"
+          className="ml-1.5 rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
         >
           编辑
         </button>
@@ -1051,14 +1052,14 @@ export function RuleForm({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+          className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
         >
           取消
         </button>
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+          className="btn-accent"
         >
           {submitting ? '提交中…' : mode === 'create' ? '创建' : '保存'}
         </button>

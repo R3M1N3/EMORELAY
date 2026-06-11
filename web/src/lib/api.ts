@@ -446,6 +446,8 @@ export const system = {
   getSettings: () => api.get<SettingsResponse>('/api/system/settings'),
   updateSettings: (settings: Record<string, string>) =>
     api.patch<SettingsResponse>('/api/system/settings', { settings }),
+  // 免鉴权:全局 UI 主题(强调色),登录页与普通用户共用。
+  uiConfig: () => api.get<{ accent_color: string | null }>('/api/ui-config'),
 }
 
 /**

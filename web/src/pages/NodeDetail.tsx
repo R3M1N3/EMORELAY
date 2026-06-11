@@ -143,7 +143,7 @@ export default function NodeDetail() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+        <section className="glass-card rise p-5">
           <h3 className="text-sm font-medium text-zinc-200 mb-3">基本信息</h3>
           <dl className="text-sm space-y-2">
             <Row k="区域" v={node.region || '—'} />
@@ -159,7 +159,7 @@ export default function NodeDetail() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+        <section className="glass-card rise p-5">
           <h3 className="text-sm font-medium text-zinc-200 mb-3">当前资源</h3>
           <div className="grid grid-cols-3 gap-3 text-sm">
             <Stat label="CPU" value={`${stats.current.cpu_usage.toFixed(1)}%`} />
@@ -180,7 +180,7 @@ export default function NodeDetail() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <SeriesCard title="rx 字节 / 分钟" values={rx} color="stroke-indigo-400" fill="fill-indigo-500/10" />
+        <SeriesCard title="rx 字节 / 分钟" values={rx} color="stroke-accent" fill="fill-accent/10" />
         <SeriesCard title="tx 字节 / 分钟" values={tx} color="stroke-emerald-400" fill="fill-emerald-500/10" />
       </div>
 
@@ -197,7 +197,7 @@ export default function NodeDetail() {
               type="button"
               onClick={() => setConfirmingRevoke(false)}
               disabled={revoking}
-              className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
             >
               取消
             </button>
@@ -238,7 +238,7 @@ export default function NodeDetail() {
             <button
               type="button"
               onClick={() => setRevokedCreds(null)}
-              className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-2 text-xs font-medium"
+              className="btn-accent"
             >
               我已保存
             </button>
@@ -269,7 +269,7 @@ function CredBlock({
             e.preventDefault()
             onCopy(value, label)
           }}
-          className="rounded-md bg-zinc-800 hover:bg-zinc-700 px-2 py-0.5 text-[11px] text-zinc-200"
+          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2 py-0.5 text-[11px] text-zinc-200"
         >
           复制
         </button>
@@ -293,7 +293,7 @@ function SeriesCard({
   fill: string
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
+    <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">{title}</h3>
       <Sparkline values={values} colorClass={color} fillClass={fill} />
     </section>
@@ -311,7 +311,7 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/5 bg-zinc-950/40 p-3">
+    <div className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
       <div className="text-[11px] text-zinc-500">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
