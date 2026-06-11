@@ -26,6 +26,8 @@ rustls-pemfile = "2"
 # P3b WSS transport:ws 协议层 over 自管 TLS 流(不用 tungstenite 的 tls feature)。
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# P3c:隧道 server 端校验 client cert SAN = 上一跳(防同 CA 凭据横向连入)。
+x509-parser = "0.16"
 
 [dev-dependencies]
 # token bucket 测试用 start_paused 虚拟时钟(tokio::time::advance)。

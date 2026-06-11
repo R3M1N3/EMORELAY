@@ -58,12 +58,18 @@ impl TunnelTransport for WssTransport {
     }
 
     async fn bind(&self, addr: &str) -> Result<Box<dyn TunnelListener>> {
+        let expect = self
+            .tls
+            .expect_client_san
+            .clone()
+            .context("entry hop (ordinal 0) must not bind a tunnel listener")?;
         let l = TcpListener::bind(addr)
             .await
             .with_context(|| format!("tunnel wss bind {addr}"))?;
         Ok(Box::new(WssTunnelListener {
             inner: l,
             acceptor: self.tls.acceptor.clone(),
+            expect_client_san: expect,
         }))
     }
 }
@@ -71,6 +77,7 @@ impl TunnelTransport for WssTransport {
 struct WssTunnelListener {
     inner: TcpListener,
     acceptor: tokio_rustls::TlsAcceptor,
+    expect_client_san: String,
 }
 
 #[tonic::async_trait]
@@ -82,6 +89,7 @@ impl TunnelListener for WssTunnelListener {
             .accept(tcp)
             .await
             .context("tunnel wss tls handshake")?;
+        crate::tunnel::tls_transport::verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
         let ws = accept_async(tls).await.context("tunnel ws server handshake")?;
         Ok(Box::new(WsByteStream::new(ws)))
     }

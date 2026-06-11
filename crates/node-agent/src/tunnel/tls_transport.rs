@@ -4,6 +4,8 @@
 //! next_hop_addr 只用于路由。server 端 WebPkiClientVerifier 强制 client cert
 //! 链到同 CA。TLS 握手在 accept() 内串行完成:hop 仅被上一跳(信任域内)连入,
 //! 恶意半开连接风险低,MVP 接受。
+//!
+//! P3c 补充:accept 后校验 client cert SAN = 上一跳(防同 CA 凭据横向连入)。
 use anyhow::{Context, Result};
 use emorelay_common::control::v1::TunnelContext;
 use std::net::SocketAddr;
@@ -22,6 +24,8 @@ pub struct TlsTransport {
     pub(crate) connector: TlsConnector,
     pub(crate) acceptor: TlsAcceptor,
     pub(crate) dial_sni: ServerName<'static>,
+    /// server 端期望的 client cert SAN(= 上一跳)。entry(ordinal 0)无上一跳 → None,不允许 bind。
+    pub(crate) expect_client_san: Option<String>,
 }
 
 impl TlsTransport {
@@ -58,11 +62,44 @@ impl TlsTransport {
             ctx.tunnel_id,
             ctx.self_ordinal + 1
         );
+        let expect_client_san = ctx.self_ordinal.checked_sub(1).map(|prev| {
+            format!("tunnel-{}-hop-{}.emorelay.internal", ctx.tunnel_id, prev)
+        });
         Ok(Self {
             connector: TlsConnector::from(Arc::new(client_cfg)),
             acceptor: TlsAcceptor::from(Arc::new(server_cfg)),
             dial_sni: ServerName::try_from(sni).context("invalid tunnel sni")?,
+            expect_client_san,
         })
+    }
+}
+
+/// 握手后校验 client cert 的 SAN 含 expected(= 上一跳)。
+/// WebPkiClientVerifier 只验链;这里补「持证者必须是上一跳」的身份绑定。
+pub(crate) fn verify_client_san(
+    conn: &tokio_rustls::rustls::ServerConnection,
+    expected: &str,
+) -> Result<()> {
+    let certs = conn
+        .peer_certificates()
+        .context("tunnel peer presented no client certificate")?;
+    let leaf = certs.first().context("empty client certificate chain")?;
+    let (_, cert) = x509_parser::parse_x509_certificate(leaf.as_ref())
+        .map_err(|e| anyhow::anyhow!("parse tunnel client cert: {e}"))?;
+    let ok = cert
+        .subject_alternative_name()
+        .ok()
+        .flatten()
+        .map(|ext| {
+            ext.value.general_names.iter().any(|n| {
+                matches!(n, x509_parser::extensions::GeneralName::DNSName(d) if *d == expected)
+            })
+        })
+        .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        anyhow::bail!("tunnel client cert SAN does not match previous hop {expected}")
     }
 }
 
@@ -95,12 +132,17 @@ impl TunnelTransport for TlsTransport {
     }
 
     async fn bind(&self, addr: &str) -> Result<Box<dyn TunnelListener>> {
+        let expect = self
+            .expect_client_san
+            .clone()
+            .context("entry hop (ordinal 0) must not bind a tunnel listener")?;
         let l = TcpListener::bind(addr)
             .await
             .with_context(|| format!("tunnel tls bind {addr}"))?;
         Ok(Box::new(TlsTunnelListener {
             inner: l,
             acceptor: self.acceptor.clone(),
+            expect_client_san: expect,
         }))
     }
 }
@@ -108,6 +150,7 @@ impl TunnelTransport for TlsTransport {
 struct TlsTunnelListener {
     inner: TcpListener,
     acceptor: TlsAcceptor,
+    expect_client_san: String,
 }
 
 #[tonic::async_trait]
@@ -119,6 +162,7 @@ impl TunnelListener for TlsTunnelListener {
             .accept(tcp)
             .await
             .context("tunnel tls server handshake")?;
+        verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
         Ok(Box::new(tls))
     }
 
@@ -173,6 +217,41 @@ mod tests {
         conn.read_exact(&mut buf).await.unwrap();
         assert_eq!(&buf, b"shhh");
         server.await.unwrap();
+    }
+
+    /// 同 CA、链合法、但 client SAN 指向 hop-7 而非上一跳 hop-0:
+    /// hop-1 server 必须在握手后拒绝(SAN 校验)。防同 CA 凭据横向连入。
+    #[tokio::test]
+    async fn tls_server_rejects_client_cert_with_wrong_hop_san() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let data_dir = dir.path().display().to_string();
+        // hop-0 目录:client SAN 伪造为 hop-7;hop-1 目录正常。
+        crate::tunnel::testutil::write_hop_creds_matrix(&data_dir, 9, &[(0, 7), (1, 1)]).await;
+
+        let server_t = TlsTransport::load(&data_dir, &ctx(9, 1)).unwrap();
+        let client_t = TlsTransport::load(&data_dir, &ctx(9, 0)).unwrap();
+        let mut listener = server_t.bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client = tokio::spawn(async move {
+            // 链验证在握手层通过,dial 可能成功;server 在 accept 内做 SAN 校验后拒绝。
+            let _ = client_t.dial(&addr.to_string()).await;
+        });
+        assert!(
+            listener.accept().await.is_err(),
+            "client SAN 不是上一跳(hop-0)必须被拒"
+        );
+        let _ = client.await;
+    }
+
+    /// entry(self_ordinal=0)没有上一跳,不允许 bind 隧道 listener(防御)。
+    #[tokio::test]
+    async fn tls_entry_hop_must_not_bind() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let data_dir = dir.path().display().to_string();
+        write_hop_creds_pair(&data_dir, 9, 0, 1).await;
+        let t = TlsTransport::load(&data_dir, &ctx(9, 0)).unwrap();
+        assert!(t.bind("127.0.0.1:0").await.is_err());
     }
 
     /// 非 TLS 裸连必须被拒(握手失败即 accept Err;「合法 TLS 但无 client cert」
