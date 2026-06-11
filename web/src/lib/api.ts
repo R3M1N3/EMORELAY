@@ -112,6 +112,7 @@ export interface RuleView {
   enabled: boolean
   bandwidth_profile_id: number | null
   bandwidth_mbps: number | null
+  tunnel_id: number | null
   rx_bytes: number
   tx_bytes: number
   connection_count: number
@@ -176,6 +177,7 @@ export interface CreateRuleRequest {
   target_host: string
   target_port: number
   bandwidth_profile_id?: number | null
+  tunnel_id?: number | null
 }
 
 export interface UpdateRuleRequest {
@@ -485,6 +487,71 @@ export const rules = {
       `/api/rules/import?strategy=${strategy}&dry_run=${dryRun ? 1 : 0}`,
       items,
     ),
+}
+
+export interface TunnelView {
+  id: number
+  name: string
+  transport: 'tcp' | 'tls' | 'wss'
+  status: 'up' | 'degraded' | 'down' | 'unknown'
+  hops_count: number
+  rules_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TunnelHopView {
+  ordinal: number
+  node_id: number
+  inter_port: number | null
+}
+
+export interface TunnelRuleRef {
+  id: number
+  name: string
+  protocol: string
+  listen_port: number
+  enabled: boolean
+}
+
+export interface TunnelDetailView {
+  id: number
+  name: string
+  transport: TunnelView['transport']
+  status: TunnelView['status']
+  hops: TunnelHopView[]
+  rules_count: number
+  rules: TunnelRuleRef[]
+  created_at: string
+  updated_at: string
+}
+
+export interface TunnelListResponse {
+  items: TunnelView[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface CreateTunnelRequest {
+  name: string
+  transport: TunnelView['transport']
+  node_ids: number[]
+}
+
+export const tunnels = {
+  list: (q: { page?: number; page_size?: number } = {}) => {
+    const sp = new URLSearchParams()
+    if (q.page) sp.set('page', String(q.page))
+    if (q.page_size) sp.set('page_size', String(q.page_size))
+    return api.get<TunnelListResponse>(`/api/tunnels?${sp.toString()}`)
+  },
+  get: (id: number) => api.get<TunnelDetailView>(`/api/tunnels/${id}`),
+  create: (req: CreateTunnelRequest) => api.post<{ id: number }>('/api/tunnels', req),
+  update: (id: number, req: { name: string }) => api.patch<TunnelView>(`/api/tunnels/${id}`, req),
+  del: (id: number) => api.del<{ ok: boolean }>(`/api/tunnels/${id}`),
+  restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/tunnels/${id}/restart`),
+  status: (id: number) => api.get<{ id: number; status: TunnelView['status'] }>(`/api/tunnels/${id}/status`),
 }
 
 // ============ 工具 ============

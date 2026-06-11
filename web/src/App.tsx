@@ -9,6 +9,8 @@ import BandwidthProfiles from './pages/BandwidthProfiles'
 import Settings from './pages/Settings'
 import RuleDetail from './pages/RuleDetail'
 import NodeDetail from './pages/NodeDetail'
+import Tunnels from './pages/Tunnels'
+import TunnelDetail from './pages/TunnelDetail'
 import { AuthProvider } from './lib/auth'
 import { useAuth } from './lib/use-auth'
 import { ToastProvider } from './lib/toast'
@@ -26,6 +28,8 @@ export default function App() {
               <Route path="nodes/:id" element={<NodeDetail />} />
               <Route path="rules" element={<Rules />} />
               <Route path="rules/:id" element={<RuleDetail />} />
+              <Route path="tunnels" element={<Tunnels />} />
+              <Route path="tunnels/:id" element={<TunnelDetail />} />
               <Route path="users" element={<Users />} />
               <Route path="bandwidth-profiles" element={<BandwidthProfiles />} />
               <Route path="settings" element={<Settings />} />
@@ -74,6 +78,7 @@ function ProtectedShell() {
           <NavItem to="/" label="概览" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/nodes" label="节点" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/rules" label="规则" onClick={() => setDrawerOpen(false)} />
+          <NavItem to="/tunnels" label="隧道" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/users" label="用户" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/bandwidth-profiles" label="限速" onClick={() => setDrawerOpen(false)} />
           <NavItem to="/settings" label="设置" onClick={() => setDrawerOpen(false)} />
@@ -135,6 +140,7 @@ function CurrentRoute() {
     '/users': '用户',
     '/bandwidth-profiles': '限速',
     '/settings': '设置',
+    '/tunnels': '隧道',
   }
   const base = '/' + (loc.pathname.split('/')[1] || '')
   const label = labels[base] ?? '详情'
