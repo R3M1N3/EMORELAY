@@ -36,3 +36,5 @@ time = "0.3"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
+# P3c 隧道 e2e:in-process 起真 agent。
+node-agent = { path = "../node-agent" }
