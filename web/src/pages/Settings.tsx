@@ -177,6 +177,10 @@ export default function Settings() {
           <p className="text-[11px] text-zinc-500 mt-1">
             Agent 默认 gRPC 连入地址。新建节点的「安装命令」会嵌入这个值；
             生产建议用 https。留空表示未配置（节点详情页的安装命令按钮会禁用）。
+            <span className="text-amber-400/90">
+              必须是 Agent 能直连本机的域名/IP——不能填 CDN/Cloudflare 橙云代理域名
+              （CDN 不转发 50051），且需与安装时的 PANEL_PUBLIC_HOST 一致，否则证书校验失败。
+            </span>
           </p>
         </div>
 
