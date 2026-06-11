@@ -99,6 +99,11 @@ async fn run_session(
 
     let mut command_stream = client.subscribe_commands().await?;
 
+    let mut retry = crate::retry::RetryQueue::default();
+    let mut retry_tick = interval(Duration::from_secs(5));
+    retry_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    retry_tick.tick().await;
+
     let mut hb_tick = interval(HEARTBEAT_INTERVAL);
     hb_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     hb_tick.tick().await;
@@ -112,8 +117,12 @@ async fn run_session(
             msg = command_stream.message() => {
                 match msg {
                     Ok(Some(cmd)) => {
-                        if let Err(e) = handle_command(&manager, &store, cmd, &config.data_dir).await {
-                            error!(error = ?e, "command apply failed");
+                        retry.supersede(&cmd);
+                        if let Err(e) =
+                            handle_command(&manager, &store, cmd.clone(), &config.data_dir).await
+                        {
+                            error!(error = ?e, "command apply failed; queued for retry");
+                            retry.push_failed(cmd, 0, std::time::Instant::now());
                         }
                     }
                     Ok(None) => {
@@ -144,6 +153,19 @@ async fn run_session(
                 }
                 if let Err(e) = report_stats(config, &mut client, &stats).await {
                     warn!(error = ?e, "report_stats failed");
+                }
+            }
+            _ = retry_tick.tick() => {
+                let now = std::time::Instant::now();
+                for p in retry.take_due(now) {
+                    if let Err(e) =
+                        handle_command(&manager, &store, p.cmd.clone(), &config.data_dir).await
+                    {
+                        error!(error = ?e, attempts = p.attempts, "command retry failed");
+                        retry.push_failed(p.cmd, p.attempts, now);
+                    } else {
+                        info!(attempts = p.attempts, "command retry succeeded");
+                    }
                 }
             }
         }
