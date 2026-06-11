@@ -63,6 +63,18 @@ export const fieldInputCls =
 
 export const fieldLabelCls = 'block text-xs font-medium text-zinc-300 mb-1.5'
 
+// 权限兜底:admin-only 页面对普通用户渲染此卡(直接输 URL 也不再看到裸 forbidden)。
+export function ForbiddenCard() {
+  return (
+    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-8 text-center">
+      <div className="text-lg font-medium text-amber-200">无权限访问</div>
+      <p className="mt-2 text-sm text-zinc-400">
+        此页面仅管理员可用。如需调整账号权限，请联系管理员。
+      </p>
+    </div>
+  )
+}
+
 // 状态徽章：节点 online/offline/unknown，规则 enabled/disabled。
 export function StatusDot({ kind }: { kind: 'online' | 'offline' | 'unknown' | 'on' | 'off' }) {
   const color =

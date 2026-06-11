@@ -10,8 +10,10 @@ import {
   type RuleView,
   ApiError,
 } from '../lib/api'
+import { useAuth } from '../lib/use-auth'
+import UserDashboard from './UserDashboard'
 
-type Last24h = { rx: number; tx: number } | 'loading' | 'unavailable' | null
+type Last24h = { rx: number; tx: number } | 'unavailable' | null
 type RecentErrors = AuditLogEntry[] | 'loading' | 'unavailable'
 
 interface Overview {
@@ -22,6 +24,13 @@ interface Overview {
 }
 
 export default function Dashboard() {
+  const { user } = useAuth()
+  // 角色分流:普通用户看自助概览(自己的规则/配额),admin 看全局。
+  if (user && user.role !== 'admin') return <UserDashboard />
+  return <AdminDashboard />
+}
+
+function AdminDashboard() {
   const [data, setData] = useState<Overview>({ nodes: [], rules: [], loading: true, error: null })
   const [last24h, setLast24h] = useState<Last24h>(null)
   const [recentErrors, setRecentErrors] = useState<RecentErrors>('loading')
@@ -37,41 +46,20 @@ export default function Dashboard() {
       .catch(() => {
         if (!cancelled) setRecentErrors('unavailable')
       })
+    // 24h 卡片改用 overview 的 rule_stats 聚合(转发流量口径),
+    // 不再逐节点拉 node_stats(那是网卡口径,曾与「总流量」卡片相差数百倍)。
+    system
+      .overview()
+      .then((o) => {
+        if (!cancelled) setLast24h({ rx: o.rx_bytes_24h, tx: o.tx_bytes_24h })
+      })
+      .catch(() => {
+        if (!cancelled) setLast24h('unavailable')
+      })
     Promise.all([nodes.list({ page_size: 100 }), rules.list({ page_size: 100 })])
-      .then(async ([n, r]) => {
+      .then(([n, r]) => {
         if (cancelled) return
         setData({ nodes: n.items, rules: r.items, loading: false, error: null })
-
-        // 第二阶段:对 online 节点拉 node_stats,聚合过去 24h 流量。
-        // 失败/超时不阻塞主数据;Dashboard 已展示就不要因为时序图拉不到而黑屏。
-        const online = n.items.filter((x) => x.status === 'online')
-        if (online.length === 0) {
-          if (!cancelled) setLast24h({ rx: 0, tx: 0 })
-          return
-        }
-        if (!cancelled) setLast24h('loading')
-        try {
-          const results = await Promise.allSettled(online.map((x) => nodes.stats(x.id)))
-          if (cancelled) return
-          const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600
-          let rx = 0
-          let tx = 0
-          for (const res of results) {
-            if (res.status !== 'fulfilled') continue
-            for (const b of res.value.series) {
-              // bucket_at 是 'YYYY-MM-DD HH:MM:SS' UTC 字符串(server 端用 UTC 写库)。
-              const ts = Math.floor(
-                new Date(b.bucket_at.replace(' ', 'T') + 'Z').getTime() / 1000,
-              )
-              if (ts < cutoff) continue
-              rx += b.rx_bytes
-              tx += b.tx_bytes
-            }
-          }
-          if (!cancelled) setLast24h({ rx, tx })
-        } catch {
-          if (!cancelled) setLast24h('unavailable')
-        }
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -100,19 +88,15 @@ export default function Dashboard() {
   const today =
     last24h && typeof last24h === 'object'
       ? `${formatBytes(last24h.rx + last24h.tx)}`
-      : last24h === 'loading'
-      ? '…'
       : last24h === 'unavailable'
       ? '—'
-      : '—'
+      : '…'
   const todayHint =
     last24h && typeof last24h === 'object'
-      ? `↓${formatBytes(last24h.rx)} ↑${formatBytes(last24h.tx)}`
-      : last24h === 'loading'
-      ? '聚合中'
+      ? `↓${formatBytes(last24h.rx)} ↑${formatBytes(last24h.tx)} · 仅规则转发字节`
       : last24h === 'unavailable'
       ? '暂无数据'
-      : `${onlineNodes} 在线节点`
+      : '聚合中'
 
   return (
     <div className="space-y-6">
@@ -125,8 +109,8 @@ export default function Dashboard() {
         <Stat label="总节点数" value={data.nodes.length} hint={`${onlineNodes} 在线`} accent="indigo" />
         <Stat label="转发规则" value={data.rules.length} hint={`${enabledRules} 启用`} accent="violet" />
         <Stat label="总连接数" value={totalConn} hint="累计" accent="emerald" />
-        <Stat label="总流量" value={formatBytes(totalRx + totalTx)} hint={`↓${formatBytes(totalRx)} ↑${formatBytes(totalTx)}`} accent="amber" />
-        <Stat label="过去 24h 流量" value={today} hint={todayHint} accent="sky" />
+        <Stat label="总转发流量" value={formatBytes(totalRx + totalTx)} hint={`规则转发累计 ↓${formatBytes(totalRx)} ↑${formatBytes(totalTx)}`} accent="amber" />
+        <Stat label="24h 转发流量" value={today} hint={todayHint} accent="sky" />
       </div>
 
       <section className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5">
@@ -170,7 +154,8 @@ const ACCENT: Record<string, string> = {
   sky: 'from-sky-500/15 ring-sky-500/30',
 }
 
-function Stat({ label, value, hint, accent }: { label: string; value: number | string; hint: string; accent: keyof typeof ACCENT }) {
+// 导出给 UserDashboard 复用同款统计卡。
+export function Stat({ label, value, hint, accent }: { label: string; value: number | string; hint: string; accent: keyof typeof ACCENT }) {
   return (
     <div className={`relative rounded-2xl border border-white/10 bg-gradient-to-br ${ACCENT[accent]} to-zinc-900/40 p-4 ring-1 ring-inset`}>
       <div className="text-xs text-zinc-400">{label}</div>
@@ -189,8 +174,8 @@ function ErrorRow({ entry }: { entry: AuditLogEntry }) {
     <div className="flex items-start justify-between gap-3 rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
       <div className="min-w-0">
         <div className="text-sm font-medium truncate text-red-200">
-          {entry.action}
-          {target && <span className="ml-2 text-[11px] text-red-300/70">{target}</span>}
+          {entry.action}{' '}
+          {target && <span className="ml-1 text-[11px] text-red-300/70">{target}</span>}
         </div>
         <div className="text-[11px] text-zinc-400 truncate">
           {entry.error_message ?? '(无消息)'}

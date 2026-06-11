@@ -9,6 +9,7 @@ import {
   nodes,
   rules,
   tunnels,
+  users,
   type BandwidthProfileView,
   type CreateRuleRequest,
   type ImportReport,
@@ -17,6 +18,7 @@ import {
   type RuleView,
   type TunnelView,
   type UpdateRuleRequest,
+  type UserDetail,
 } from '../lib/api'
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
@@ -39,10 +41,12 @@ interface ListState {
 export default function Rules() {
   const toast = useToast()
   const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [nodeList, setNodeList] = useState<NodeView[]>([])
   const [profileList, setProfileList] = useState<BandwidthProfileView[]>([])
   const [tunnelList, setTunnelList] = useState<TunnelView[]>([])
+  const [userList, setUserList] = useState<UserDetail[]>([])
   const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
@@ -94,8 +98,9 @@ export default function Rules() {
     }
   }, [])
 
-  // 限速配置列表只加载一次（创建/编辑表单下拉用）。
+  // 限速配置列表只加载一次（admin-only 端点;创建/编辑表单下拉用）。
   useEffect(() => {
+    if (user?.role !== 'admin') return
     let cancelled = false
     bandwidthProfiles
       .list({ page_size: 100 })
@@ -108,7 +113,22 @@ export default function Rules() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [user?.role])
+
+  // 用户列表(admin 表单「归属用户」下拉;>100 用户时下拉不全,表单内有提示)。
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    let cancelled = false
+    users
+      .list({ page_size: 100 })
+      .then((r) => {
+        if (!cancelled) setUserList(r.items)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [user?.role])
 
   // 隧道列表只加载一次（admin 权限才有，创建规则时关联隧道用）。
   useEffect(() => {
@@ -257,30 +277,34 @@ export default function Rules() {
           <p className="text-sm text-zinc-400 mt-1">TCP / UDP 端口转发配置与运行状态</p>
         </div>
         <div className="flex gap-2 shrink-0">
-          <button
-            onClick={async () => {
-              try {
-                await rules.exportDownload({
-                  node_id: filters.node_id ? Number(filters.node_id) : undefined,
-                })
-                toast.success('已导出（按节点筛选）')
-              } catch (e) {
-                toast.error(e instanceof ApiError ? e.message : '导出失败')
-              }
-            }}
-            className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
-          >
-            导出
-          </button>
-          <label className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm cursor-pointer">
-            导入
-            <input
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={(e) => void onImportFile(e)}
-            />
-          </label>
+          {isAdmin && (
+            <>
+              <button
+                onClick={async () => {
+                  try {
+                    await rules.exportDownload({
+                      node_id: filters.node_id ? Number(filters.node_id) : undefined,
+                    })
+                    toast.success(filters.node_id ? '已导出（按节点筛选）' : '已导出全部规则')
+                  } catch (e) {
+                    toast.error(e instanceof ApiError ? e.message : '导出失败')
+                  }
+                }}
+                className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm"
+              >
+                导出
+              </button>
+              <label className="rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-sm cursor-pointer">
+                导入
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => void onImportFile(e)}
+                />
+              </label>
+            </>
+          )}
           <button
             onClick={() => setEditing({ mode: 'create' })}
             disabled={nodeList.length === 0}
@@ -375,6 +399,7 @@ export default function Rules() {
               <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium">名称</th>
+                  {isAdmin && <th className="px-4 py-2.5 text-left font-medium">归属</th>}
                   <th className="px-4 py-2.5 text-left font-medium">节点 / 协议</th>
                   <th className="px-4 py-2.5 text-left font-medium">监听</th>
                   <th className="px-4 py-2.5 text-left font-medium">目标</th>
@@ -389,6 +414,13 @@ export default function Rules() {
                     key={r.id}
                     rule={r}
                     node={nodesById.get(r.node_id)}
+                    tunnelName={
+                      // user 的 tunnelList 恒空(admin-only 端点),只会显示裸 id,不渲染。
+                      isAdmin && r.tunnel_id != null
+                        ? tunnelList.find((t) => t.id === r.tunnel_id)?.name ?? `#${r.tunnel_id}`
+                        : null
+                    }
+                    showOwner={isAdmin}
                     acting={actingId === r.id}
                     onEdit={() => setEditing({ mode: 'edit', rule: r })}
                     onDelete={() => setConfirming(r)}
@@ -426,6 +458,8 @@ export default function Rules() {
             nodeList={nodeList}
             profiles={profileList}
             tunnelList={tunnelList}
+            userList={userList}
+            isAdmin={isAdmin}
             onCancel={() => setEditing(null)}
             onSuccess={async () => {
               toast.success(editing.mode === 'create' ? '规则已创建' : '规则已保存')
@@ -549,6 +583,8 @@ export default function Rules() {
 function RuleRow({
   rule,
   node,
+  tunnelName,
+  showOwner,
   acting,
   onEdit,
   onDelete,
@@ -557,6 +593,10 @@ function RuleRow({
 }: {
   rule: RuleView
   node: NodeView | undefined
+  /** 关联隧道名(null = 直连);列表页用 tunnelList 映射,无需逐行请求 */
+  tunnelName: string | null
+  /** admin 模式显示归属列 */
+  showOwner: boolean
   acting: boolean
   onEdit: () => void
   onDelete: () => void
@@ -575,6 +615,11 @@ function RuleRow({
         </Link>
         <div className="text-[11px] text-zinc-500 mt-0.5">ID #{rule.id}</div>
       </td>
+      {showOwner && (
+        <td className="px-4 py-3 align-top text-zinc-300 text-[12px]">
+          {rule.user_name ?? '—'}
+        </td>
+      )}
       <td className="px-4 py-3 align-top text-zinc-300">
         <div>{node?.name ?? `节点 #${rule.node_id}`}</div>
         <div className="text-[11px] text-zinc-500 mt-0.5">
@@ -584,6 +629,9 @@ function RuleRow({
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
         {rule.listen_ip}:{rule.listen_port}
+        {tunnelName != null && (
+          <div className="mt-0.5 text-[10px] text-sky-300/80 font-sans">隧道 {tunnelName}</div>
+        )}
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
         {rule.target_host}:{rule.target_port}
@@ -647,6 +695,7 @@ interface RuleFormState {
   target_port: string
   bandwidth_profile_id: string
   tunnel_id: string
+  user_id: string
 }
 
 export function RuleForm({
@@ -655,6 +704,8 @@ export function RuleForm({
   nodeList,
   profiles,
   tunnelList,
+  userList = [],
+  isAdmin = true,
   onCancel,
   onSuccess,
 }: {
@@ -663,6 +714,10 @@ export function RuleForm({
   nodeList: NodeView[]
   profiles: BandwidthProfileView[]
   tunnelList: TunnelView[]
+  /** admin 归属下拉的候选(仅前 100;user 模式忽略) */
+  userList?: UserDetail[]
+  /** user 模式隐藏 限速/隧道/归属 字段且不发送对应 payload */
+  isAdmin?: boolean
   onCancel: () => void
   onSuccess: () => void | Promise<void>
 }) {
@@ -678,6 +733,7 @@ export function RuleForm({
     bandwidth_profile_id:
       initial?.bandwidth_profile_id != null ? String(initial.bandwidth_profile_id) : '',
     tunnel_id: initial?.tunnel_id != null ? String(initial.tunnel_id) : '',
+    user_id: initial != null ? String(initial.user_id) : '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -744,10 +800,14 @@ export function RuleForm({
           listen_port: listenPort,
           target_host: form.target_host.trim(),
           target_port: targetPort,
-          bandwidth_profile_id: form.bandwidth_profile_id
+        }
+        // 限速/隧道/归属是 admin 管控字段;user 模式不发送(后端也会 400 拦截)。
+        if (isAdmin) {
+          payload.bandwidth_profile_id = form.bandwidth_profile_id
             ? Number(form.bandwidth_profile_id)
-            : null,
-          tunnel_id: form.tunnel_id ? Number(form.tunnel_id) : null,
+            : null
+          payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
+          if (form.user_id) payload.user_id = Number(form.user_id)
         }
         await rules.create(payload)
       } else if (initial) {
@@ -765,9 +825,11 @@ export function RuleForm({
               ? form.target_host.trim()
               : undefined,
           target_port: targetPort !== initial.target_port ? targetPort : undefined,
+          // user 模式不发送限速字段(后端 400 拦截普通用户改限速)。
           bandwidth_profile_id:
+            isAdmin &&
             (form.bandwidth_profile_id ? Number(form.bandwidth_profile_id) : 0) !==
-            (initial.bandwidth_profile_id ?? 0)
+              (initial.bandwidth_profile_id ?? 0)
               ? form.bandwidth_profile_id
                 ? Number(form.bandwidth_profile_id)
                 : 0
@@ -821,7 +883,7 @@ export function RuleForm({
         </div>
       </div>
 
-      {tunnelList.length > 0 && (
+      {isAdmin && tunnelList.length > 0 && (
         <div>
           <label htmlFor="rule-tunnel" className={fieldLabelCls}>关联隧道</label>
           <select
@@ -840,6 +902,40 @@ export function RuleForm({
           </select>
           <p className="text-[11px] text-zinc-500 mt-1">
             选择隧道后，规则将落在隧道入口节点，流量经隧道链转发至目标。
+          </p>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div>
+          <label htmlFor="rule-owner" className={fieldLabelCls}>归属用户</label>
+          <select
+            id="rule-owner"
+            value={form.user_id}
+            onChange={(e) => set('user_id', e.target.value)}
+            disabled={mode === 'edit'}
+            className={fieldInputCls}
+          >
+            {mode === 'create' && <option value="">我自己</option>}
+            {userList.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.username}（{u.role}）
+              </option>
+            ))}
+            {mode === 'edit' &&
+              initial &&
+              !userList.some((u) => u.id === initial.user_id) && (
+                <option value={String(initial.user_id)}>
+                  {initial.user_name ?? `用户 #${initial.user_id}`}
+                </option>
+              )}
+          </select>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            {mode === 'edit'
+              ? '归属创建后不可修改(可删除后以新归属重建)。'
+              : userList.length >= 100
+              ? '仅列出前 100 个用户;更多用户请用导入或 API 指定。'
+              : '规则计入归属用户的流量配额;到期/超额时随该用户一并停用。'}
           </p>
         </div>
       )}
@@ -915,24 +1011,26 @@ export function RuleForm({
         </div>
       </div>
 
-      <div>
-        <label className={fieldLabelCls}>限速配置</label>
-        <select
-          value={form.bandwidth_profile_id}
-          onChange={(e) => set('bandwidth_profile_id', e.target.value)}
-          className={fieldInputCls}
-        >
-          <option value="">不限速</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}（{p.bandwidth_mbps} Mbps）
-            </option>
-          ))}
-        </select>
-        <p className="text-[11px] text-zinc-500 mt-1">
-          在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
-        </p>
-      </div>
+      {isAdmin && (
+        <div>
+          <label className={fieldLabelCls}>限速配置</label>
+          <select
+            value={form.bandwidth_profile_id}
+            onChange={(e) => set('bandwidth_profile_id', e.target.value)}
+            className={fieldInputCls}
+          >
+            <option value="">不限速</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}（{p.bandwidth_mbps} Mbps）
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">

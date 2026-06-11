@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -14,6 +14,7 @@ import TunnelDetail from './pages/TunnelDetail'
 import { AuthProvider } from './lib/auth'
 import { useAuth } from './lib/use-auth'
 import { ToastProvider } from './lib/toast'
+import { ForbiddenCard } from './lib/ui'
 
 export default function App() {
   return (
@@ -24,15 +25,15 @@ export default function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<ProtectedShell />}>
               <Route index element={<Dashboard />} />
-              <Route path="nodes" element={<Nodes />} />
-              <Route path="nodes/:id" element={<NodeDetail />} />
+              <Route path="nodes" element={<AdminRoute><Nodes /></AdminRoute>} />
+              <Route path="nodes/:id" element={<AdminRoute><NodeDetail /></AdminRoute>} />
               <Route path="rules" element={<Rules />} />
               <Route path="rules/:id" element={<RuleDetail />} />
-              <Route path="tunnels" element={<Tunnels />} />
-              <Route path="tunnels/:id" element={<TunnelDetail />} />
-              <Route path="users" element={<Users />} />
-              <Route path="bandwidth-profiles" element={<BandwidthProfiles />} />
-              <Route path="settings" element={<Settings />} />
+              <Route path="tunnels" element={<AdminRoute><Tunnels /></AdminRoute>} />
+              <Route path="tunnels/:id" element={<AdminRoute><TunnelDetail /></AdminRoute>} />
+              <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
+              <Route path="bandwidth-profiles" element={<AdminRoute><BandwidthProfiles /></AdminRoute>} />
+              <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -41,6 +42,24 @@ export default function App() {
     </ToastProvider>
   )
 }
+
+// admin-only 路由兜底:导航虽已按角色隐藏,直接输 URL 也不能看到裸错误。
+function AdminRoute({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  if (user && user.role !== 'admin') return <ForbiddenCard />
+  return children
+}
+
+// 导航项:普通用户只保留自助可用页(概览/规则),其余 admin-only。
+const NAV: { to: string; label: string; adminOnly?: boolean }[] = [
+  { to: '/', label: '概览' },
+  { to: '/nodes', label: '节点', adminOnly: true },
+  { to: '/rules', label: '规则' },
+  { to: '/tunnels', label: '隧道', adminOnly: true },
+  { to: '/users', label: '用户', adminOnly: true },
+  { to: '/bandwidth-profiles', label: '限速', adminOnly: true },
+  { to: '/settings', label: '设置', adminOnly: true },
+]
 
 function ProtectedShell() {
   const { user, loading, logout } = useAuth()
@@ -75,13 +94,9 @@ function ProtectedShell() {
           </button>
         </div>
         <nav className="space-y-1 text-sm">
-          <NavItem to="/" label="概览" onClick={() => setDrawerOpen(false)} />
-          <NavItem to="/nodes" label="节点" onClick={() => setDrawerOpen(false)} />
-          <NavItem to="/rules" label="规则" onClick={() => setDrawerOpen(false)} />
-          <NavItem to="/tunnels" label="隧道" onClick={() => setDrawerOpen(false)} />
-          <NavItem to="/users" label="用户" onClick={() => setDrawerOpen(false)} />
-          <NavItem to="/bandwidth-profiles" label="限速" onClick={() => setDrawerOpen(false)} />
-          <NavItem to="/settings" label="设置" onClick={() => setDrawerOpen(false)} />
+          {NAV.filter((n) => !n.adminOnly || user.role === 'admin').map((n) => (
+            <NavItem key={n.to} to={n.to} label={n.label} onClick={() => setDrawerOpen(false)} />
+          ))}
         </nav>
         <div className="mt-auto text-[11px] text-zinc-500 md:hidden">
           <div className="truncate">{user.username} · {user.role}</div>
@@ -110,8 +125,8 @@ function ProtectedShell() {
           <CurrentRoute />
           <div className="ml-auto flex items-center gap-3 text-[12px]">
             <span className="hidden sm:inline text-zinc-400 truncate max-w-[12rem]">
-              {user.username}
-              <span className="ml-1.5 text-[10px] uppercase text-zinc-500">{user.role}</span>
+              {user.username}{' '}
+              <span className="ml-1 text-[10px] uppercase text-zinc-500">{user.role}</span>
             </span>
             <button
               onClick={logout}

@@ -68,6 +68,16 @@ export interface UserView {
   role: 'admin' | 'user'
 }
 
+/** /api/auth/me 扩展视图:UserView + 配额/用量/规则聚合(用户自助概览数据源)。 */
+export interface MeView extends UserView {
+  expires_at: string | null
+  traffic_limit_bytes_30d: number | null
+  period_used_bytes_cached: number
+  period_used_calculated_at: string | null
+  rule_count: number
+  total_traffic_bytes: number
+}
+
 export interface LoginResponse {
   token: string
   user: UserView
@@ -79,6 +89,8 @@ export interface NodeView {
   region: string
   public_ip: string
   grpc_endpoint: string
+  /** Agent 上报版本(register 落库);普通用户视角恒为空串 */
+  agent_version: string
   status: 'online' | 'offline' | 'unknown'
   last_seen_at: string | null
   cpu_usage: number
@@ -102,6 +114,8 @@ export interface NodeListResponse {
 export interface RuleView {
   id: number
   user_id: number
+  /** 归属用户名(admin 列表归属列;用户软删时可能为 null) */
+  user_name: string | null
   node_id: number
   name: string
   protocol: 'tcp' | 'udp' | 'tcp_udp'
@@ -178,6 +192,8 @@ export interface CreateRuleRequest {
   target_port: number
   bandwidth_profile_id?: number | null
   tunnel_id?: number | null
+  /** 归属用户:仅 admin 可指定 */
+  user_id?: number
 }
 
 export interface UpdateRuleRequest {
@@ -288,6 +304,9 @@ export interface SystemOverview {
   enabled_rules: number
   rx_bytes_total: number
   tx_bytes_total: number
+  /** 过去 24h 规则转发流量(rule_stats 口径,区别于节点网卡流量) */
+  rx_bytes_24h: number
+  tx_bytes_24h: number
 }
 
 export interface AuditLogEntry {
@@ -327,17 +346,26 @@ export interface SecurityInfo {
 export const auth = {
   login: (username: string, password: string) =>
     api.post<LoginResponse>('/api/auth/login', { username, password }),
-  me: () => api.get<UserView>('/api/auth/me'),
+  me: () => api.get<MeView>('/api/auth/me'),
   logout: () => api.post<{ ok: boolean }>('/api/auth/logout'),
 }
 
 export const nodes = {
-  list: (q: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' } = {}) => {
+  list: (
+    q: {
+      page?: number
+      page_size?: number
+      sort?: string
+      order?: 'asc' | 'desc'
+      search?: string
+    } = {},
+  ) => {
     const sp = new URLSearchParams()
     if (q.page) sp.set('page', String(q.page))
     if (q.page_size) sp.set('page_size', String(q.page_size))
     if (q.sort) sp.set('sort', q.sort)
     if (q.order) sp.set('order', q.order)
+    if (q.search) sp.set('search', q.search)
     return api.get<NodeListResponse>(`/api/nodes?${sp.toString()}`)
   },
   get: (id: number) => api.get<NodeView>(`/api/nodes/${id}`),
@@ -352,10 +380,11 @@ export const nodes = {
 }
 
 export const users = {
-  list: (q: { page?: number; page_size?: number } = {}) => {
+  list: (q: { page?: number; page_size?: number; search?: string } = {}) => {
     const sp = new URLSearchParams()
     if (q.page) sp.set('page', String(q.page))
     if (q.page_size) sp.set('page_size', String(q.page_size))
+    if (q.search) sp.set('search', q.search)
     return api.get<UserListResponse>(`/api/users?${sp.toString()}`)
   },
   get: (id: number) => api.get<UserDetail>(`/api/users/${id}`),

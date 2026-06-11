@@ -88,3 +88,55 @@ describe('RuleForm tunnel association', () => {
     )
   })
 })
+
+describe('RuleForm user mode (P4)', () => {
+  it('hides admin-only fields and omits them from payload', async () => {
+    render(
+      <RuleForm
+        mode="create"
+        nodeList={nodeList}
+        profiles={[]}
+        tunnelList={tunnelList}
+        isAdmin={false}
+        onCancel={() => {}}
+        onSuccess={() => {}}
+      />,
+    )
+    // 限速/隧道/归属下拉对普通用户不渲染。
+    expect(screen.queryByLabelText('关联隧道')).toBeNull()
+    expect(screen.queryByText('限速配置')).toBeNull()
+    expect(screen.queryByLabelText('归属用户')).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('规则名 *'), { target: { value: 'u1' } })
+    fireEvent.change(screen.getByLabelText('目标主机 *'), { target: { value: '10.0.0.2' } })
+    fireEvent.change(screen.getByLabelText('目标端口 *'), { target: { value: '443' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    await waitFor(() => expect(rules.create).toHaveBeenCalled())
+    const payload = (rules.create as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<
+      string,
+      unknown
+    >
+    // 管控字段一律不出现在 payload(后端对普通用户传这些字段会 400)。
+    expect(payload).not.toHaveProperty('bandwidth_profile_id')
+    expect(payload).not.toHaveProperty('tunnel_id')
+    expect(payload).not.toHaveProperty('user_id')
+  })
+
+  it('admin mode renders owner select', () => {
+    render(
+      <RuleForm
+        mode="create"
+        nodeList={nodeList}
+        profiles={[]}
+        tunnelList={[]}
+        userList={[{ id: 7, username: 'alice', role: 'user' } as never]}
+        isAdmin
+        onCancel={() => {}}
+        onSuccess={() => {}}
+      />,
+    )
+    const owner = screen.getByLabelText('归属用户') as HTMLSelectElement
+    expect(owner.value).toBe('')
+    expect(screen.getByText('alice（user）')).toBeDefined()
+  })
+})
