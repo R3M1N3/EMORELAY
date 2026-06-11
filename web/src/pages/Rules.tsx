@@ -777,6 +777,21 @@ export function RuleForm({
     return n
   }
 
+  // 与后端 is_valid_target_host 同源的轻校验:合法 IP,或主机名且顶级标签非纯数字
+  // (杀掉 1.2.3 / 12345 这类形似 IP 的无效输入)。IPv6 细节交后端兜底。
+  function isValidTargetHostShape(host: string): boolean {
+    if (!host || host.length > 253) return false
+    if (host.includes(':')) return true
+    const segs = host.split('.')
+    if (segs.every((s) => /^\d+$/.test(s)))
+      // 不允许前导零(04),与后端 IpAddr 解析口径一致,避免"前端过后端拒"。
+      return segs.length === 4 && segs.every((s) => /^(0|[1-9]\d*)$/.test(s) && Number(s) <= 255)
+    const segOk = segs.every(
+      (s) => /^[a-zA-Z0-9-]{1,63}$/.test(s) && !s.startsWith('-') && !s.endsWith('-'),
+    )
+    return segOk && !/^\d+$/.test(segs[segs.length - 1])
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -789,6 +804,8 @@ export function RuleForm({
     }
     const targetPort = parsePort(form.target_port, '目标端口')
     if (typeof targetPort === 'string') return setError(targetPort)
+    if (!isValidTargetHostShape(form.target_host.trim()))
+      return setError('目标地址不是合法 IP 或域名')
 
     setSubmitting(true)
     try {
@@ -994,7 +1011,7 @@ export function RuleForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor="rule-target-host" className={fieldLabelCls}>目标主机 *</label>
+          <label htmlFor="rule-target-host" className={fieldLabelCls}>目标地址 *</label>
           <input
             id="rule-target-host"
             required
@@ -1003,6 +1020,12 @@ export function RuleForm({
             className={fieldInputCls}
             placeholder="1.2.3.4 或 backend.example.com"
           />
+          {form.target_host.trim() !== '' &&
+            !isValidTargetHostShape(form.target_host.trim()) && (
+              <p className="text-[11px] text-red-300 mt-1">
+                不是合法 IP 或域名（如 1.2.3.4 / backend.example.com）
+              </p>
+            )}
         </div>
         <div>
           <label htmlFor="rule-target-port" className={fieldLabelCls}>目标端口 *</label>

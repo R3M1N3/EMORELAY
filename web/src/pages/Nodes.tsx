@@ -500,8 +500,9 @@ function NodeForm({
     region: initial?.region ?? '',
     public_ip: initial?.public_ip ?? '',
     grpc_endpoint: initial?.grpc_endpoint ?? '',
-    port_pool_min: initial ? String(initial.port_pool_min) : '',
-    port_pool_max: initial ? String(initial.port_pool_max) : '',
+    // 新建默认 10000-65535:避开系统/常用端口段,与后端 normalize_port_pool 缺省一致。
+    port_pool_min: initial ? String(initial.port_pool_min) : '10000',
+    port_pool_max: initial ? String(initial.port_pool_max) : '65535',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -630,7 +631,7 @@ function NodeForm({
             value={form.port_pool_min}
             onChange={(e) => set('port_pool_min', e.target.value)}
             className={fieldInputCls}
-            placeholder="默认 1"
+            placeholder="默认 10000"
           />
         </div>
         <div>

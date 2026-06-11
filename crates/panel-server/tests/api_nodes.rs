@@ -29,8 +29,8 @@ async fn node_full_crud_cycle() {
     let token_returned = body["agent_token"].as_str().expect("agent_token");
     assert!(!token_returned.is_empty(), "agent_token must be non-empty");
     assert_eq!(body["node"]["name"], "test-node");
-    // 默认端口池 1-65535
-    assert_eq!(body["node"]["port_pool_min"], 1);
+    // 默认端口池 10000-65535
+    assert_eq!(body["node"]["port_pool_min"], 10000);
     assert_eq!(body["node"]["port_pool_max"], 65535);
 
     // get

@@ -54,7 +54,7 @@ describe('RuleForm tunnel association', () => {
     expect(nodeSelect).toBeDisabled()
 
     fireEvent.change(screen.getByLabelText('规则名 *'), { target: { value: 'r1' } })
-    fireEvent.change(screen.getByLabelText('目标主机 *'), { target: { value: '10.0.0.1' } })
+    fireEvent.change(screen.getByLabelText('目标地址 *'), { target: { value: '10.0.0.1' } })
     fireEvent.change(screen.getByLabelText('目标端口 *'), { target: { value: '80' } })
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
 
@@ -78,7 +78,7 @@ describe('RuleForm tunnel association', () => {
     )
     expect(screen.getByLabelText('节点 *')).not.toBeDisabled()
     fireEvent.change(screen.getByLabelText('规则名 *'), { target: { value: 'r2' } })
-    fireEvent.change(screen.getByLabelText('目标主机 *'), { target: { value: '10.0.0.1' } })
+    fireEvent.change(screen.getByLabelText('目标地址 *'), { target: { value: '10.0.0.1' } })
     fireEvent.change(screen.getByLabelText('目标端口 *'), { target: { value: '80' } })
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
     await waitFor(() =>
@@ -108,7 +108,7 @@ describe('RuleForm user mode (P4)', () => {
     expect(screen.queryByLabelText('归属用户')).toBeNull()
 
     fireEvent.change(screen.getByLabelText('规则名 *'), { target: { value: 'u1' } })
-    fireEvent.change(screen.getByLabelText('目标主机 *'), { target: { value: '10.0.0.2' } })
+    fireEvent.change(screen.getByLabelText('目标地址 *'), { target: { value: '10.0.0.2' } })
     fireEvent.change(screen.getByLabelText('目标端口 *'), { target: { value: '443' } })
     fireEvent.click(screen.getByRole('button', { name: '创建' }))
     await waitFor(() => expect(rules.create).toHaveBeenCalled())

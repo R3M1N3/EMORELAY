@@ -99,7 +99,15 @@ async fn rule_full_cycle() {
 #[tokio::test]
 async fn create_rule_with_reserved_port_rejected() {
     let app = make_app().await.unwrap();
-    let node_id = make_node(&app).await;
+    // 端口池显式含 22:默认池已上调到 10000+,否则会先撞"超出端口池"而非"保留端口"。
+    let node_id = sqlx::query(
+        "INSERT INTO nodes (name, agent_token_hash, port_pool_min, port_pool_max) \
+         VALUES ('rsv', 'x', 1, 65535)",
+    )
+    .execute(&app.state.pool)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     let req = auth_req(
         Method::POST,
         "/api/rules",

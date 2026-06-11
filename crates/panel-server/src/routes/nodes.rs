@@ -224,7 +224,7 @@ pub async fn create(
         return Err(ApiError::BadRequest("名称不能为空".into()));
     }
     let (port_min, port_max) =
-        normalize_port_pool(req.port_pool_min, req.port_pool_max, 1, 65535)?;
+        normalize_port_pool(req.port_pool_min, req.port_pool_max, 10000, 65535)?;
 
     let token = generate_token();
     let token_hash = hash_token(&token);

@@ -48,6 +48,13 @@ html { color-scheme: dark; }
 body { background: #04070f; }
 ::selection { background: color-mix(in oklab, var(--accent) 35%, transparent); }
 * { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.14) transparent; }
+/* 原生下拉弹出列表由操作系统绘制,不继承 select 的 Tailwind 背景类:
+   不显式给深色就会浅底浅字(白底白字),选项看不清。 */
+select option,
+select optgroup {
+  background-color: #0e1626;
+  color: #e4e9f5;
+}
 
 /* 自定义类必须进 @layer components:未分层声明会压过 Tailwind 分层工具类
    (曾导致 glass-card 的 position:relative 击败 fixed/sticky,小屏 drawer 布局损坏)。 */

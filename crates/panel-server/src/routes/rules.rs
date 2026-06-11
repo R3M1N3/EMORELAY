@@ -8,7 +8,7 @@ use crate::{
         settings,
     },
     state::AppState,
-    util::{is_valid_ip, is_valid_target_host},
+    util::{is_internal_target_ip, is_valid_ip, is_valid_target_host},
 };
 use axum::{
     extract::{Path, Query, State},
@@ -310,6 +310,13 @@ pub async fn create(
             "目标主机不是合法 IP 或主机名".into(),
         ));
     }
+    // 非管理员不得把目标指向回环/内网(防借节点中转访问 Agent 机内网服务);
+    // 仅拦字面 IP,域名指向内网拦不住(解析在 agent 端)。
+    if !auth.is_admin() && is_internal_target_ip(req.target_host.trim()) {
+        return Err(ApiError::BadRequest(
+            "目标地址不能是回环或内网地址".into(),
+        ));
+    }
     let node = Node::find_by_id(&state.pool, req.node_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("节点不存在".into()))?;
@@ -438,6 +445,11 @@ pub async fn update(
         if !is_valid_target_host(host.trim()) {
             return Err(ApiError::BadRequest(
                 "目标主机不是合法 IP 或主机名".into(),
+            ));
+        }
+        if !auth.is_admin() && is_internal_target_ip(host.trim()) {
+            return Err(ApiError::BadRequest(
+                "目标地址不能是回环或内网地址".into(),
             ));
         }
     }
