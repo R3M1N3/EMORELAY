@@ -97,6 +97,13 @@ async fn bridge(
         .await
         .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
 
+    // Linux 不限速:走 splice 零拷贝,数据不过用户态(消除 pump 的两次 memcpy)。
+    // 限速或非 Linux 回退下方 pump(用户态拷贝才能插入令牌桶计量)。
+    #[cfg(target_os = "linux")]
+    if bucket.is_none() {
+        return crate::relay::splice::splice_bidi(client, server, counter).await;
+    }
+
     let (mut c_r, mut c_w) = client.split();
     let (mut s_r, mut s_w) = server.split();
 

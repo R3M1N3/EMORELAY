@@ -1353,6 +1353,7 @@ dependencies = [
  "dotenvy",
  "emorelay-common",
  "futures-util",
+ "libc",
  "prost",
  "rcgen",
  "rustls-pemfile",
