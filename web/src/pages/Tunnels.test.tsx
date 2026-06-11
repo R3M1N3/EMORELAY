@@ -78,6 +78,19 @@ describe('Tunnels page', () => {
     )
   })
 
+  it('reloads the list after a successful create', async () => {
+    renderPage()
+    await screen.findByText('hk-jp')
+    expect(tunnels.list).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: '创建隧道' }))
+    const selects = await screen.findAllByLabelText(/节点 #/)
+    fireEvent.change(screen.getByLabelText('隧道名 *'), { target: { value: 't-reload' } })
+    fireEvent.change(selects[0], { target: { value: '11' } })
+    fireEvent.change(selects[1], { target: { value: '12' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    await waitFor(() => expect(tunnels.list).toHaveBeenCalledTimes(2))
+  })
+
   it('rejects duplicate nodes in the chain before submitting', async () => {
     renderPage()
     await screen.findByText('hk-jp')

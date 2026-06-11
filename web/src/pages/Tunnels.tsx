@@ -34,9 +34,16 @@ export default function Tunnels() {
     nodes.list({ page_size: 100 }).then((r) => setNodeList(r.items)).catch(() => {})
   }, [])
 
-  function reload() {
-    // 触发 useEffect 重新拉取（避免闭包陈旧值问题）。
-    setPage((p) => p)
+  // 事件回调里的 reload() 走最新 closure 值,与 Nodes.tsx 模式一致。
+  async function reload() {
+    setList((s) => ({ ...s, loading: true, error: null }))
+    try {
+      const r = await tunnels.list({ page, page_size: pageSize })
+      setList({ items: r.items, total: r.total, loading: false, error: null })
+    } catch (e: unknown) {
+      const msg = e instanceof ApiError ? e.message : '加载失败'
+      setList({ items: [], total: 0, loading: false, error: msg })
+    }
   }
 
   useEffect(() => {
