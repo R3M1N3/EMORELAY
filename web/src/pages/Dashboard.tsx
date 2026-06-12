@@ -133,7 +133,10 @@ function AdminDashboard() {
       </section>
 
       <section className="glass-card rise p-5">
-        <h3 className="text-sm font-medium text-zinc-200 mb-3">最近错误</h3>
+        <h3 className="text-sm font-medium text-zinc-200 mb-3">
+          最近错误
+          <span className="ml-2 text-[11px] font-normal text-zinc-500">来自审计日志的失败操作记录</span>
+        </h3>
         {recentErrors === 'loading' ? (
           <p className="text-sm text-zinc-500">加载中…</p>
         ) : recentErrors === 'unavailable' ? (

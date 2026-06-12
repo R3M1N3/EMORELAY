@@ -427,7 +427,9 @@ export default function Rules() {
           <div className="p-6 text-sm text-zinc-500">
             {filters.node_id || filters.protocol || filters.search
               ? '当前筛选条件下没有规则。'
-              : '尚无规则。点击右上角「新增规则」开始。'}
+              : !isAdmin && nodeList.length === 0 && tunnelList.length === 0
+                ? '尚无规则。当前没有可用的节点或隧道，请联系管理员授权后再创建。'
+                : '尚无规则。点击右上角「新增规则」开始。'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -581,6 +583,10 @@ export default function Rules() {
               ))}
             </select>
           </div>
+          {/* 导出文件不含归属(跨实例 user_id 不可控),导入归属语义必须显式告知。 */}
+          <p className="mb-3 text-[11px] text-zinc-500">
+            导入的规则将归属当前操作者（导出文件不携带原归属），流量计入你的配额。
+          </p>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
               {/* sticky 表头必须近实底:Modal 底色变透明后,半透明表头滚动时会与行文字叠影。 */}

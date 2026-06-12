@@ -534,6 +534,10 @@ export const rules = {
       throw new ApiError(res.status, err?.error ?? 'unknown', err?.message ?? res.statusText)
     }
     const blob = await res.blob()
+    // 空导出不下载文件,抛给调用方 toast(下载一个 [] 只会困惑)。
+    if (blob.size <= 2) {
+      throw new ApiError(200, 'empty', '当前范围内没有可导出的规则')
+    }
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -634,6 +638,20 @@ export function shortTime(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso.replace('T', ' ').slice(0, 16)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// 状态文案统一中文(此前 online/down 等英文裸串与中文页面混排)。
+// 放 api.ts 工具区:ui.tsx 受 react-refresh 限制只能导出组件。
+export function statusLabel(s: string): string {
+  const map: Record<string, string> = {
+    online: '在线',
+    offline: '离线',
+    unknown: '未知',
+    up: '正常',
+    degraded: '降级',
+    down: '中断',
+  }
+  return map[s] ?? s
 }
 
 export function formatBytes(n: number): string {

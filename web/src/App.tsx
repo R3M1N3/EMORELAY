@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -67,6 +67,15 @@ const NAV: { to: string; label: string; adminOnly?: boolean }[] = [
 function ProtectedShell() {
   const { user, loading, logout } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // 移动端 drawer 支持 Escape 关闭,与弹窗行为一致。
+  useEffect(() => {
+    if (!drawerOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drawerOpen])
   if (loading)
     return (
       <div className="min-h-svh grid place-items-center bg-zinc-950 text-zinc-400 text-sm">

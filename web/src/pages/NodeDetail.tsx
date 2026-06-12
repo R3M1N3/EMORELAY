@@ -6,6 +6,7 @@ import {
   nodes,
   rules,
   shortTime,
+  statusLabel,
   type GrantedUser,
   type NodeStatsResponse,
   type NodeView,
@@ -149,7 +150,7 @@ export default function NodeDetail() {
           <p className="text-sm text-zinc-400">
             <span className="inline-flex items-center gap-1.5 mr-3">
               <StatusDot kind={node.status} />
-              {node.status}
+              {statusLabel(node.status)}
             </span>
             ID #{node.id} · {node.region || '—'} · {node.public_ip || '未填'}
           </p>

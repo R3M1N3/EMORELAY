@@ -5,6 +5,7 @@ import {
   nodes,
   rules,
   shortTime,
+  statusLabel,
   tunnels,
   type GrantedUser,
   type TunnelDetailView,
@@ -135,7 +136,7 @@ export default function TunnelDetail() {
           <p className="text-sm text-zinc-400">
             <span className="inline-flex items-center gap-1.5 mr-3">
               <StatusDot kind={tunnelStatusKind(detail.status)} />
-              {detail.status}
+              {statusLabel(detail.status)}
             </span>
             <span className="uppercase text-xs mr-3">{detail.transport}</span>
             ID #{detail.id} · 创建 {shortTime(detail.created_at)}

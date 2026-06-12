@@ -7,6 +7,7 @@ import {
   renderInstallCommand,
   rules,
   shortTime,
+  statusLabel,
   system,
   type CreateNodeRequest,
   type NodeView,
@@ -391,13 +392,17 @@ function NodeRow({
         <div>{node.region || '—'}</div>
         <div className="text-[11px] text-zinc-500 mt-0.5">{node.public_ip || '未填'}</div>
       </td>
-      <td className="px-4 py-3 align-top text-zinc-400 font-mono text-[12px]">
+      {/* 长 URL 截断显示,完整值挂 title;否则挤压名称/状态列(移动端尤甚)。 */}
+      <td
+        className="px-4 py-3 align-top text-zinc-400 font-mono text-[12px] max-w-[14rem] truncate"
+        title={node.grpc_endpoint || undefined}
+      >
         {node.grpc_endpoint || '—'}
       </td>
       <td className="px-4 py-3 align-top">
         <span className="inline-flex items-center gap-1.5 text-xs text-zinc-300">
           <StatusDot kind={node.status} />
-          {node.status}
+          {statusLabel(node.status)}
         </span>
         <div className="text-[11px] text-zinc-500 mt-0.5">
           {node.last_seen_at ? `最后心跳 ${shortTime(node.last_seen_at)}` : '从未上线'}

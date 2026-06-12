@@ -69,11 +69,18 @@ def main():
         print(f"  node #{resp['node']['id']} {name}  (agent_token 已只显示一次)")
 
     print("=== 3. create users (alice, bob) ===")
-    call("POST", "/api/users", {"username": "alice", "password": "alice12345", "role": "user"}, token=admin_token)
-    call("POST", "/api/users", {"username": "bob",   "password": "bob12345",   "role": "user"}, token=admin_token)
+    # P7 起节点默认拒绝:建用户时直接授权,否则第 4 步用户建规则会 400。
+    alice = call("POST", "/api/users", {
+        "username": "alice", "password": "alice12345", "role": "user",
+        "granted_node_ids": node_ids,
+    }, token=admin_token)
+    bob = call("POST", "/api/users", {
+        "username": "bob", "password": "bob12345", "role": "user",
+        "granted_node_ids": node_ids,
+    }, token=admin_token)
     alice_token = login("alice", "alice12345")
     bob_token = login("bob", "bob12345")
-    print("  alice / bob created + token 拿到")
+    print(f"  alice(#{alice['id']}) / bob(#{bob['id']}) created + 全节点授权 + token 拿到")
 
     print("=== 4. create rules ===")
     # (node_idx, name, protocol, listen_port, target_host, target_port, owner_token)
