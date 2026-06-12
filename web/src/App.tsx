@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
+import ChangePassword from './pages/ChangePassword'
 import Dashboard from './pages/Dashboard'
 import Nodes from './pages/Nodes'
 import Rules from './pages/Rules'
@@ -26,6 +27,7 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/change-password" element={<ForcePasswordChangeRoute />} />
             <Route path="/" element={<ProtectedShell />}>
               <Route index element={<Dashboard />} />
               <Route path="nodes" element={<AdminRoute><Nodes /></AdminRoute>} />
@@ -44,6 +46,21 @@ export default function App() {
       </AuthProvider>
     </ToastProvider>
   )
+}
+
+// 强制改密路由:仅当已登录且 mustChangePassword 时展示改密页;
+// 否则按状态回落(未登录→/login,已改→/),避免该 URL 被任意访问。
+function ForcePasswordChangeRoute() {
+  const { user, loading, mustChangePassword } = useAuth()
+  if (loading)
+    return (
+      <div className="min-h-svh grid place-items-center bg-zinc-950 text-zinc-400 text-sm">
+        加载会话…
+      </div>
+    )
+  if (!user) return <Navigate to="/login" replace />
+  if (!mustChangePassword) return <Navigate to="/" replace />
+  return <ChangePassword />
 }
 
 // admin-only 路由兜底:导航虽已按角色隐藏,直接输 URL 也不能看到裸错误。
@@ -65,7 +82,7 @@ const NAV: { to: string; label: string; adminOnly?: boolean }[] = [
 ]
 
 function ProtectedShell() {
-  const { user, loading, logout } = useAuth()
+  const { user, loading, logout, mustChangePassword } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
   // 移动端 drawer 支持 Escape 关闭,与弹窗行为一致。
   useEffect(() => {
@@ -83,6 +100,8 @@ function ProtectedShell() {
       </div>
     )
   if (!user) return <Navigate to="/login" replace />
+  // 强制改密未完成:挡在改密页,所有受保护页都进不去。
+  if (mustChangePassword) return <Navigate to="/change-password" replace />
 
   return (
     <div className="min-h-svh text-zinc-100 flex gap-5 p-3 md:p-5 relative">

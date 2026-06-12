@@ -80,6 +80,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health::health))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/change-password", post(auth::change_password))
         .route("/api/nodes", get(nodes::list).post(nodes::create))
         .route(
             "/api/nodes/{id}",

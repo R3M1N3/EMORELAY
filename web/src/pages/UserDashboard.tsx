@@ -11,9 +11,12 @@ import {
 import { Stat } from './Dashboard'
 import { StatusDot } from '../lib/ui'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
+import { useToast } from '../lib/use-toast'
+import { expiryWarning, expiryWarningKey } from '../lib/expiry-warning'
 
 // 普通用户自助概览:自己的规则/用量/配额/到期。数据源 = me(扩展) + rules.list(后端已按 owner 过滤)。
 export default function UserDashboard() {
+  const toast = useToast()
   const [me, setMe] = useState<MeView | null>(null)
   const [myRules, setMyRules] = useState<RuleView[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -37,6 +40,19 @@ export default function UserDashboard() {
     load()
   }, [load])
   useAutoRefresh(load, 30_000)
+
+  // 到期预警:me 拉到后据 expires_at 分级 toast,localStorage 按「级别+日期」去重,
+  // 避免每次进页/30s 刷新重复轰炸。expired/critical 用 error,其余用 info。
+  const expiresAt = me?.expires_at ?? null
+  useEffect(() => {
+    const warn = expiryWarning(expiresAt, Date.now())
+    if (!warn) return
+    const key = expiryWarningKey(warn.level, Date.now())
+    if (localStorage.getItem(key)) return
+    localStorage.setItem(key, '1')
+    if (warn.level === 'expired' || warn.level === 'critical') toast.error(warn.message)
+    else toast.info(warn.message)
+  }, [expiresAt, toast])
 
   if (error)
     return (

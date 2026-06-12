@@ -17,8 +17,8 @@ export default function Login() {
     setError(null)
     setSubmitting(true)
     try {
-      await login(username, password)
-      navigate('/', { replace: true })
+      const mustChange = await login(username, password)
+      navigate(mustChange ? '/change-password' : '/', { replace: true })
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.status === 401 && e.message === 'account_expired') {

@@ -76,11 +76,15 @@ export interface MeView extends UserView {
   period_used_calculated_at: string | null
   rule_count: number
   total_traffic_bytes: number
+  /** true = 强制改密未完成,前端把用户挡在改密页 */
+  must_change_password: boolean
 }
 
 export interface LoginResponse {
   token: string
   user: UserView
+  /** true = 首登强制改密(admin 新建/重置后),前端跳改密页 */
+  must_change_password: boolean
 }
 
 export interface NodeView {
@@ -379,6 +383,11 @@ export const auth = {
     api.post<LoginResponse>('/api/auth/login', { username, password }),
   me: () => api.get<MeView>('/api/auth/me'),
   logout: () => api.post<{ ok: boolean }>('/api/auth/logout'),
+  changePassword: (oldPassword: string, newPassword: string) =>
+    api.post<{ ok: boolean }>('/api/auth/change-password', {
+      old_password: oldPassword,
+      new_password: newPassword,
+    }),
 }
 
 export const nodes = {
@@ -526,7 +535,8 @@ export const rules = {
   get: (id: number) => api.get<RuleView>(`/api/rules/${id}`),
   create: (req: CreateRuleRequest) => api.post<RuleView>('/api/rules', req),
   update: (id: number, req: UpdateRuleRequest) => api.patch<RuleView>(`/api/rules/${id}`, req),
-  del: (id: number) => api.del<{ ok: boolean }>(`/api/rules/${id}`),
+  /** dispatched=false 表示目标节点离线,规则将由对账在节点恢复后清理 */
+  del: (id: number) => api.del<{ ok: boolean; dispatched: boolean }>(`/api/rules/${id}`),
   enable: (id: number) => api.post<{ ok: boolean; enabled: boolean }>(`/api/rules/${id}/enable`),
   disable: (id: number) => api.post<{ ok: boolean; enabled: boolean }>(`/api/rules/${id}/disable`),
   restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/rules/${id}/restart`),

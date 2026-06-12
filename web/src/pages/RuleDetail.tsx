@@ -10,6 +10,8 @@ import {
   type RuleView,
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
+import { CopyButton } from '../components/CopyButton'
+import { formatHostPort } from '../lib/format-addr'
 import { StatusDot } from '../lib/ui'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -135,8 +137,13 @@ function ConfigCard({ rule }: { rule: RuleView }) {
       <h3 className="text-sm font-medium text-zinc-200 mb-3">配置</h3>
       <dl className="text-sm space-y-2">
         <Row k="协议" v={protoLabel} />
-        <Row k="监听" v={`${rule.listen_ip}:${rule.listen_port}`} mono />
-        <Row k="目标" v={`${rule.target_host}:${rule.target_port}`} mono />
+        <Row
+          k="监听"
+          v={formatHostPort(rule.listen_ip, rule.listen_port)}
+          copy={formatHostPort(rule.listen_ip, rule.listen_port)}
+          mono
+        />
+        <Row k="目标" v={formatHostPort(rule.target_host, rule.target_port)} mono />
         <Row k="隧道" v={rule.tunnel_id != null ? `隧道 #${rule.tunnel_id}（流量经隧道链转发）` : '直连'} />
         <Row k="限速" v={rule.bandwidth_mbps != null ? `${rule.bandwidth_mbps} Mbps` : '不限'} />
         <Row k="归属" v={rule.user_name ?? `用户 #${rule.user_id}`} />
@@ -252,11 +259,14 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
   )
 }
 
-function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function Row({ k, v, mono, copy }: { k: string; v: string; mono?: boolean; copy?: string }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-zinc-400">{k}</dt>
-      <dd className={`text-zinc-200 ${mono ? 'font-mono text-[12px]' : ''}`}>{v}</dd>
+      <dd className={`flex items-center gap-1 text-zinc-200 ${mono ? 'font-mono text-[12px]' : ''}`}>
+        {v}
+        {copy != null && <CopyButton value={copy} label={`复制${k}`} />}
+      </dd>
     </div>
   )
 }

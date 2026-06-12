@@ -22,6 +22,8 @@ import {
 } from '../lib/api'
 import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
+import { CopyButton } from '../components/CopyButton'
+import { formatHostPort } from '../lib/format-addr'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; rule: RuleView } | null
@@ -190,8 +192,13 @@ export default function Rules() {
   async function doDelete(rule: RuleView) {
     setBusy(true)
     try {
-      await rules.del(rule.id)
-      toast.success('规则已删除')
+      const res = await rules.del(rule.id)
+      // 节点离线时软删仍成功,但数据面可能仍在转发——如实告知,由对账后续清理。
+      if (res.dispatched) {
+        toast.success('规则已删除')
+      } else {
+        toast.info('规则已删除；目标节点当前离线，将在节点恢复后自动清理')
+      }
       setConfirming(null)
       await reload()
     } catch (e) {
@@ -520,8 +527,8 @@ export default function Rules() {
         <Modal title="删除规则" onClose={() => !busy && setConfirming(null)} size="sm">
           <p className="text-sm text-zinc-300">
             将删除规则 <span className="text-white font-medium">{confirming.name}</span>
-            （监听 {confirming.listen_ip}:{confirming.listen_port}）。
-            Agent 上对应端口将立即停止监听，请确认。
+            （监听 {formatHostPort(confirming.listen_ip, confirming.listen_port)}）。
+            节点在线时对应端口将立即停止监听；若节点离线，规则将在其恢复后自动清理。
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button
@@ -715,7 +722,13 @@ function RuleRow({
         </div>
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
-        {rule.listen_ip}:{rule.listen_port}
+        <span className="inline-flex items-center gap-1">
+          {formatHostPort(rule.listen_ip, rule.listen_port)}
+          <CopyButton
+            value={formatHostPort(rule.listen_ip, rule.listen_port)}
+            label="复制监听地址"
+          />
+        </span>
         {tunnelName != null && (
           <div className="mt-0.5 text-[10px] text-sky-300/80 font-sans">隧道 {tunnelName}</div>
         )}

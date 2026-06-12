@@ -3,7 +3,7 @@ use crate::{
     auth::{
         extractor::{ActorIp, AuthUser},
         jwt::encode_jwt,
-        password::{dummy_hash, verify_password},
+        password::{dummy_hash, hash_password, verify_password},
     },
     error::{ApiError, ApiResult},
     models::user::User,
@@ -23,6 +23,8 @@ pub struct LoginRequest {
 pub struct LoginResponse {
     pub token: String,
     pub user: UserView,
+    /// true = 该账号被要求首登改密(admin 新建/重置后);前端据此强制跳改密页。
+    pub must_change_password: bool,
 }
 
 #[derive(Serialize)]
@@ -45,6 +47,8 @@ pub struct MeView {
     pub period_used_calculated_at: Option<String>,
     pub rule_count: i64,
     pub total_traffic_bytes: i64,
+    /// 强制改密标志:刷新/重进时前端据此把用户挡在改密页(login 之外的入口)。
+    pub must_change_password: bool,
 }
 
 pub async fn login(
@@ -144,6 +148,7 @@ pub async fn login(
             username: user.username,
             role: user.role,
         },
+        must_change_password: user.must_change_password != 0,
     }))
 }
 
@@ -162,11 +167,12 @@ pub async fn me(
         Option<String>,
         i64,
         i64,
+        i64,
     );
     let row: Option<MeRow> = sqlx::query_as(
         "SELECT u.id, u.username, u.role, u.expires_at, u.traffic_limit_bytes_30d, \
                 u.period_used_bytes_cached, u.period_used_calculated_at, \
-                COALESCE(r.cnt, 0), COALESCE(r.tot, 0) \
+                COALESCE(r.cnt, 0), COALESCE(r.tot, 0), u.must_change_password \
          FROM users u \
          LEFT JOIN (SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
                     FROM forward_rules WHERE deleted_at IS NULL GROUP BY user_id) r \
@@ -176,7 +182,7 @@ pub async fn me(
     .bind(claims.sub)
     .fetch_optional(&state.pool)
     .await?;
-    let (id, username, role, expires_at, limit, used, used_at, rule_count, total) =
+    let (id, username, role, expires_at, limit, used, used_at, rule_count, total, must_change) =
         row.ok_or(ApiError::Unauthorized)?;
     Ok(Json(MeView {
         id,
@@ -188,7 +194,67 @@ pub async fn me(
         period_used_calculated_at: used_at,
         rule_count,
         total_traffic_bytes: total,
+        must_change_password: must_change != 0,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+/// 自助改密:校验旧密码 → 写入新 hash 并清除 must_change_password。
+/// 任何登录用户均可调用(含首登强制改密场景);不需要 admin。
+pub async fn change_password(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    actor_ip: ActorIp,
+    Json(req): Json<ChangePasswordRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    if req.new_password.len() < 8 {
+        return Err(ApiError::BadRequest("新密码长度至少 8 个字符".into()));
+    }
+    let user = User::find_by_id(&state.pool, claims.sub)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
+    let ok = verify_password(&req.old_password, &user.password_hash).map_err(ApiError::Internal)?;
+    if !ok {
+        audit::record_with_ip(
+            &state.pool,
+            Some(user.id),
+            actor_ip.as_option(),
+            "auth.change_password",
+            Some("user"),
+            Some(user.id),
+            None,
+            false,
+            Some("bad_old_password"),
+        )
+        .await;
+        return Err(ApiError::BadRequest("当前密码不正确".into()));
+    }
+    if req.new_password == req.old_password {
+        return Err(ApiError::BadRequest("新密码不能与当前密码相同".into()));
+    }
+    let new_hash = hash_password(&req.new_password).map_err(ApiError::Internal)?;
+    let rows = User::change_password_self(&state.pool, user.id, &new_hash).await?;
+    if rows == 0 {
+        return Err(ApiError::NotFound);
+    }
+    audit::record_with_ip(
+        &state.pool,
+        Some(user.id),
+        actor_ip.as_option(),
+        "auth.change_password",
+        Some("user"),
+        Some(user.id),
+        None,
+        true,
+        None,
+    )
+    .await;
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// 无状态 JWT：服务器端无 session 可清，前端清掉本地 token 即注销。

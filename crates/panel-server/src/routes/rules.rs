@@ -614,10 +614,14 @@ pub async fn delete(
     )
     .await;
 
-    // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
-    let _ = crate::grpc::tunnel_dispatch::dispatch_rule_remove(&state, &existing).await;
+    // 软删已成功(实体不可见);下发 RemoveRule 是 best-effort。dispatched=false 表示
+    // 至少一个目标节点离线,规则在数据面可能仍在跑,将由配置对账在节点恢复后清理。
+    // DB 查询出错(取节点 id)时按未送达处理,绝不因下发问题让删除回 500。
+    let dispatched = crate::grpc::tunnel_dispatch::dispatch_rule_remove(&state, &existing)
+        .await
+        .unwrap_or(false);
 
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!({ "ok": true, "dispatched": dispatched })))
 }
 
 pub async fn enable(

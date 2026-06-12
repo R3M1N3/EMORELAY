@@ -4,6 +4,7 @@ import { AuthContext } from './auth-context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserView | null>(null)
+  const [mustChangePassword, setMustChangePassword] = useState(false)
   // 初始 loading 与 token 存在性挂钩：无 token 直接 false，
   // 避免 effect 内同步 setState（react-hooks/set-state-in-effect）。
   const [loading, setLoading] = useState(() => !!getToken())
@@ -13,7 +14,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!token) return
     authApi
       .me()
-      .then(setUser)
+      .then((me) => {
+        setUser(me)
+        // 刷新/重进时也据 me() 反映强制改密,挡住非登录入口。
+        setMustChangePassword(me.must_change_password)
+      })
       .catch((e: unknown) => {
         if (e instanceof ApiError && e.status === 401) clearToken()
       })
@@ -24,6 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const resp = await authApi.login(username, password)
     setToken(resp.token)
     setUser(resp.user)
+    setMustChangePassword(resp.must_change_password)
+    return resp.must_change_password
   }, [])
 
   const logout = useCallback(async () => {
@@ -34,9 +41,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     clearToken()
     setUser(null)
+    setMustChangePassword(false)
   }, [])
 
+  const markPasswordChanged = useCallback(() => setMustChangePassword(false), [])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{ user, loading, mustChangePassword, login, logout, markPasswordChanged }}
+    >
+      {children}
+    </AuthContext.Provider>
   )
 }

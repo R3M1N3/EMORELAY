@@ -10,6 +10,8 @@ pub struct User {
     pub traffic_limit_bytes_30d: Option<i64>,
     pub period_used_bytes_cached: i64,
     pub period_used_calculated_at: Option<String>,
+    /// 首登强制改密标志:1 = 下次登录前必须改密(admin 新建/重置时置位)。
+    pub must_change_password: i64,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -19,7 +21,7 @@ impl User {
     pub async fn find_by_username(pool: &SqlitePool, username: &str) -> sqlx::Result<Option<Self>> {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
-                 period_used_bytes_cached, period_used_calculated_at, \
+                 period_used_bytes_cached, period_used_calculated_at, must_change_password, \
                  created_at, updated_at, deleted_at \
              FROM users WHERE username = ? AND deleted_at IS NULL",
         )
@@ -31,7 +33,7 @@ impl User {
     pub async fn find_by_id(pool: &SqlitePool, id: i64) -> sqlx::Result<Option<Self>> {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
-                 period_used_bytes_cached, period_used_calculated_at, \
+                 period_used_bytes_cached, period_used_calculated_at, must_change_password, \
                  created_at, updated_at, deleted_at \
              FROM users WHERE id = ? AND deleted_at IS NULL",
         )
@@ -47,19 +49,41 @@ impl User {
         role: &str,
         expires_at: Option<&str>,
         traffic_limit_bytes_30d: Option<i64>,
+        must_change_password: bool,
     ) -> sqlx::Result<i64> {
         let res = sqlx::query(
-            "INSERT INTO users (username, password_hash, role, expires_at, traffic_limit_bytes_30d) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO users \
+                 (username, password_hash, role, expires_at, traffic_limit_bytes_30d, must_change_password) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(username)
         .bind(password_hash)
         .bind(role)
         .bind(expires_at)
         .bind(traffic_limit_bytes_30d)
+        .bind(i64::from(must_change_password))
         .execute(pool)
         .await?;
         Ok(res.last_insert_rowid())
+    }
+
+    /// 自助改密成功后清除强制改密标志(同时写入新 hash)。
+    /// 单独成方法而非走 update():改密是用户自助路径,与 admin 的 update 语义不同。
+    pub async fn change_password_self(
+        pool: &SqlitePool,
+        id: i64,
+        new_password_hash: &str,
+    ) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE users SET password_hash = ?, must_change_password = 0, \
+                 updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(new_password_hash)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn count_admins(pool: &SqlitePool) -> sqlx::Result<i64> {
@@ -77,7 +101,7 @@ impl User {
     ) -> sqlx::Result<Vec<Self>> {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
-                 period_used_bytes_cached, period_used_calculated_at, \
+                 period_used_bytes_cached, period_used_calculated_at, must_change_password, \
                  created_at, updated_at, deleted_at \
              FROM users WHERE deleted_at IS NULL \
              ORDER BY id DESC LIMIT ? OFFSET ?",
@@ -98,9 +122,12 @@ impl User {
         expires_at: Option<&str>,
         traffic_limit_bytes_30d: Option<i64>,
     ) -> sqlx::Result<u64> {
+        // admin 重置密码(?1 非空)时一并置 must_change_password=1:admin 设的是临时密码,
+        // 强制用户首登改成自己的;其余字段更新不动该标志。
         let res = sqlx::query(
             "UPDATE users SET \
                 password_hash = COALESCE(?1, password_hash), \
+                must_change_password = CASE WHEN ?1 IS NULL THEN must_change_password ELSE 1 END, \
                 role = COALESCE(?2, role), \
                 expires_at = CASE \
                     WHEN ?3 IS NULL THEN expires_at \

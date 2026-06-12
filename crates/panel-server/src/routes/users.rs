@@ -269,6 +269,7 @@ pub async fn create(
     let limit = req.traffic_limit_bytes_30d.filter(|n| *n > 0);
 
     let hash = hash_password(&req.password).map_err(ApiError::Internal)?;
+    // admin 新建账号设的是临时密码,强制用户首登改成自己的(对标 flux requirePasswordChange)。
     let new_id = User::create(
         &state.pool,
         username,
@@ -276,6 +277,7 @@ pub async fn create(
         &req.role,
         normalized_expires.as_deref(),
         limit,
+        true,
     )
     .await
     .map_err(map_sqlx_to_api)?;

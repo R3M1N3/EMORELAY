@@ -85,10 +85,12 @@ async fn rule_full_cycle() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["dispatched"], false);
 
-    // delete (软删)
+    // delete (软删):无 agent 在线 → dispatched=false,但软删仍成功、接口 200。
     let req = auth_req(Method::DELETE, &format!("/api/rules/{rule_id}"), t, None).unwrap();
-    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["dispatched"], false);
 
     // get 软删后 → 404
     let req = auth_req(Method::GET, &format!("/api/rules/{rule_id}"), t, None).unwrap();
