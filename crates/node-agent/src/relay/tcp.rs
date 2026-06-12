@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
@@ -52,12 +52,16 @@ pub async fn start(
     // (与下方限速桶同一 MVP 语义),下调后短暂可能超员。
     let limiter = crate::limit::conn_limiter(rule.max_connections);
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+    // 取消闩:stop 时置 true,通知存量 bridge task 主动终止(断连=停止计费)。
+    // 用 watch 而非 JoinSet/CancellationToken:仅需已启用的 tokio sync feature,零新依赖。
+    let (cancel_tx, cancel_rx) = watch::channel(false);
 
     let join = tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = &mut stop_rx => {
                     info!(rule_id, "tcp relay stopping");
+                    let _ = cancel_tx.send(true);
                     break;
                 }
                 res = listener.accept() => {
@@ -72,13 +76,21 @@ pub async fn start(
                             counter.connection_count.fetch_add(1, Ordering::Relaxed);
                             let target_host = target_host.clone();
                             let counter = counter.clone();
-                            // 限速变更走 re-apply 重建 listener+新桶,但存量连接持旧桶直到自然断开(沿用 stop 不断存量连接的 MVP 语义);新限速仅对新连接生效。
+                            // 限速变更走 re-apply 重建 listener+新桶,但存量连接持旧桶直到自然断开;新限速仅对新连接生效。
                             let bucket = bucket.clone();
+                            let mut cancel_rx = cancel_rx.clone();
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                if let Err(e) = bridge(client, target_host, target_port, counter.clone(), bucket).await {
-                                    counter.error_count.fetch_add(1, Ordering::Relaxed);
-                                    warn!(rule_id, %peer, error = ?e, "tcp bridge error");
+                                tokio::select! {
+                                    // stop 触发:丢弃 bridge future,client/server socket 随之 drop 关闭。
+                                    // wait_for 的 Err(sender 已 drop)亦视为取消,fail-safe 不会漏断。
+                                    _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
+                                    r = bridge(client, target_host, target_port, counter.clone(), bucket) => {
+                                        if let Err(e) = r {
+                                            counter.error_count.fetch_add(1, Ordering::Relaxed);
+                                            warn!(rule_id, %peer, error = ?e, "tcp bridge error");
+                                        }
+                                    }
                                 }
                             });
                         }
@@ -314,6 +326,41 @@ mod tests {
         let _retake = TcpListener::bind(("127.0.0.1", listen_port))
             .await
             .expect("port should be released after stop");
+    }
+
+    /// 计费正确性:stop 必须主动断开存量连接,否则被禁用/删除的规则的长连接
+    /// 会继续转发并继续计量。建一条活连接(echo 往返确认在桥),stop 后客户端
+    /// 读应迅速返回 EOF/错误(连接被断),而非挂起到超时。
+    #[tokio::test]
+    async fn tcp_relay_stop_drops_inflight_connection() {
+        let echo_port = spawn_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let handle = start(rule_for(listen_port, echo_port), stats.clone(), None)
+            .await
+            .expect("relay start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // 建连并往返一次,确认 bridge 已活。
+        let mut client = TcpStream::connect(("127.0.0.1", listen_port))
+            .await
+            .expect("connect");
+        client.write_all(b"hi").await.expect("write");
+        let mut echo = [0u8; 2];
+        client.read_exact(&mut echo).await.expect("read echo");
+        assert_eq!(&echo, b"hi");
+
+        handle.stop().await;
+
+        // stop 后存量连接必须被断:read 迅速以 EOF(0) 或错误返回。
+        let mut buf = [0u8; 16];
+        let r = tokio::time::timeout(Duration::from_secs(1), client.read(&mut buf))
+            .await
+            .expect("read should resolve quickly after stop, not hang");
+        assert!(
+            matches!(r, Ok(0)) || r.is_err(),
+            "inflight connection must be closed after stop, got {r:?}"
+        );
     }
 
     /// 限速生效:2 MB @ 40 Mbps(5 MB/s, burst 1 MB)理论 ≥(2MB-1MB)/5MB/s = 0.2s。

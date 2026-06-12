@@ -5,7 +5,8 @@
 //!   (preamble 随流原样经过,不拆)。
 //! - exit:  transport.bind(self_inter_port) → accept → 读 preamble:
 //!   TCP → TcpStream::connect 业务 target 直连 bridge;UDP → 拆帧 ↔ UDP socket。
-//! stop 语义与 relay/tcp.rs 一致:停 listener,存量连接自然跑完。
+//! stop 语义与 relay/tcp.rs 一致:停 listener,并通过取消闩(watch)主动断开存量
+//! TCP 连接(断连=停止计费);UDP session 走 Drop-abort,随 loop future drop 清理。
 use anyhow::{Context as _, Result};
 use emorelay_common::control::v1::{Rule, TunnelContext, TunnelRole};
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{interval, Instant, MissedTickBehavior};
 use tracing::{info, warn};
@@ -105,12 +106,14 @@ async fn start_entry(
     info!(rule_id, %addr, tunnel_id = ctx.tunnel_id, "tunnel entry listening");
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+    // 取消闩:stop 时主动断存量 TCP 连接,语义同 relay/tcp.rs。
+    let (cancel_tx, cancel_rx) = watch::channel(false);
     let join = tokio::spawn(async move {
         // P10a 并发连接上限:split 已保证仅 entry 非 0(此处即 entry)。
         let limiter = crate::limit::conn_limiter(rule.max_connections);
         let tcp_loop = async {
             match tcp_listener {
-                Some(l) => entry_tcp_loop(rule_id, l, &transport, &next_hop, &counter, &bucket, &limiter).await,
+                Some(l) => entry_tcp_loop(rule_id, l, &transport, &next_hop, &counter, &bucket, &limiter, &cancel_rx).await,
                 None => std::future::pending().await,
             }
         };
@@ -121,7 +124,10 @@ async fn start_entry(
             }
         };
         tokio::select! {
-            _ = &mut stop_rx => info!(rule_id, "tunnel entry stopping"),
+            _ = &mut stop_rx => {
+                info!(rule_id, "tunnel entry stopping");
+                let _ = cancel_tx.send(true);
+            }
             _ = tcp_loop => warn!(rule_id, "tunnel entry tcp loop ended unexpectedly"),
             _ = udp_loop => warn!(rule_id, "tunnel entry udp loop ended unexpectedly"),
         }
@@ -137,6 +143,7 @@ async fn entry_tcp_loop(
     counter: &Arc<RuleCounter>,
     bucket: &Option<Arc<TokenBucket>>,
     limiter: &Option<Arc<tokio::sync::Semaphore>>,
+    cancel_rx: &watch::Receiver<bool>,
 ) {
     loop {
         match listener.accept().await {
@@ -151,11 +158,18 @@ async fn entry_tcp_loop(
                 let next_hop = next_hop.to_string();
                 let counter = counter.clone();
                 let bucket = bucket.clone();
+                let mut cancel_rx = cancel_rx.clone();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    if let Err(e) = entry_tcp_conn(client, transport, &next_hop, &counter, bucket).await {
-                        counter.error_count.fetch_add(1, Ordering::Relaxed);
-                        warn!(rule_id, %peer, error = ?e, "tunnel entry tcp bridge error");
+                    tokio::select! {
+                        // stop 触发:丢弃 bridge,client/隧道连接随之 drop 关闭。
+                        _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
+                        r = entry_tcp_conn(client, transport, &next_hop, &counter, bucket) => {
+                            if let Err(e) = r {
+                                counter.error_count.fetch_add(1, Ordering::Relaxed);
+                                warn!(rule_id, %peer, error = ?e, "tunnel entry tcp bridge error");
+                            }
+                        }
                     }
                 });
             }
@@ -397,11 +411,14 @@ async fn start_relay_hop(
     info!(rule_id, %bind_addr, tunnel_id = ctx.tunnel_id, role = ctx.role, "tunnel hop listening");
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+    // 取消闩:stop 时主动断存量 hop 连接(mid/exit 不计费,但悬挂连接会占端口/上游)。
+    let (cancel_tx, cancel_rx) = watch::channel(false);
     let join = tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = &mut stop_rx => {
                     info!(rule_id, "tunnel hop stopping");
+                    let _ = cancel_tx.send(true);
                     break;
                 }
                 res = listener.accept() => match res {
@@ -409,9 +426,15 @@ async fn start_relay_hop(
                         let transport = transport.clone();
                         let next_hop = next_hop.clone();
                         let mode = mode.clone();
+                        let mut cancel_rx = cancel_rx.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_hop_conn(conn, transport, &next_hop, mode).await {
-                                warn!(rule_id, error = ?e, "tunnel hop conn error");
+                            tokio::select! {
+                                _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
+                                r = handle_hop_conn(conn, transport, &next_hop, mode) => {
+                                    if let Err(e) = r {
+                                        warn!(rule_id, error = ?e, "tunnel hop conn error");
+                                    }
+                                }
                             }
                         });
                     }
@@ -625,6 +648,53 @@ mod tests {
         assert!(
             exit_stats.drain_snapshot().is_empty(),
             "exit 不应计 rule stats(避免 server 端按 rule_id 重复累加)"
+        );
+    }
+
+    /// 计费正确性(隧道侧):entry stop 必须主动断开存量隧道连接,否则被停用的
+    /// 隧道规则的长连接继续转发并继续计量。建活连接(往返确认在桥)后 stop entry,
+    /// 客户端读应迅速 EOF/错误返回,而非挂起到超时。
+    #[tokio::test]
+    async fn tunnel_entry_stop_drops_inflight_connection() {
+        let echo = spawn_echo_server().await;
+        let exit_port = ephemeral_port();
+        let entry_port = ephemeral_port();
+        let t: Arc<dyn crate::tunnel::transport::TunnelTransport> = Arc::new(TcpTransport);
+
+        let exit = start(
+            tunnel_rule(TunnelRole::Exit, 1, "tcp", 0, echo, exit_port, 0),
+            Arc::new(StatsCollector::new()),
+            None,
+            t.clone(),
+        )
+        .await
+        .expect("exit start");
+        let entry = start(
+            tunnel_rule(TunnelRole::Entry, 0, "tcp", entry_port, echo, 0, exit_port),
+            Arc::new(StatsCollector::new()),
+            None,
+            t.clone(),
+        )
+        .await
+        .expect("entry start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut conn = TcpStream::connect(("127.0.0.1", entry_port)).await.unwrap();
+        conn.write_all(b"hi").await.unwrap();
+        let mut echo_buf = [0u8; 2];
+        conn.read_exact(&mut echo_buf).await.unwrap();
+        assert_eq!(&echo_buf, b"hi");
+
+        entry.stop().await;
+        exit.stop().await;
+
+        let mut buf = [0u8; 16];
+        let r = tokio::time::timeout(Duration::from_secs(1), conn.read(&mut buf))
+            .await
+            .expect("read should resolve quickly after entry stop, not hang");
+        assert!(
+            matches!(r, Ok(0)) || r.is_err(),
+            "inflight tunnel connection must be closed after entry stop, got {r:?}"
         );
     }
 

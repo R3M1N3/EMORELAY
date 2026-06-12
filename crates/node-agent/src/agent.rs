@@ -254,9 +254,14 @@ async fn report_stats(
         buckets,
     };
     info!(rules = snapshot.len(), "reporting rule stats");
-    client
+    // 上报失败:把已 drain 的计数回填,下个窗口补报,避免计费丢数(参考 flux「上报成功才清零」语义)。
+    if let Err(e) = client
         .report_rule_stats(tokio_stream::iter(vec![batch]))
-        .await?;
+        .await
+    {
+        stats.restore(&snapshot);
+        return Err(e.into());
+    }
     Ok(())
 }
 
