@@ -75,12 +75,26 @@ pub async fn expiry_tick_once(state: &AppState) -> anyhow::Result<u64> {
 pub async fn quota_tick_once(state: &AppState) -> anyhow::Result<u64> {
     // 注意:下面的 JOIN forward_rules 故意不过滤 fr.deleted_at——删除规则不得清零
     // 用户 30 天用量(防"删规则重建"规避配额),勿当 bug "修复"。
+    //
+    // 计费换算(P1):隧道规则按隧道 billing_mode/traffic_ratio 换算计费字节,原始
+    // rule_stats 不变。billing_mode=1 单向取较大方向(CASE 而非 SQLite 专有 max(a,b),
+    // 保 PG 兼容);=2 或非隧道规则取 rx+tx。倍率默认 1.0。
+    // CAST(REAL AS INTEGER):SQLite 向零截断、PG 四舍五入——小数倍率下两库结果最多
+    // 差 1 字节/聚合,不影响配额判定方向,可接受(不用 FLOOR/TRUNC:SQLite 数学函数
+    // 需编译期 SQLITE_ENABLE_MATH_FUNCTIONS,不保证可用)。
+    // t.deleted_at IS NULL 放 ON 而非 WHERE:隧道软删后该规则回落默认计费,而非被整行漏算。
     sqlx::query(
         "UPDATE users SET \
              period_used_bytes_cached = ( \
-                 SELECT COALESCE(SUM(rs.rx_bytes + rs.tx_bytes), 0) \
+                 SELECT COALESCE(CAST(SUM( \
+                     (CASE WHEN t.billing_mode = 1 \
+                           THEN CASE WHEN rs.rx_bytes > rs.tx_bytes THEN rs.rx_bytes ELSE rs.tx_bytes END \
+                           ELSE rs.rx_bytes + rs.tx_bytes END) \
+                     * COALESCE(t.traffic_ratio, 1.0) \
+                 ) AS INTEGER), 0) \
                  FROM rule_stats rs \
                  JOIN forward_rules fr ON rs.rule_id = fr.id \
+                 LEFT JOIN tunnels t ON fr.tunnel_id = t.id AND t.deleted_at IS NULL \
                  WHERE fr.user_id = users.id \
                    AND rs.bucket_at >= datetime('now', '-30 days') \
              ), \

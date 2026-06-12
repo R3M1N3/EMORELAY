@@ -15,6 +15,8 @@ pub struct TunnelView {
     pub name: String,
     pub transport: String,
     pub status: String,
+    pub traffic_ratio: f64,
+    pub billing_mode: i64,
     pub hops_count: i64,
     pub rules_count: i64,
     pub created_at: String,
@@ -44,6 +46,8 @@ pub struct TunnelDetail {
     pub name: String,
     pub transport: String,
     pub status: String,
+    pub traffic_ratio: f64,
+    pub billing_mode: i64,
     pub hops: Vec<HopView>,
     pub rules_count: i64,
     pub rules: Vec<TunnelRuleRef>,
@@ -64,10 +68,35 @@ pub struct CreateTunnelRequest {
     pub name: String,
     pub transport: String,
     pub node_ids: Vec<i64>,
+    /// 计费倍率(默认 1.0);billing_mode 1=单向 2=双向(默认 2)。
+    pub traffic_ratio: Option<f64>,
+    pub billing_mode: Option<i64>,
 }
 
 #[derive(Deserialize)]
-pub struct UpdateTunnelRequest { pub name: Option<String> }
+pub struct UpdateTunnelRequest {
+    pub name: Option<String>,
+    pub traffic_ratio: Option<f64>,
+    pub billing_mode: Option<i64>,
+}
+
+/// 校验计费参数:倍率 0..=100,模式 1|2。返回规范化后的值(None 表示不改)。
+fn validate_billing(
+    ratio: Option<f64>,
+    mode: Option<i64>,
+) -> ApiResult<()> {
+    if let Some(r) = ratio {
+        if !(r.is_finite() && (0.0..=100.0).contains(&r)) {
+            return Err(ApiError::BadRequest("流量倍率必须在 0 到 100 之间".into()));
+        }
+    }
+    if let Some(m) = mode {
+        if m != 1 && m != 2 {
+            return Err(ApiError::BadRequest("计费模式必须是 1(单向)或 2(双向)".into()));
+        }
+    }
+    Ok(())
+}
 
 pub async fn list(
     State(state): State<AppState>, auth: AuthUser, Query(q): Query<ListQuery>,
@@ -97,6 +126,7 @@ pub async fn list(
         let rules_count = Tunnel::active_rule_refs(&state.pool, t.id).await?;
         items.push(TunnelView {
             id: t.id, name: t.name, transport: t.transport, status: t.status,
+            traffic_ratio: t.traffic_ratio, billing_mode: t.billing_mode,
             hops_count: hops.len() as i64, rules_count, created_at: t.created_at, updated_at: t.updated_at,
         });
     }
@@ -127,6 +157,7 @@ pub async fn get(
         .collect();
     Ok(Json(TunnelDetail {
         id: t.id, name: t.name, transport: t.transport, status,
+        traffic_ratio: t.traffic_ratio, billing_mode: t.billing_mode,
         hops: hops.into_iter().map(|h| HopView { ordinal: h.ordinal, node_id: h.node_id, inter_port: h.inter_port }).collect(),
         rules_count: rules.len() as i64,
         rules,
@@ -154,6 +185,7 @@ pub async fn create(
     if !matches!(req.transport.as_str(), "tcp" | "tls" | "wss") {
         return Err(ApiError::BadRequest("传输协议必须是 tcp | tls | wss".into()));
     }
+    validate_billing(req.traffic_ratio, req.billing_mode)?;
     if req.node_ids.len() < 2 {
         return Err(ApiError::BadRequest("隧道至少需要 2 个节点".into()));
     }
@@ -210,6 +242,12 @@ pub async fn create(
     let tid = Tunnel::create_with_hops(&state.pool, name, &req.transport, &hops)
         .await
         .map_err(map_sqlx_to_api)?;
+    // 非默认计费参数随后覆盖(create_with_hops 取 DB 默认 1.0/双向)。
+    if req.traffic_ratio.is_some() || req.billing_mode.is_some() {
+        Tunnel::update_fields(&state.pool, tid, None, req.traffic_ratio, req.billing_mode)
+            .await
+            .map_err(map_sqlx_to_api)?;
+    }
 
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.create", Some("tunnel"), Some(tid), Some(name), true, None).await;
@@ -231,7 +269,13 @@ pub async fn update(
         if name.trim().is_empty() {
             return Err(ApiError::BadRequest("名称不能为空".into()));
         }
-        let rows = Tunnel::update_name(&state.pool, id, name.trim()).await.map_err(map_sqlx_to_api)?;
+    }
+    validate_billing(req.traffic_ratio, req.billing_mode)?;
+    let name = req.name.as_deref().map(str::trim);
+    if name.is_some() || req.traffic_ratio.is_some() || req.billing_mode.is_some() {
+        let rows = Tunnel::update_fields(&state.pool, id, name, req.traffic_ratio, req.billing_mode)
+            .await
+            .map_err(map_sqlx_to_api)?;
         if rows == 0 { return Err(ApiError::NotFound); }
     }
     let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
@@ -241,6 +285,7 @@ pub async fn update(
         "tunnel.update", Some("tunnel"), Some(id), None, true, None).await;
     Ok(Json(TunnelView {
         id: t.id, name: t.name, transport: t.transport, status: t.status,
+        traffic_ratio: t.traffic_ratio, billing_mode: t.billing_mode,
         hops_count: hops.len() as i64, rules_count, created_at: t.created_at, updated_at: t.updated_at,
     }))
 }

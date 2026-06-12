@@ -6,6 +6,9 @@ pub struct Tunnel {
     pub name: String,
     pub transport: String,
     pub status: String,
+    /// 计费倍率(默认 1.0);billing_mode: 2=双向 rx+tx, 1=单向(较大方向)。
+    pub traffic_ratio: f64,
+    pub billing_mode: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -20,11 +23,14 @@ pub struct TunnelHop {
     pub created_at: String,
 }
 
-const TUNNEL_COLS: &str = "id, name, transport, status, created_at, updated_at";
+const TUNNEL_COLS: &str =
+    "id, name, transport, status, traffic_ratio, billing_mode, created_at, updated_at";
 const HOP_COLS: &str = "id, tunnel_id, ordinal, node_id, inter_port, created_at";
 
 impl Tunnel {
     /// 事务建隧道 + N 跳。hops = &[(ordinal, node_id, inter_port)]。
+    /// traffic_ratio / billing_mode 取 DB 默认(1.0 / 2 双向);非默认由调用方
+    /// 随后 update_fields 覆盖,避免改本方法签名波及大量调用点。
     pub async fn create_with_hops(
         pool: &SqlitePool,
         name: &str,
@@ -71,11 +77,25 @@ impl Tunnel {
             .await
     }
 
-    pub async fn update_name(pool: &SqlitePool, id: i64, name: &str) -> sqlx::Result<u64> {
+    /// 部分更新 name / traffic_ratio / billing_mode(None 不变)。
+    pub async fn update_fields(
+        pool: &SqlitePool,
+        id: i64,
+        name: Option<&str>,
+        traffic_ratio: Option<f64>,
+        billing_mode: Option<i64>,
+    ) -> sqlx::Result<u64> {
         let res = sqlx::query(
-            "UPDATE tunnels SET name = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE tunnels SET \
+                name = COALESCE(?1, name), \
+                traffic_ratio = COALESCE(?2, traffic_ratio), \
+                billing_mode = COALESCE(?3, billing_mode), \
+                updated_at = datetime('now') \
+             WHERE id = ?4 AND deleted_at IS NULL",
         )
         .bind(name)
+        .bind(traffic_ratio)
+        .bind(billing_mode)
         .bind(id)
         .execute(pool)
         .await?;

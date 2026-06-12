@@ -271,6 +271,8 @@ function TunnelForm({
   const [name, setName] = useState('')
   const [transport, setTransport] = useState<CreateTunnelRequest['transport']>('tls')
   const [chain, setChain] = useState<string[]>(['', ''])
+  const [trafficRatio, setTrafficRatio] = useState('1')
+  const [billingMode, setBillingMode] = useState<1 | 2>(2)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -320,9 +322,21 @@ function TunnelForm({
       return
     }
 
+    const ratio = Number(trafficRatio)
+    if (!Number.isFinite(ratio) || ratio < 0 || ratio > 100) {
+      setError('流量倍率必须在 0 到 100 之间')
+      return
+    }
+
     setSubmitting(true)
     try {
-      await tunnels.create({ name: name.trim(), transport, node_ids: ids })
+      await tunnels.create({
+        name: name.trim(),
+        transport,
+        node_ids: ids,
+        traffic_ratio: ratio,
+        billing_mode: billingMode,
+      })
       toast.success(`隧道 ${name.trim()} 已创建`)
       await onSuccess()
     } catch (e) {
@@ -362,6 +376,39 @@ function TunnelForm({
           <option value="tcp">TCP</option>
           <option value="wss">WSS</option>
         </select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label htmlFor="tunnel-ratio" className={fieldLabelCls}>
+            流量倍率
+          </label>
+          <input
+            id="tunnel-ratio"
+            type="number"
+            min={0}
+            max={100}
+            step="0.1"
+            value={trafficRatio}
+            onChange={(e) => setTrafficRatio(e.target.value)}
+            className={fieldInputCls}
+          />
+          <p className="mt-1 text-[11px] text-zinc-500">计费乘数，1 = 原样，2 = 双倍</p>
+        </div>
+        <div>
+          <label htmlFor="tunnel-billing" className={fieldLabelCls}>
+            计费方向
+          </label>
+          <select
+            id="tunnel-billing"
+            value={billingMode}
+            onChange={(e) => setBillingMode(Number(e.target.value) as 1 | 2)}
+            className={fieldInputCls}
+          >
+            <option value={2}>双向（上行+下行）</option>
+            <option value={1}>单向（较大方向）</option>
+          </select>
+        </div>
       </div>
 
       <div>

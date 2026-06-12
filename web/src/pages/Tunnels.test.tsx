@@ -74,6 +74,8 @@ describe('Tunnels page', () => {
         name: 't-new',
         transport: 'tls',
         node_ids: [11, 12],
+        traffic_ratio: 1,
+        billing_mode: 2,
       }),
     )
   })

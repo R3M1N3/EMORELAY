@@ -587,6 +587,10 @@ export interface TunnelView {
   name: string
   transport: 'tcp' | 'tls' | 'wss'
   status: 'up' | 'degraded' | 'down' | 'unknown'
+  /** 计费倍率(默认 1.0) */
+  traffic_ratio: number
+  /** 1=单向(计较大方向) 2=双向(rx+tx,默认) */
+  billing_mode: 1 | 2
   hops_count: number
   rules_count: number
   created_at: string
@@ -612,6 +616,8 @@ export interface TunnelDetailView {
   name: string
   transport: TunnelView['transport']
   status: TunnelView['status']
+  traffic_ratio: number
+  billing_mode: 1 | 2
   hops: TunnelHopView[]
   rules_count: number
   rules: TunnelRuleRef[]
@@ -630,6 +636,8 @@ export interface CreateTunnelRequest {
   name: string
   transport: TunnelView['transport']
   node_ids: number[]
+  traffic_ratio?: number
+  billing_mode?: 1 | 2
 }
 
 export const tunnels = {
@@ -641,7 +649,10 @@ export const tunnels = {
   },
   get: (id: number) => api.get<TunnelDetailView>(`/api/tunnels/${id}`),
   create: (req: CreateTunnelRequest) => api.post<{ id: number }>('/api/tunnels', req),
-  update: (id: number, req: { name: string }) => api.patch<TunnelView>(`/api/tunnels/${id}`, req),
+  update: (
+    id: number,
+    req: { name?: string; traffic_ratio?: number; billing_mode?: 1 | 2 },
+  ) => api.patch<TunnelView>(`/api/tunnels/${id}`, req),
   del: (id: number) => api.del<{ ok: boolean }>(`/api/tunnels/${id}`),
   restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/tunnels/${id}/restart`),
   status: (id: number) => api.get<{ id: number; status: TunnelView['status'] }>(`/api/tunnels/${id}/status`),

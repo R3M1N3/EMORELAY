@@ -139,6 +139,9 @@ export default function TunnelDetail() {
               {statusLabel(detail.status)}
             </span>
             <span className="uppercase text-xs mr-3">{detail.transport}</span>
+            <span className="text-xs mr-3">
+              计费 {detail.billing_mode === 1 ? '单向' : '双向'} × {detail.traffic_ratio}
+            </span>
             ID #{detail.id} · 创建 {shortTime(detail.created_at)}
           </p>
         </div>
