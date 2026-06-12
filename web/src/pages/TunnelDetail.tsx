@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
   nodes,
+  rules,
   shortTime,
   tunnels,
   type GrantedUser,
@@ -140,14 +141,31 @@ export default function TunnelDetail() {
             ID #{detail.id} · 创建 {shortTime(detail.created_at)}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={doRestart}
-          disabled={restarting}
-          className="shrink-0 rounded-lg bg-amber-600/80 hover:bg-amber-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
-        >
-          {restarting ? '重启中…' : '重启隧道'}
-        </button>
+        <div className="flex gap-2 shrink-0">
+          {/* P9: 导出本隧道关联规则(隧道规则导入时需手动重建关联,文件中含 tunnel_name 供识别)。 */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await rules.exportDownload({ tunnel_id: tunnelId })
+                toast.success('已导出。注意:隧道关联无法随导入自动重建,导入后需手动重新关联隧道')
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.message : '导出失败')
+              }
+            }}
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+          >
+            导出规则
+          </button>
+          <button
+            type="button"
+            onClick={doRestart}
+            disabled={restarting}
+            className="rounded-lg bg-amber-600/80 hover:bg-amber-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
+          >
+            {restarting ? '重启中…' : '重启隧道'}
+          </button>
+        </div>
       </div>
 
       {/* hop 链表 */}

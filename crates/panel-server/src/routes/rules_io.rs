@@ -1,6 +1,7 @@
 //! 规则导入导出(admin only)。导出不含 id/user_id/created_at(跨实例不可控);
-//! 以 node_name / bandwidth_profile_name 做跨实例映射。tunnel_name 字段为
-//! P3 预留:导出恒 null,导入非空报 error。
+//! 以 node_name / bandwidth_profile_name 做跨实例映射。tunnel_name 导出真实关联名
+//! (供人识别),导入非空仍报 error(隧道凭据/hop 不可跨实例自动重建,需手动重建关联)。
+//! P9: 导出支持 node_id/tunnel_id 过滤;导入支持 target_node_id(全部映射到指定节点)。
 use crate::{
     audit,
     auth::extractor::{ActorIp, AuthUser},
@@ -35,6 +36,7 @@ pub struct RuleExportItem {
 pub struct ExportQuery {
     pub node_id: Option<i64>,
     pub user_id: Option<i64>,
+    pub tunnel_id: Option<i64>,
 }
 
 #[derive(FromRow)]
@@ -47,6 +49,7 @@ struct ExportRow {
     target_port: i64,
     enabled: i64,
     node_name: String,
+    tunnel_name: Option<String>,
     bandwidth_profile_name: Option<String>,
 }
 
@@ -63,12 +66,17 @@ pub async fn export(
     if q.user_id.is_some() {
         where_parts.push("fr.user_id = ?".into());
     }
+    if q.tunnel_id.is_some() {
+        where_parts.push("fr.tunnel_id = ?".into());
+    }
     let sql = format!(
         "SELECT fr.name, fr.protocol, fr.listen_ip, fr.listen_port, fr.target_host, \
                 fr.target_port, fr.enabled, n.name AS node_name, \
+                t.name AS tunnel_name, \
                 bp.name AS bandwidth_profile_name \
          FROM forward_rules fr \
          JOIN nodes n ON n.id = fr.node_id \
+         LEFT JOIN tunnels t ON t.id = fr.tunnel_id AND t.deleted_at IS NULL \
          LEFT JOIN bandwidth_profiles bp \
            ON bp.id = fr.bandwidth_profile_id AND bp.deleted_at IS NULL \
          WHERE {} ORDER BY fr.id",
@@ -80,6 +88,9 @@ pub async fn export(
     }
     if let Some(uid) = q.user_id {
         query = query.bind(uid);
+    }
+    if let Some(tid) = q.tunnel_id {
+        query = query.bind(tid);
     }
     let rows = query.fetch_all(&state.pool).await?;
     let items: Vec<RuleExportItem> = rows
@@ -93,7 +104,7 @@ pub async fn export(
             target_port: r.target_port as u16,
             enabled: r.enabled != 0,
             node_name: r.node_name,
-            tunnel_name: None,
+            tunnel_name: r.tunnel_name,
             bandwidth_profile_name: r.bandwidth_profile_name,
         })
         .collect();
@@ -110,6 +121,8 @@ pub async fn export(
 pub struct ImportQuery {
     pub strategy: Option<String>,
     pub dry_run: Option<u8>,
+    /// P9: 给定时忽略各 item 的 node_name,全部映射到该节点。
+    pub target_node_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -133,6 +146,8 @@ enum PlannedAction {
     },
     Overwrite {
         existing_id: i64,
+        /// 落点节点(文件内自重复检测用),与 Create 同口径。
+        node_id: i64,
         bandwidth_profile_id: Option<i64>,
     },
     Skip,
@@ -153,6 +168,15 @@ pub async fn import(
     }
     let dry_run = q.dry_run.unwrap_or(1) != 0;
     let reserved = settings::reserved_ports(&state.pool).await;
+    // 目标节点先行解析一次:不存在直接整体 400(避免逐项重复报错)。
+    let target_node = match q.target_node_id {
+        Some(nid) => Some(
+            Node::find_by_id(&state.pool, nid)
+                .await?
+                .ok_or_else(|| ApiError::BadRequest("导入目标节点不存在".into()))?,
+        ),
+        None => None,
+    };
 
     let mut report = Vec::with_capacity(items.len());
     let mut created = 0u32;
@@ -160,8 +184,24 @@ pub async fn import(
     let mut skipped = 0u32;
     let mut errors = 0u32;
 
+    // 文件内自重复检测:同批两项落到同一 (node, ip, port, protocol) 时,第二项直接报
+    // error——否则 dry-run 各报 create、实导时却互相 skip/覆盖,预览失真(target_node_id
+    // 把多节点规则汇入单节点时是主要触发场景)。
+    let mut seen_bindings: std::collections::HashSet<(i64, String, u16, String)> =
+        std::collections::HashSet::new();
     for (index, item) in items.iter().enumerate() {
-        let planned = plan_item(&state, item, strategy, &reserved).await?;
+        let mut planned = plan_item(&state, item, strategy, &reserved, target_node.as_ref()).await?;
+        let landing_node = match &planned {
+            PlannedAction::Create { node_id, .. } => Some(*node_id),
+            PlannedAction::Overwrite { node_id, .. } => Some(*node_id),
+            _ => None,
+        };
+        if let Some(nid) = landing_node {
+            let key = (nid, item.listen_ip.clone(), item.listen_port, item.protocol.clone());
+            if !seen_bindings.insert(key) {
+                planned = PlannedAction::Error("与本文件中靠前的条目监听绑定重复".into());
+            }
+        }
         let (action, reason): (&'static str, String) = match planned {
             PlannedAction::Error(reason) => ("error", reason),
             PlannedAction::Skip => ("skip", "相同监听绑定已存在".into()),
@@ -175,7 +215,7 @@ pub async fn import(
                     }
                 }
             }
-            PlannedAction::Overwrite { existing_id, bandwidth_profile_id } => {
+            PlannedAction::Overwrite { existing_id, node_id: _, bandwidth_profile_id } => {
                 if dry_run {
                     ("overwrite", format!("将覆盖规则 #{existing_id}"))
                 } else {
@@ -219,12 +259,13 @@ pub async fn import(
     }))
 }
 
-/// 单项校验与映射,不写库。
+/// 单项校验与映射,不写库。target_node 给定时忽略 item.node_name(P9 全部映射到指定节点)。
 async fn plan_item(
     state: &AppState,
     item: &RuleExportItem,
     strategy: &str,
     reserved: &[i64],
+    target_node: Option<&Node>,
 ) -> ApiResult<PlannedAction> {
     if item.tunnel_name.as_deref().is_some_and(|t| !t.is_empty()) {
         return Ok(PlannedAction::Error(
@@ -247,11 +288,17 @@ async fn plan_item(
         return Ok(PlannedAction::Error("目标主机不是合法 IP 或主机名".into()));
     }
 
-    let Some(node) = Node::find_by_name(&state.pool, &item.node_name).await? else {
-        return Ok(PlannedAction::Error(format!(
-            "节点不存在: {}",
-            item.node_name
-        )));
+    let node = match target_node {
+        Some(n) => n.clone(),
+        None => match Node::find_by_name(&state.pool, &item.node_name).await? {
+            Some(n) => n,
+            None => {
+                return Ok(PlannedAction::Error(format!(
+                    "节点不存在: {}",
+                    item.node_name
+                )))
+            }
+        },
     };
     let port = i64::from(item.listen_port);
     if port < node.port_pool_min || port > node.port_pool_max {
@@ -286,7 +333,7 @@ async fn plan_item(
     .await?;
     if let Some((existing_id,)) = exact {
         return Ok(match strategy {
-            "overwrite" => PlannedAction::Overwrite { existing_id, bandwidth_profile_id },
+            "overwrite" => PlannedAction::Overwrite { existing_id, node_id: node.id, bandwidth_profile_id },
             _ => PlannedAction::Skip,
         });
     }

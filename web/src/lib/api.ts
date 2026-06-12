@@ -520,9 +520,10 @@ export const rules = {
   stats: (id: number) => api.get<RuleStatsResponse>(`/api/rules/${id}/stats`),
   logs: (id: number) => api.get<RuleLogEntry[]>(`/api/rules/${id}/logs`),
   /** 按当前筛选导出并触发浏览器下载(需带 Authorization,不能用 <a href>)。 */
-  exportDownload: async (q: { node_id?: number } = {}) => {
+  exportDownload: async (q: { node_id?: number; tunnel_id?: number } = {}) => {
     const sp = new URLSearchParams()
     if (q.node_id) sp.set('node_id', String(q.node_id))
+    if (q.tunnel_id) sp.set('tunnel_id', String(q.tunnel_id))
     const token = getToken()
     const res = await fetch(`/api/rules/export?${sp.toString()}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -540,9 +541,16 @@ export const rules = {
     a.click()
     URL.revokeObjectURL(url)
   },
-  importRules: (items: RuleExportItem[], strategy: 'skip' | 'overwrite', dryRun: boolean) =>
+  /** targetNodeId 给定时全部映射到该节点,忽略文件内 node_name(P9)。 */
+  importRules: (
+    items: RuleExportItem[],
+    strategy: 'skip' | 'overwrite',
+    dryRun: boolean,
+    targetNodeId?: number,
+  ) =>
     api.post<ImportReport>(
-      `/api/rules/import?strategy=${strategy}&dry_run=${dryRun ? 1 : 0}`,
+      `/api/rules/import?strategy=${strategy}&dry_run=${dryRun ? 1 : 0}` +
+        (targetNodeId ? `&target_node_id=${targetNodeId}` : ''),
       items,
     ),
 }

@@ -4,6 +4,7 @@ import {
   ApiError,
   formatBytes,
   nodes,
+  rules,
   shortTime,
   type GrantedUser,
   type NodeStatsResponse,
@@ -153,13 +154,30 @@ export default function NodeDetail() {
             ID #{node.id} · {node.region || '—'} · {node.public_ip || '未填'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setConfirmingRevoke(true)}
-          className="shrink-0 rounded-lg bg-amber-600/80 hover:bg-amber-500 px-3 py-2 text-sm font-medium"
-        >
-          轮换凭据
-        </button>
+        <div className="flex gap-2 shrink-0">
+          {/* P9: 导出本节点全部规则(跨实例迁移/备份用)。 */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await rules.exportDownload({ node_id: nodeId })
+                toast.success('已导出本节点规则')
+              } catch (e) {
+                toast.error(e instanceof ApiError ? e.message : '导出失败')
+              }
+            }}
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+          >
+            导出规则
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmingRevoke(true)}
+            className="rounded-lg bg-amber-600/80 hover:bg-amber-500 px-3 py-2 text-sm font-medium"
+          >
+            轮换凭据
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

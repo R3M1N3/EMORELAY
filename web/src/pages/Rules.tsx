@@ -55,6 +55,8 @@ export default function Rules() {
     items: RuleExportItem[]
     report: ImportReport
     strategy: 'skip' | 'overwrite'
+    /** P9: '' = 按文件内节点名映射;数字字符串 = 全部导入到该节点 */
+    targetNodeId: string
     submitting: boolean
   } | null>(null)
   // 策略切换重跑 dry-run 期间为 true,禁用 radio 与确认按钮,防止用旧策略提交。
@@ -248,18 +250,24 @@ export default function Rules() {
     }
     try {
       const report = await rules.importRules(items, 'skip', true)
-      setImporting({ items, report, strategy: 'skip', submitting: false })
+      setImporting({ items, report, strategy: 'skip', targetNodeId: '', submitting: false })
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '预检失败')
     }
   }
 
-  async function changeStrategy(strategy: 'skip' | 'overwrite') {
+  // 策略或导入目标变化都重跑 dry-run(预览必须反映最终参数)。
+  async function rerunPreview(strategy: 'skip' | 'overwrite', targetNodeId: string) {
     if (!importing || refreshing) return
     setRefreshing(true)
     try {
-      const report = await rules.importRules(importing.items, strategy, true)
-      setImporting({ ...importing, strategy, report })
+      const report = await rules.importRules(
+        importing.items,
+        strategy,
+        true,
+        targetNodeId ? Number(targetNodeId) : undefined,
+      )
+      setImporting({ ...importing, strategy, targetNodeId, report })
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '预检失败')
     } finally {
@@ -271,7 +279,12 @@ export default function Rules() {
     if (!importing) return
     setImporting({ ...importing, submitting: true })
     try {
-      const report = await rules.importRules(importing.items, importing.strategy, false)
+      const report = await rules.importRules(
+        importing.items,
+        importing.strategy,
+        false,
+        importing.targetNodeId ? Number(importing.targetNodeId) : undefined,
+      )
       const errs = report.items.filter((i) => i.action === 'error').length
       if (errs > 0) toast.error(`导入完成，${errs} 项失败`)
       else toast.success('导入完成')
@@ -535,7 +548,7 @@ export default function Rules() {
           onClose={() => !importing.submitting && setImporting(null)}
           size="lg"
         >
-          <div className="flex items-center gap-3 mb-3 text-sm">
+          <div className="flex items-center gap-3 mb-2 text-sm flex-wrap">
             <span className="text-zinc-400">冲突策略:</span>
             {(['skip', 'overwrite'] as const).map((s) => (
               <label key={s} className="inline-flex items-center gap-1.5 cursor-pointer">
@@ -544,12 +557,29 @@ export default function Rules() {
                   name="import-strategy"
                   checked={importing.strategy === s}
                   disabled={refreshing}
-                  onChange={() => void changeStrategy(s)}
+                  onChange={() => void rerunPreview(s, importing.targetNodeId)}
                 />
                 {s === 'skip' ? '跳过 (skip)' : '覆盖 (overwrite)'}
               </label>
             ))}
             {refreshing && <span className="text-zinc-500 text-xs">刷新中…</span>}
+          </div>
+          {/* P9: 导入目标——按文件内节点名映射,或全部映射到指定节点。 */}
+          <div className="flex items-center gap-2 mb-3 text-sm">
+            <span className="text-zinc-400 shrink-0">导入目标:</span>
+            <select
+              value={importing.targetNodeId}
+              disabled={refreshing}
+              onChange={(e) => void rerunPreview(importing.strategy, e.target.value)}
+              className={`${fieldInputCls} max-w-xs`}
+            >
+              <option value="">按文件内节点名映射</option>
+              {nodeList.map((n) => (
+                <option key={n.id} value={n.id}>
+                  全部导入到 {n.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
@@ -577,7 +607,15 @@ export default function Rules() {
                       <td className="px-3 py-2 text-zinc-200">
                         {src?.name ?? '—'}
                         <span className="text-[11px] text-zinc-500 ml-1.5 font-mono">
-                          {src ? `${src.node_name}:${src.listen_port}/${src.protocol}` : ''}
+                          {src
+                            ? `${
+                                // 选了导入目标时显示实际落点节点,避免与文件内 node_name 误导。
+                                importing.targetNodeId
+                                  ? nodesById.get(Number(importing.targetNodeId))?.name ??
+                                    `#${importing.targetNodeId}`
+                                  : src.node_name
+                              }:${src.listen_port}/${src.protocol}`
+                            : ''}
                         </span>
                       </td>
                       <td className={`px-3 py-2 ${tone}`}>{it.action}</td>
