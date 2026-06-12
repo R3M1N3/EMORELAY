@@ -4,6 +4,7 @@ import {
   ApiError,
   nodes,
   shortTime,
+  statusLabel,
   tunnels,
   type CreateTunnelRequest,
   type NodeView,
@@ -101,13 +102,6 @@ export default function Tunnels() {
     return 'unknown'
   }
 
-  function tunnelStatusLabel(status: TunnelView['status']): string {
-    if (status === 'up') return '正常'
-    if (status === 'down') return '断线'
-    if (status === 'degraded') return '降级'
-    return '未知'
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-3">
@@ -169,7 +163,7 @@ export default function Tunnels() {
                       <td className="px-4 py-3 align-top">
                         <span className="inline-flex items-center gap-1.5 text-xs text-zinc-300">
                           <StatusDot kind={tunnelStatusKind(t.status)} />
-                          {tunnelStatusLabel(t.status)}
+                          {statusLabel(t.status)}
                         </span>
                       </td>
                       <td className="px-4 py-3 align-top text-zinc-300">{t.hops_count}</td>
