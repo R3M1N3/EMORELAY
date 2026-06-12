@@ -320,3 +320,75 @@ async fn import_target_node_id_maps_all_items() {
     let (status, body) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
+
+// P9 遗留:导出携带 owner_username,导入按用户名回填归属;匹配不到归导入者。
+#[tokio::test]
+async fn import_backfills_owner_by_username() {
+    let app = common::make_app().await.unwrap();
+    let node_id = seed_node_named(&app, "own-node").await;
+    let (alice_id, alice_token) = common::make_user_token(&app, "alice", "alice-password").await.unwrap();
+    common::grant_node(&app, alice_id, node_id).await;
+
+    // alice 建规则 → 导出应带 owner_username=alice
+    let req = common::auth_req(
+        Method::POST,
+        "/api/rules",
+        &alice_token,
+        Some(json!({ "node_id": node_id, "name": "owned", "protocol": "tcp", "listen_port": 20050,
+                     "target_host": "1.2.3.4", "target_port": 443 })),
+    )
+    .unwrap();
+    let (status, r) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{r}");
+    let rule_id = r["id"].as_i64().unwrap();
+
+    let req = common::auth_req(Method::GET, "/api/rules/export", &app.admin_token, None).unwrap();
+    let (_, exported) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(exported[0]["owner_username"], "alice", "{exported}");
+
+    // 删掉原规则后由 admin 导入 → 归属回填给 alice
+    let req = common::auth_req(Method::DELETE, &format!("/api/rules/{rule_id}"), &app.admin_token, None).unwrap();
+    let (status, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let req = common::auth_req(
+        Method::POST,
+        "/api/rules/import?strategy=skip&dry_run=0",
+        &app.admin_token,
+        Some(exported.clone()),
+    )
+    .unwrap();
+    let (status, report) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["items"][0]["action"], "create", "{report}");
+    let owner: i64 = sqlx::query_scalar(
+        "SELECT user_id FROM forward_rules WHERE name = 'owned' AND deleted_at IS NULL",
+    )
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(owner, alice_id, "归属应回填 alice 而非导入者 admin");
+
+    // 用户名匹配不到 → 归导入者(admin)
+    let mut ghost = exported.as_array().unwrap()[0].clone();
+    ghost["owner_username"] = json!("ghost-user");
+    ghost["name"] = json!("ghost-owned");
+    ghost["listen_port"] = json!(20051);
+    let req = common::auth_req(
+        Method::POST,
+        "/api/rules/import?strategy=skip&dry_run=0",
+        &app.admin_token,
+        Some(json!([ghost])),
+    )
+    .unwrap();
+    let (status, report) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["items"][0]["action"], "create", "{report}");
+    let owner: i64 = sqlx::query_scalar(
+        "SELECT user_id FROM forward_rules WHERE name = 'ghost-owned' AND deleted_at IS NULL",
+    )
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(owner, app.admin_user_id, "匹配不到时归导入者");
+}

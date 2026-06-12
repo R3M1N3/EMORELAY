@@ -249,6 +249,8 @@ export interface RuleExportItem {
   node_name: string
   tunnel_name: string | null
   bandwidth_profile_name: string | null
+  /** 归属用户名:导入按用户名匹配回填,匹配不到归导入者(老文件无此字段) */
+  owner_username?: string | null
 }
 
 export interface ImportItemReport {

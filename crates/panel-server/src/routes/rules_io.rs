@@ -30,6 +30,9 @@ pub struct RuleExportItem {
     pub node_name: String,
     pub tunnel_name: Option<String>,
     pub bandwidth_profile_name: Option<String>,
+    /// 归属用户名(跨实例按用户名回填;缺失/匹配不到 → 归导入者)。老导出文件无此字段。
+    #[serde(default)]
+    pub owner_username: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +54,7 @@ struct ExportRow {
     node_name: String,
     tunnel_name: Option<String>,
     bandwidth_profile_name: Option<String>,
+    owner_username: Option<String>,
 }
 
 pub async fn export(
@@ -73,12 +77,14 @@ pub async fn export(
         "SELECT fr.name, fr.protocol, fr.listen_ip, fr.listen_port, fr.target_host, \
                 fr.target_port, fr.enabled, n.name AS node_name, \
                 t.name AS tunnel_name, \
-                bp.name AS bandwidth_profile_name \
+                bp.name AS bandwidth_profile_name, \
+                u.username AS owner_username \
          FROM forward_rules fr \
          JOIN nodes n ON n.id = fr.node_id \
          LEFT JOIN tunnels t ON t.id = fr.tunnel_id AND t.deleted_at IS NULL \
          LEFT JOIN bandwidth_profiles bp \
            ON bp.id = fr.bandwidth_profile_id AND bp.deleted_at IS NULL \
+         LEFT JOIN users u ON u.id = fr.user_id AND u.deleted_at IS NULL \
          WHERE {} ORDER BY fr.id",
         where_parts.join(" AND ")
     );
@@ -106,6 +112,7 @@ pub async fn export(
             node_name: r.node_name,
             tunnel_name: r.tunnel_name,
             bandwidth_profile_name: r.bandwidth_profile_name,
+            owner_username: r.owner_username,
         })
         .collect();
     Ok((
@@ -143,6 +150,8 @@ enum PlannedAction {
     Create {
         node_id: i64,
         bandwidth_profile_id: Option<i64>,
+        /// 归属:owner_username 匹配到的活跃用户;None → 归导入者。
+        owner_id: Option<i64>,
     },
     Overwrite {
         existing_id: i64,
@@ -194,7 +203,7 @@ pub async fn import(
         let landing_node = match &planned {
             PlannedAction::Create { node_id, .. } => Some(*node_id),
             PlannedAction::Overwrite { node_id, .. } => Some(*node_id),
-            _ => None,
+            PlannedAction::Skip | PlannedAction::Error(_) => None,
         };
         if let Some(nid) = landing_node {
             let key = (nid, item.listen_ip.clone(), item.listen_port, item.protocol.clone());
@@ -205,12 +214,21 @@ pub async fn import(
         let (action, reason): (&'static str, String) = match planned {
             PlannedAction::Error(reason) => ("error", reason),
             PlannedAction::Skip => ("skip", "相同监听绑定已存在".into()),
-            PlannedAction::Create { node_id, bandwidth_profile_id } => {
+            PlannedAction::Create { node_id, bandwidth_profile_id, owner_id } => {
+                // 归属结果进 reason,让 admin 在 dry-run 预览就能看到每条的落点归属。
+                let owner_note = match (&owner_id, item.owner_username.as_deref()) {
+                    (Some(_), Some(name)) => format!("归属: {name}"),
+                    (None, Some(name)) if !name.is_empty() => {
+                        format!("归属用户 {name} 不存在,归导入者")
+                    }
+                    _ => String::new(),
+                };
                 if dry_run {
-                    ("create", String::new())
+                    ("create", owner_note)
                 } else {
-                    match execute_create(&state, &auth, item, node_id, bandwidth_profile_id).await {
-                        Ok(()) => ("create", String::new()),
+                    let owner = owner_id.unwrap_or(auth.0.sub);
+                    match execute_create(&state, owner, item, node_id, bandwidth_profile_id).await {
+                        Ok(()) => ("create", owner_note),
                         Err(e) => ("error", format!("创建失败: {e}")),
                     }
                 }
@@ -318,6 +336,13 @@ async fn plan_item(
             .await?
             .map(|p| p.id),
     };
+    // 归属按用户名回填(P9 遗留):匹配不到/未携带 → None(归导入者),不自动建用户。
+    let owner_id = match item.owner_username.as_deref() {
+        None | Some("") => None,
+        Some(name) => crate::models::user::User::find_by_username(&state.pool, name)
+            .await?
+            .map(|u| u.id),
+    };
 
     // 冲突检测:精确同 binding → 按 strategy;互斥协议冲突 → error(那是另一条规则)。
     let exact: Option<(i64,)> = sqlx::query_as(
@@ -364,19 +389,20 @@ async fn plan_item(
     Ok(PlannedAction::Create {
         node_id: node.id,
         bandwidth_profile_id,
+        owner_id,
     })
 }
 
 async fn execute_create(
     state: &AppState,
-    auth: &AuthUser,
+    owner_id: i64,
     item: &RuleExportItem,
     node_id: i64,
     bandwidth_profile_id: Option<i64>,
 ) -> anyhow::Result<()> {
     let new_id = Rule::create(
         &state.pool,
-        auth.0.sub,
+        owner_id,
         node_id,
         item.name.trim(),
         &item.protocol,

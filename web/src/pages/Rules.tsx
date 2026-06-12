@@ -583,9 +583,9 @@ export default function Rules() {
               ))}
             </select>
           </div>
-          {/* 导出文件不含归属(跨实例 user_id 不可控),导入归属语义必须显式告知。 */}
+          {/* 归属按用户名跨实例回填,落空场景必须显式告知。 */}
           <p className="mb-3 text-[11px] text-zinc-500">
-            导入的规则将归属当前操作者（导出文件不携带原归属），流量计入你的配额。
+            归属按文件内用户名匹配回填（规则计入被回填用户的流量配额）；本实例不存在该用户（或老版本导出文件）时，规则归当前操作者并计入其配额。
           </p>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
