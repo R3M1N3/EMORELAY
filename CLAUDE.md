@@ -68,7 +68,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Rust workspace: `crates/panel-server`、`crates/node-agent`、`crates/common`(protobuf + 共享类型)
 - 前端: `web/`（React 19 + Vite 8 + Tailwind 4 + TS）
-- 数据库: `migrations/0001_init.sql` → `0010`（基础 8 表 + 用户配额字段 + `bandwidth_profiles` + `nodes.cert_*` + `tunnels`/`tunnel_hops` + `nodes.agent_version` + `user_node_grants`/`user_tunnel_grants` + `nodes.display_address` + WAL + 软删 + 部分唯一索引 + PG 兼容）
+- 数据库: `migrations/0001_init.sql` → `0011`（基础 8 表 + 用户配额字段 + `bandwidth_profiles` + `nodes.cert_*` + `tunnels`/`tunnel_hops` + `nodes.agent_version` + `user_node_grants`/`user_tunnel_grants` + `nodes.display_address` + `forward_rules.max_connections` + WAL + 软删 + 部分唯一索引 + PG 兼容）
 - 安全: 内置 CA + 默认强制 mTLS（panel-server 启动自签 CA,gRPC 控制面强制 client cert + CRL 吊销;`PANEL_DEV_DISABLE_MTLS=1` 退 plaintext）;登录 per-IP 限速
 - 部署: `docker-compose.yml`、`docker/{panel-server,web}.Dockerfile`、`docker/Caddyfile.example`、`deploy.sh`(快速安装=拉 GitHub Release 预编译 musl 静态二进制/Docker/systemd 源码编译三模式)、`.github/workflows/release.yml`(打 `v*` tag 发版)
 - 文档: `README.md`、`docs/deployment.md`、`docs/api.md`、`docs/ux-review-2026-06-11.md`、`.env.example`
@@ -76,7 +76,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **已交付**：P1（Toast/防删节点/默认 TCP+UDP/Settings Agent 端点/一键安装 URL）、P2（端口自动分配/用户到期 + 滚动 30 天流量配额/`bandwidth_profiles` 限速 + Agent token bucket/规则导入导出;规则级 expires/traffic/bandwidth 已退役）、P3a（内置 CA + 默认 mTLS + 节点四件套 + 吊销/CRL + 存量迁移）、P3b 控制面（`tunnels`/`tunnel_hops` + proto `Rule.tunnel` + 隧道 REST CRUD + 删除保护扩展 + `split_tunnel_rule` 拆 hop 纯函数）、P3b 数据面（Agent `tunnel/` 模块 TCP/TLS/WSS + entry/mid/exit `TunnelTask` + 凭据签发下发 + hop 心跳 status 聚合）、P3c（隧道前端两页 + Rules 关联下拉 + client SAN 校验 + 命令重试队列 + agent lib 化 + 双/三跳 TCP/TLS + UDP-over-tunnel + mTLS/吊销 e2e）、P4（用户自助体系/规则归属/节点净化视图、节点掉线检测 sweeper、webhook 通知四事件、stats retention 清理、错误中文化、登录限速、全站自动刷新与 UX 修复;详见 `docs/ux-review-2026-06-11.md` 修复状态）、P5（目标校验收紧/非 admin 禁内网目标/前端即时校验/端口池默认 10000+）、P6（TCP relay 256KB/64KB 大缓冲 + Linux splice(2) 零拷贝;真机 iperf3 实测 relay 达直连 73-77%、双跳隧道近无损）、P7（节点/隧道使用授权 ACL,默认拒绝:`user_node_grants`/`user_tunnel_grants`、撤销保留存量规则、隧道按授权对用户开放、端口池豁免仅 admin、前端授权多选/反向显示/撤销标黄）、P8（节点双地址:`public_ip` 收敛为接入地址(互联),新增 `display_address` 展示地址,用户视角替换/回落）、P9（导出 node/tunnel 过滤 + 定向导入 target_node_id + 文件内重复绑定检测 + 详情页导出按钮;Playwright 双角色 QoL 审查并修复 9 项,放弃 realm 全自研）。2026-06-12 两台 VPS 真机端到端验证通过（全新部署/一键安装/mTLS/P7~P9 语义/真实转发/iperf3/双跳隧道）。
 
-**待推进**：隧道凭据短有效期 + 定期轮换（隧道侧吊销，后续方案）;WSS e2e（按需，单测已覆盖）;P9 导入归属字段（owner_username 回填,当前归导入者+UI 提示）;评审 P1 功能差距（多目标 LB/图表/DNS 重解析已天然支持/2FA/分组/连接数限制/ACL 已交付/备份/Agent 升级/i18n）。
+**2026-06-13 增量**：P9 导入归属 owner_username 回填(匹配不到归导入者,dry-run reason 显示落点);P1 功能差距评审完成(`docs/p1-gap-review-2026-06-13.md`:DNS 重解析/ACL 关闭,图表/i18n 不做,LB/2FA/分组进 P11 候选池);P10a 交付(规则级并发连接上限,仅 TCP,admin 管控,Agent Semaphore 强制;WAL 安全备份文档)。真机验证用的两台 VPS 已按用户要求全部卸载还原。
+
+**待推进**：P10b Agent 一键升级(panel 下发版本+sha256,Agent 下载校验原子替换+exec 重启,含回滚;单独原子单元);隧道凭据短有效期 + 定期轮换(隧道侧吊销,后续方案);WSS e2e(按需,单测已覆盖);P11 候选池按需触发(多目标 LB/2FA+会话管理/分组,见差距评审文档)。
 
 ## 目标架构
 
