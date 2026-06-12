@@ -145,18 +145,42 @@ fn credentials_command(state: &AppState, tunnel_id: i64, ordinal: i64) -> Option
 }
 
 /// tls/wss 隧道:为每个 hop 即时签发凭据并下发。tcp 隧道 no-op。
-pub async fn dispatch_tunnel_credentials(state: &AppState, tunnel: &Tunnel) -> sqlx::Result<()> {
+/// 任一 hop **签发失败**向上传播 Err 且不刷新轮换时间戳(sweeper 下个 tick 重试);
+/// 节点 offline 仅 warn(重连 reconcile 时按当前时间重签重放),不视为失败。
+pub async fn dispatch_tunnel_credentials(state: &AppState, tunnel: &Tunnel) -> anyhow::Result<()> {
     if tunnel.transport == "tcp" {
         return Ok(());
     }
     for h in TunnelHop::list_for_tunnel(&state.pool, tunnel.id).await? {
-        if let Some(cmd) = credentials_command(state, tunnel.id, h.ordinal) {
-            if !state.dispatcher.dispatch(h.node_id, cmd) {
-                warn!(node_id = h.node_id, tunnel_id = tunnel.id, "agent offline; credentials will resend at next register");
-            }
+        let Some(cmd) = credentials_command(state, tunnel.id, h.ordinal) else {
+            anyhow::bail!(
+                "issue tunnel hop certs failed (tunnel {} hop {})",
+                tunnel.id,
+                h.ordinal
+            );
+        };
+        if !state.dispatcher.dispatch(h.node_id, cmd) {
+            warn!(node_id = h.node_id, tunnel_id = tunnel.id, "agent offline; credentials will resend at next register");
         }
     }
+    // 凭据是即签即发(证书 30 天短有效期),每次全链下发成功(签发层面)后记录时间供轮换
+    // sweeper 判定。offline hop 由 reconcile 在重连时重签重放,不影响该时间戳语义。
+    sqlx::query("UPDATE tunnels SET creds_rotated_at = datetime('now') WHERE id = ?")
+        .bind(tunnel.id)
+        .execute(&state.pool)
+        .await?;
     Ok(())
+}
+
+/// 凭据轮换 + 该隧道全部活跃规则重启(REST restart 与轮换 sweeper 共用的完整重载路径)。
+/// 返回是否有任何重启命令实际送达在线节点。
+pub async fn rotate_credentials_and_restart(state: &AppState, tunnel: &Tunnel) -> anyhow::Result<bool> {
+    dispatch_tunnel_credentials(state, tunnel).await?;
+    let mut dispatched = false;
+    for rule in DbRule::list_active_for_tunnel(&state.pool, tunnel.id).await? {
+        dispatched |= dispatch_rule_restart(state, &rule).await?;
+    }
+    Ok(dispatched)
 }
 
 /// 删隧道后通知各 hop 清理凭据目录。

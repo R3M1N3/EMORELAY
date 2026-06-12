@@ -88,6 +88,10 @@ pub struct TunnelHopCerts {
     pub client_key_pem: String,
 }
 
+/// 隧道 hop 叶子证书有效期。短有效期 + sweeper 定期轮换替代隧道侧 CRL:
+/// 即便凭据泄漏,窗口也只有 30 天;轮换(默认 20 天)由 panel 自动重签下发。
+pub const TUNNEL_CERT_VALIDITY_DAYS: i64 = 30;
+
 pub fn issue_tunnel_hop_certs(ca: &CaBundle, tunnel_id: i64, ordinal: i64) -> Result<TunnelHopCerts> {
     let san = format!("tunnel-{tunnel_id}-hop-{ordinal}.emorelay.internal");
     let issuer_key = KeyPair::from_pem(&ca.ca_key_pem).context("从 PEM 重建 CA 私钥失败")?;
@@ -123,7 +127,7 @@ fn issue_tunnel_leaf(
     params.serial_number = Some(SerialNumber::from(rand::random::<u64>() | 1));
     params.use_authority_key_identifier_extension = true;
     params.not_before = now - Duration::days(1);
-    params.not_after = now + Duration::days(1825);
+    params.not_after = now + Duration::days(TUNNEL_CERT_VALIDITY_DAYS);
     let cert = params
         .signed_by(&key, issuer_cert, issuer_key)
         .context("CA 签发隧道叶子失败")?;

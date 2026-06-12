@@ -130,6 +130,8 @@ async fn main() -> Result<()> {
     panel_server::sweeper::stats_retention::spawn_stats_retention_sweeper(state.clone());
     // 节点掉线检测(默认 30s 扫一次,心跳超 120s 置 offline 并发 webhook)。
     panel_server::sweeper::node_offline::spawn_node_offline_sweeper(state.clone());
+    // 隧道凭据轮换(默认每小时扫,签发超 20 天重签下发并重启隧道规则)。
+    panel_server::sweeper::tunnel_creds::spawn_tunnel_creds_sweeper(state.clone());
 
     tokio::select! {
         res = http_task => match res {

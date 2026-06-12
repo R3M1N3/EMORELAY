@@ -1,5 +1,6 @@
 pub mod node_offline;
 pub mod stats_retention;
+pub mod tunnel_creds;
 pub mod user_quota;
 
 /// 读取 sweeper 周期类 env(秒)。非法/缺失回落 default,并钳到 min 下限

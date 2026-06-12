@@ -479,9 +479,23 @@ Server 为每条隧道各 hop 即时签发凭据并通过 gRPC `Command.tunnel_c
 - `restart` 重新签发全链 hop 凭据(轮换),再对全部活跃规则 per-hop 重启。
 - 删除隧道时 Server 向各 hop 节点发送 `Command.revoke_tunnel_credentials`，Agent 清理本地 `${AGENT_DATA_DIR}/tunnels/<id>/hop-<ordinal>/` 目录。
 
+### 凭据短有效期与自动轮换
+
+hop 证书有效期 **30 天**(此前 5 年);每次下发刷新 `tunnels.creds_rotated_at`。panel 内置
+轮换 sweeper(默认每小时扫,`PANEL_TUNNEL_CREDS_ROTATE_SWEEP_SECS`)对签发超过阈值
+(默认 20 天,`PANEL_TUNNEL_CREDS_ROTATE_AFTER_SECS`)的活跃 tls/wss 隧道自动重签下发并
+per-hop 重启规则(与手动 `restart` 同一条路径),记 audit `tunnel.creds_rotated`(无 actor)。
+「短有效期 + 自动轮换」替代隧道侧 CRL:凭据泄漏窗口有上界,无需在 hop 间分发吊销表。
+单条隧道轮换失败(证书签发失败/DB 错误)仅告警,时间戳不刷新,下个 tick 自动重试;
+hop offline 不算失败(重连 reconcile 时拿到按当前时间重签的凭据)。注意:轮换会重启
+隧道规则,存量经隧道的连接随之断开(约每 20 天一次),业务侧需有重连能力。
+**升级到本版本后的首个扫描 tick** 会把全部存量 tls/wss 隧道(旧 5 年证书,按
+created_at 判定必然超阈值)一次性轮换重启——属预期的一次集中断流。
+
 ### audit actions
 
 - `tunnel.create` — 创建隧道。
 - `tunnel.update` — 改名。
 - `tunnel.delete` — 软删隧道。
 - `tunnel.restart` — 重签凭据 + per-hop 规则重启。
+- `tunnel.creds_rotated` — sweeper 自动轮换凭据(系统动作,无 actor)。

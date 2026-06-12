@@ -274,12 +274,9 @@ pub async fn restart(
 ) -> ApiResult<Json<serde_json::Value>> {
     auth.require_admin()?;
     let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
-    // 凭据先行(重签轮换),再对该隧道全部活跃规则 per-hop restart。
-    crate::grpc::tunnel_dispatch::dispatch_tunnel_credentials(&state, &t).await?;
-    let mut dispatched = false;
-    for rule in crate::models::rule::Rule::list_active_for_tunnel(&state.pool, id).await? {
-        dispatched |= crate::grpc::tunnel_dispatch::dispatch_rule_restart(&state, &rule).await?;
-    }
+    // 凭据先行(重签轮换),再对该隧道全部活跃规则 per-hop restart(与轮换 sweeper 共用)。
+    let dispatched =
+        crate::grpc::tunnel_dispatch::rotate_credentials_and_restart(&state, &t).await?;
     audit::record_with_ip(&state.pool, Some(auth.0.sub), actor_ip.as_option(),
         "tunnel.restart", Some("tunnel"), Some(id), None, true, None).await;
     Ok(Json(json!({ "ok": true, "dispatched": dispatched })))
