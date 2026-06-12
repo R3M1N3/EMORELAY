@@ -189,6 +189,49 @@ async fn normal_user_gets_sanitized_node_list() {
     assert_eq!(body["items"][0]["agent_version"], "9.9.9");
 }
 
+// P8: 展示地址语义——用户视角 public_ip 被替换为有效展示地址(空回落接入地址),
+// display_address 本体与接入地址不对用户暴露;admin 视角两个字段原样。
+#[tokio::test]
+async fn node_display_address_fallback_for_user() {
+    let app = make_app().await.unwrap();
+    let req = auth_req(
+        Method::POST,
+        "/api/nodes",
+        &app.admin_token,
+        Some(json!({ "name": "dn", "public_ip": "9.9.9.9", "display_address": "entry.example.com" })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let node_id = body["node"]["id"].as_i64().unwrap();
+    assert_eq!(body["node"]["public_ip"], "9.9.9.9");
+    assert_eq!(body["node"]["display_address"], "entry.example.com");
+
+    let (uid, token) = common::make_user_token(&app, "duser", "password123").await.unwrap();
+    common::grant_node(&app, uid, node_id).await;
+
+    // 展示地址非空:用户看到展示地址
+    let req = auth_req(Method::GET, &format!("/api/nodes/{node_id}"), &token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["public_ip"], "entry.example.com");
+    assert_eq!(body["display_address"], "", "展示地址本体不对用户重复暴露");
+
+    // 清空展示地址("" 显式清除):回落接入地址
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/nodes/{node_id}"),
+        &app.admin_token,
+        Some(json!({ "display_address": "" })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["display_address"], "");
+    let req = auth_req(Method::GET, &format!("/api/nodes/{node_id}"), &token, None).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["public_ip"], "9.9.9.9", "展示地址为空时回落接入地址");
+}
+
 #[tokio::test]
 async fn normal_user_still_cannot_mutate_nodes() {
     let app = make_app().await.unwrap();

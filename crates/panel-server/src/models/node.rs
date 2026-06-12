@@ -5,7 +5,10 @@ pub struct Node {
     pub id: i64,
     pub name: String,
     pub region: String,
+    /// 接入地址(域名/IP):Agent 与隧道 hop 互联实际使用。
     pub public_ip: String,
+    /// 展示地址(可选):对普通用户展示的入口,空则回落接入地址。
+    pub display_address: String,
     pub grpc_endpoint: String,
     pub status: String,
     pub last_seen_at: Option<String>,
@@ -21,7 +24,7 @@ pub struct Node {
     pub updated_at: String,
 }
 
-const NODE_COLUMNS: &str = "id, name, region, public_ip, grpc_endpoint, status, last_seen_at, \
+const NODE_COLUMNS: &str = "id, name, region, public_ip, display_address, grpc_endpoint, status, last_seen_at, \
     cpu_usage, memory_usage, load_average, rx_bytes_total, tx_bytes_total, \
     port_pool_min, port_pool_max, agent_version, created_at, updated_at";
 
@@ -98,19 +101,21 @@ impl Node {
         name: &str,
         region: &str,
         public_ip: &str,
+        display_address: &str,
         grpc_endpoint: &str,
         agent_token_hash: &str,
         port_pool_min: i64,
         port_pool_max: i64,
     ) -> sqlx::Result<i64> {
         let res = sqlx::query(
-            "INSERT INTO nodes (name, region, public_ip, grpc_endpoint, agent_token_hash, \
-                                port_pool_min, port_pool_max) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO nodes (name, region, public_ip, display_address, grpc_endpoint, \
+                                agent_token_hash, port_pool_min, port_pool_max) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(name)
         .bind(region)
         .bind(public_ip)
+        .bind(display_address)
         .bind(grpc_endpoint)
         .bind(agent_token_hash)
         .bind(port_pool_min)
@@ -129,6 +134,7 @@ impl Node {
         name: Option<&str>,
         region: Option<&str>,
         public_ip: Option<&str>,
+        display_address: Option<&str>,
         grpc_endpoint: Option<&str>,
         port_pool_min: Option<i64>,
         port_pool_max: Option<i64>,
@@ -138,6 +144,7 @@ impl Node {
                 name = COALESCE(?, name), \
                 region = COALESCE(?, region), \
                 public_ip = COALESCE(?, public_ip), \
+                display_address = COALESCE(?, display_address), \
                 grpc_endpoint = COALESCE(?, grpc_endpoint), \
                 port_pool_min = COALESCE(?, port_pool_min), \
                 port_pool_max = COALESCE(?, port_pool_max), \
@@ -147,6 +154,7 @@ impl Node {
         .bind(name)
         .bind(region)
         .bind(public_ip)
+        .bind(display_address)
         .bind(grpc_endpoint)
         .bind(port_pool_min)
         .bind(port_pool_max)

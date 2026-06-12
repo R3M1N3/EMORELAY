@@ -476,6 +476,7 @@ interface NodeFormState {
   name: string
   region: string
   public_ip: string
+  display_address: string
   grpc_endpoint: string
   port_pool_min: string
   port_pool_max: string
@@ -499,6 +500,7 @@ function NodeForm({
     name: initial?.name ?? '',
     region: initial?.region ?? '',
     public_ip: initial?.public_ip ?? '',
+    display_address: initial?.display_address ?? '',
     grpc_endpoint: initial?.grpc_endpoint ?? '',
     // 新建默认 10000-65535:避开系统/常用端口段,与后端 normalize_port_pool 缺省一致。
     port_pool_min: initial ? String(initial.port_pool_min) : '10000',
@@ -536,6 +538,7 @@ function NodeForm({
           name: form.name.trim(),
           region: form.region.trim(),
           public_ip: form.public_ip.trim(),
+          display_address: form.display_address.trim(),
           grpc_endpoint: form.grpc_endpoint.trim(),
           port_pool_min: portMin,
           port_pool_max: portMax,
@@ -554,6 +557,11 @@ function NodeForm({
           name: form.name.trim() !== initial.name ? form.name.trim() : undefined,
           region: form.region.trim() !== initial.region ? form.region.trim() : undefined,
           public_ip: form.public_ip.trim() !== initial.public_ip ? form.public_ip.trim() : undefined,
+          // '' 是合法值(清空 = 回落接入地址),有变更就原样发送。
+          display_address:
+            form.display_address.trim() !== initial.display_address
+              ? form.display_address.trim()
+              : undefined,
           grpc_endpoint:
             form.grpc_endpoint.trim() !== initial.grpc_endpoint
               ? form.grpc_endpoint.trim()
@@ -600,14 +608,27 @@ function NodeForm({
           />
         </div>
         <div>
-          <label className={fieldLabelCls}>公网 IP</label>
+          <label className={fieldLabelCls}>接入地址</label>
           <input
             value={form.public_ip}
             onChange={(e) => set('public_ip', e.target.value)}
             className={fieldInputCls}
-            placeholder="1.2.3.4"
+            placeholder="1.2.3.4 或 node.ddns.example.com"
           />
         </div>
+      </div>
+      <div>
+        <label className={fieldLabelCls}>展示地址（可选）</label>
+        <input
+          value={form.display_address}
+          onChange={(e) => set('display_address', e.target.value)}
+          className={fieldInputCls}
+          placeholder="留空 = 直接展示接入地址"
+        />
+        <p className="text-[11px] text-zinc-500 mt-1">
+          接入地址是隧道/节点互联实际连接的地址(NAT/DDNS 机器填可达域名);
+          展示地址是普通用户看到的入口,留空回落接入地址。
+        </p>
       </div>
       <div>
         <label className={fieldLabelCls}>gRPC 端点</label>

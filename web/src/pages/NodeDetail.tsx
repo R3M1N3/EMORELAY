@@ -167,7 +167,12 @@ export default function NodeDetail() {
           <h3 className="text-sm font-medium text-zinc-200 mb-3">基本信息</h3>
           <dl className="text-sm space-y-2">
             <Row k="区域" v={node.region || '—'} />
-            <Row k="公网 IP" v={node.public_ip || '—'} mono />
+            <Row k="接入地址" v={node.public_ip || '—'} mono />
+            <Row
+              k="展示地址"
+              v={node.display_address || '（回落接入地址）'}
+              mono={!!node.display_address}
+            />
             <Row k="gRPC 端点" v={node.grpc_endpoint || '—'} mono />
             <Row k="端口池" v={`${node.port_pool_min}–${node.port_pool_max}`} />
             <Row k="最后心跳" v={node.last_seen_at ? shortTime(node.last_seen_at) : '从未上线'} />

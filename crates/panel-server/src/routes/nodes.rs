@@ -24,7 +24,10 @@ pub struct NodeView {
     pub id: i64,
     pub name: String,
     pub region: String,
+    /// 接入地址(互联实际使用);用户视角被替换为有效展示地址。
     pub public_ip: String,
+    /// 展示地址(可选,空=回落接入地址);用户视角恒为空串。
+    pub display_address: String,
     pub grpc_endpoint: String,
     pub status: String,
     pub last_seen_at: Option<String>,
@@ -47,6 +50,7 @@ impl From<Node> for NodeView {
             name: n.name,
             region: n.region,
             public_ip: n.public_ip,
+            display_address: n.display_address,
             grpc_endpoint: n.grpc_endpoint,
             status: n.status,
             last_seen_at: n.last_seen_at,
@@ -65,9 +69,15 @@ impl From<Node> for NodeView {
 }
 
 impl NodeView {
-    /// 普通用户视角:保留自助建规则所需(身份/在线状态/端口池/入口 IP),
+    /// 普通用户视角:保留自助建规则所需(身份/在线状态/端口池/入口地址),
     /// 抹掉运维指标与控制面信息。JSON 形状不变,前端类型零分叉。
+    /// P8: public_ip 替换为有效展示地址(展示地址非空用之,否则回落接入地址),
+    /// 接入地址本体不对用户暴露。
     fn sanitize_for_user(mut self) -> Self {
+        if !self.display_address.trim().is_empty() {
+            self.public_ip = self.display_address.trim().to_string();
+        }
+        self.display_address = String::new();
         self.grpc_endpoint = String::new();
         self.agent_version = String::new();
         self.cpu_usage = 0.0;
@@ -104,6 +114,8 @@ pub struct CreateNodeRequest {
     #[serde(default)]
     pub public_ip: String,
     #[serde(default)]
+    pub display_address: String,
+    #[serde(default)]
     pub grpc_endpoint: String,
     pub port_pool_min: Option<u16>,
     pub port_pool_max: Option<u16>,
@@ -125,6 +137,7 @@ pub struct UpdateNodeRequest {
     pub name: Option<String>,
     pub region: Option<String>,
     pub public_ip: Option<String>,
+    pub display_address: Option<String>,
     pub grpc_endpoint: Option<String>,
     pub port_pool_min: Option<u16>,
     pub port_pool_max: Option<u16>,
@@ -264,6 +277,7 @@ pub async fn create(
         req.name.trim(),
         &req.region,
         &req.public_ip,
+        req.display_address.trim(),
         &req.grpc_endpoint,
         &token_hash,
         port_min,
@@ -338,6 +352,8 @@ pub async fn update(
         trimmed_name,
         req.region.as_deref(),
         req.public_ip.as_deref(),
+        // 传 "" 即清空展示地址(回落接入地址),None 不动。
+        req.display_address.as_deref().map(str::trim),
         req.grpc_endpoint.as_deref(),
         port_min,
         port_max,

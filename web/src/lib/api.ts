@@ -87,7 +87,10 @@ export interface NodeView {
   id: number
   name: string
   region: string
+  /** 接入地址(互联实际使用);普通用户视角已被替换为有效展示地址 */
   public_ip: string
+  /** 展示地址(可选,空=回落接入地址);普通用户视角恒为空串 */
+  display_address: string
   grpc_endpoint: string
   /** Agent 上报版本(register 落库);普通用户视角恒为空串 */
   agent_version: string
@@ -145,6 +148,8 @@ export interface CreateNodeRequest {
   name: string
   region?: string
   public_ip?: string
+  /** 展示地址(可选);update 时传 '' 表示清空(回落接入地址) */
+  display_address?: string
   grpc_endpoint?: string
   port_pool_min?: number
   port_pool_max?: number
