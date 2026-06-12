@@ -41,6 +41,8 @@ export default function NodeDetail() {
     error: null,
   })
   const [confirmingRevoke, setConfirmingRevoke] = useState(false)
+  const [confirmingUpgrade, setConfirmingUpgrade] = useState(false)
+  const [upgrading, setUpgrading] = useState(false)
   const [revoking, setRevoking] = useState(false)
   const [revokedCreds, setRevokedCreds] = useState<RevokedCreds | null>(null)
   // P7:该节点被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
@@ -156,6 +158,15 @@ export default function NodeDetail() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          {/* P10b: 一键升级 Agent(下载/校验/原子替换/exec 重启,节点须在线)。 */}
+          <button
+            type="button"
+            onClick={() => setConfirmingUpgrade(true)}
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+            title={node.agent_version ? `当前 Agent 版本 ${node.agent_version}` : undefined}
+          >
+            升级 Agent
+          </button>
           {/* P9: 导出本节点全部规则(跨实例迁移/备份用)。 */}
           <button
             type="button"
@@ -247,6 +258,48 @@ export default function NodeDetail() {
         <SeriesCard title="rx 字节 / 分钟" values={rx} color="stroke-accent" fill="fill-accent/10" />
         <SeriesCard title="tx 字节 / 分钟" values={tx} color="stroke-emerald-400" fill="fill-emerald-500/10" />
       </div>
+
+      {confirmingUpgrade && (
+        <Modal title="升级 Agent" onClose={() => !upgrading && setConfirmingUpgrade(false)} size="sm">
+          <p className="text-sm text-zinc-300">
+            将向节点 <span className="font-medium text-white">{node.name}</span> 下发一键升级
+            （目标 = 面板当前版本）。Agent 自行下载校验后原子替换并重启。
+          </p>
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+            重启瞬间该节点全部存量连接会中断（规则随即自动恢复，已建立的连接不会回来）。
+            升级结果请稍后观察节点列表的 Agent 版本列。
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmingUpgrade(false)}
+              disabled={upgrading}
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setUpgrading(true)
+                try {
+                  const r = await nodes.upgradeAgent(nodeId)
+                  toast.success(`升级命令已下发(目标 v${r.target_version})`)
+                  setConfirmingUpgrade(false)
+                } catch (e) {
+                  toast.error(e instanceof ApiError ? e.message : '下发失败')
+                } finally {
+                  setUpgrading(false)
+                }
+              }}
+              disabled={upgrading}
+              className="btn-accent"
+            >
+              {upgrading ? '下发中…' : '确认升级'}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {confirmingRevoke && (
         <Modal title="轮换 Agent 凭据" onClose={() => !revoking && setConfirmingRevoke(false)} size="sm">

@@ -232,6 +232,25 @@ async fn node_display_address_fallback_for_user() {
     assert_eq!(body["public_ip"], "9.9.9.9", "展示地址为空时回落接入地址");
 }
 
+// P10b: Agent 升级下发——admin only;未配 PANEL_PUBLIC_BASE_URL → 400(测试环境恒未配)。
+#[tokio::test]
+async fn upgrade_agent_requires_admin_and_base_url() {
+    let app = make_app().await.unwrap();
+    let req = auth_req(Method::POST, "/api/nodes", &app.admin_token, Some(json!({ "name": "up" }))).unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    let node_id = body["node"]["id"].as_i64().unwrap();
+
+    let (_uid, token) = common::make_user_token(&app, "upuser", "password123").await.unwrap();
+    let req = auth_req(Method::POST, &format!("/api/nodes/{node_id}/upgrade-agent"), &token, None).unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let req = auth_req(Method::POST, &format!("/api/nodes/{node_id}/upgrade-agent"), &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["message"].as_str().unwrap().contains("PANEL_PUBLIC_BASE_URL"), "{body}");
+}
+
 #[tokio::test]
 async fn normal_user_still_cannot_mutate_nodes() {
     let app = make_app().await.unwrap();

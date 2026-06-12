@@ -271,8 +271,27 @@ async fn handle_command(
         return Ok(());
     };
 
-    // 凭据命令只动磁盘,不动规则状态,不进 manager 锁。
+    // 凭据/升级命令只动磁盘与自身进程,不动规则状态,不进 manager 锁。
     let body = match body {
+        Body::UpgradeAgent(u) => {
+            // 下载可能耗时(慢网/黑洞),spawn 出去,不阻塞心跳/stats/后续命令;
+            // in-progress 守卫防重复命令并发下载 + rename 竞争。
+            // 成功路径 exec 不返回;Err 不致命(可重发),完成后释放守卫。
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static UPGRADING: AtomicBool = AtomicBool::new(false);
+            if UPGRADING.swap(true, Ordering::SeqCst) {
+                warn!("upgrade already in progress; command ignored");
+                return Ok(());
+            }
+            info!(target = %u.version, "upgrade command received");
+            tokio::spawn(async move {
+                if let Err(e) = crate::upgrade::perform(&u).await {
+                    warn!(error = ?e, "agent upgrade failed");
+                }
+                UPGRADING.store(false, Ordering::SeqCst);
+            });
+            return Ok(());
+        }
         Body::TunnelCredentials(c) => {
             info!(tunnel_id = c.tunnel_id, ordinal = c.ordinal, "tunnel credentials received");
             if let Err(e) = crate::tunnel::creds::store(data_dir, &c).await {
@@ -311,8 +330,8 @@ async fn handle_command(
                 info!(rule_id = r.rule_id, "restart rule");
                 mgr.restart(r.rule_id).await?;
             }
-            Body::TunnelCredentials(_) | Body::RevokeTunnelCredentials(_) => {
-                unreachable!("credentials commands intercepted before manager lock")
+            Body::TunnelCredentials(_) | Body::RevokeTunnelCredentials(_) | Body::UpgradeAgent(_) => {
+                unreachable!("credentials/upgrade commands intercepted before manager lock")
             }
         }
         mgr.current_rules()

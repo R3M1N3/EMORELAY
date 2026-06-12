@@ -11,5 +11,6 @@ pub mod stats;
 pub mod store;
 pub mod system;
 pub mod tunnel;
+pub mod upgrade;
 
 pub use agent::run_agent;

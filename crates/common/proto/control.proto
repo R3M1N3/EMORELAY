@@ -120,6 +120,17 @@ message EnableRule { int64 rule_id = 1; }
 message DisableRule { int64 rule_id = 1; }
 message RestartRule { int64 rule_id = 1; }
 
+// P10b Agent 一键升级。白名单固定动作:Agent 按自身 arch 从
+// {base_url}/dist/node-agent-linux-<arch> 下载新二进制,校验对应 sha256(hex)
+// 后原子替换自身并 exec 重启(规则已落盘,重启自动恢复)。不携带任何可执行
+// 内容或 shell;sha256 不匹配/缺失一律拒绝。version 等于自身版本时幂等跳过。
+message UpgradeAgent {
+  string version = 1;
+  string base_url = 2;
+  string sha256_amd64 = 3;  // 空串 = 面板无该 arch 产物,Agent 拒绝
+  string sha256_arm64 = 4;
+}
+
 message Command {
   oneof body {
     ApplyRule apply_rule = 1;
@@ -129,6 +140,7 @@ message Command {
     RestartRule restart_rule = 5;
     TunnelCredentials tunnel_credentials = 6;
     RevokeTunnelCredentials revoke_tunnel_credentials = 7;
+    UpgradeAgent upgrade_agent = 8;
   }
 }
 

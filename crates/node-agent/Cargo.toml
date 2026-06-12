@@ -28,6 +28,9 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["h
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 # P3c:隧道 server 端校验 client cert SAN = 上一跳(防同 CA 凭据横向连入)。
 x509-parser = "0.16"
+# P10b 一键升级:从面板下载新二进制(rustls 栈与 tonic 对齐) + sha256 校验。
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+sha2 = "0.10"
 
 # P6.2 splice 零拷贝(Linux 专用),仅在 linux target 链接;其它平台回退用户态 pump。
 [target.'cfg(target_os = "linux")'.dependencies]

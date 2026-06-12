@@ -406,6 +406,11 @@ export const nodes = {
   stats: (id: number) => api.get<NodeStatsResponse>(`/api/nodes/${id}/stats`),
   /** admin-only:该节点被授权给哪些用户 */
   grants: (id: number) => api.get<GrantedUser[]>(`/api/nodes/${id}/grants`),
+  /** admin-only:向在线节点下发 Agent 一键升级(下载/校验/原子替换/exec 重启) */
+  upgradeAgent: (id: number) =>
+    api.post<{ ok: boolean; dispatched: boolean; target_version: string }>(
+      `/api/nodes/${id}/upgrade-agent`,
+    ),
   revokeCredentials: (id: number) =>
     api.post<{ ca_pem: string; client_cert_pem: string; client_key_pem: string }>(
       `/api/nodes/${id}/revoke-credentials`,

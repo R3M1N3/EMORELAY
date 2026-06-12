@@ -139,7 +139,9 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/emorelay
+# /usr/local/bin 可写是 P10b 一键升级的前提(Agent 原子替换自身二进制)。
+# 老版本装的节点缺这行,一键升级会 EROFS 失败,需手动补 + daemon-reload。
+ReadWritePaths=/var/lib/emorelay /usr/local/bin
 
 [Install]
 WantedBy=multi-user.target

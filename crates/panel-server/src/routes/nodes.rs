@@ -246,6 +246,90 @@ pub async fn get(
     }))
 }
 
+/// P10b: 向在线节点下发 Agent 升级命令。Agent 自行下载/校验/原子替换/exec 重启。
+/// 二进制来源 = ${PANEL_DATA_DIR}/agent-dist/node-agent-linux-{amd64,arm64},
+/// sha256 现算(文件可能被发版替换,不缓存)。
+pub async fn upgrade_agent(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    actor_ip: ActorIp,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<serde_json::Value>> {
+    auth.require_admin()?;
+    let node = Node::find_by_id(&state.pool, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    let base_url = state
+        .config
+        .panel_public_base_url
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::BadRequest("未配置 PANEL_PUBLIC_BASE_URL,Agent 无法定位下载地址".into())
+        })?;
+
+    let dist = std::path::Path::new(&state.config.panel_data_dir).join("agent-dist");
+    let sha_of = |name: &str| -> Option<String> {
+        use sha2::{Digest, Sha256};
+        std::fs::read(dist.join(name))
+            .ok()
+            .map(|b| hex::encode(Sha256::digest(&b)))
+    };
+    let sha256_amd64 = sha_of("node-agent-linux-amd64").unwrap_or_default();
+    let sha256_arm64 = sha_of("node-agent-linux-arm64").unwrap_or_default();
+    if sha256_amd64.is_empty() && sha256_arm64.is_empty() {
+        return Err(ApiError::BadRequest(
+            "面板 agent-dist 目录无任何 Agent 二进制,无法升级".into(),
+        ));
+    }
+
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let cmd = emorelay_common::control::v1::Command {
+        body: Some(emorelay_common::control::v1::command::Body::UpgradeAgent(
+            emorelay_common::control::v1::UpgradeAgent {
+                version: version.clone(),
+                base_url,
+                sha256_amd64,
+                sha256_arm64,
+            },
+        )),
+    };
+    if !state.dispatcher.dispatch(id, cmd) {
+        // 失败尝试也落 audit(危险操作的未遂记录)。
+        audit::record_with_ip(
+            &state.pool,
+            Some(auth.0.sub),
+            actor_ip.as_option(),
+            "node.upgrade_agent",
+            Some("node"),
+            Some(id),
+            Some("dispatch failed: offline"),
+            false,
+            Some("节点不在线"),
+        )
+        .await;
+        return Err(ApiError::BadRequest(
+            "节点不在线,无法下发升级命令".into(),
+        ));
+    }
+
+    audit::record_with_ip(
+        &state.pool,
+        Some(auth.0.sub),
+        actor_ip.as_option(),
+        "node.upgrade_agent",
+        Some("node"),
+        Some(id),
+        Some(&format!("{} -> {version}", node.agent_version)),
+        true,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({ "ok": true, "dispatched": true, "target_version": version })))
+}
+
 /// 某节点被授权给哪些用户(节点详情页反向显示)。admin only。
 pub async fn grants(
     State(state): State<AppState>,

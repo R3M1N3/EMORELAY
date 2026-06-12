@@ -87,6 +87,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/nodes/{id}/stats", get(nodes::stats))
         .route("/api/nodes/{id}/grants", get(nodes::grants))
+        .route("/api/nodes/{id}/upgrade-agent", post(nodes::upgrade_agent))
         .route(
             "/api/nodes/{id}/revoke-credentials",
             post(nodes::revoke_credentials),
