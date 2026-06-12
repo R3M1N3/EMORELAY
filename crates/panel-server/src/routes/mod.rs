@@ -86,6 +86,7 @@ pub fn router(state: AppState) -> Router {
             get(nodes::get).patch(nodes::update).delete(nodes::delete),
         )
         .route("/api/nodes/{id}/stats", get(nodes::stats))
+        .route("/api/nodes/{id}/grants", get(nodes::grants))
         .route(
             "/api/nodes/{id}/revoke-credentials",
             post(nodes::revoke_credentials),
@@ -107,6 +108,7 @@ pub fn router(state: AppState) -> Router {
             "/api/users/{id}",
             get(users::get).patch(users::update).delete(users::delete),
         )
+        .route("/api/users/{id}/grants", get(users::grants))
         .route(
             "/api/bandwidth-profiles",
             get(bandwidth_profiles::list).post(bandwidth_profiles::create),
@@ -124,6 +126,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/tunnels/{id}/restart", post(tunnels::restart))
         .route("/api/tunnels/{id}/status", get(tunnels::status))
+        .route("/api/tunnels/{id}/grants", get(tunnels::grants))
         .route("/api/ui-config", get(system::ui_config))
         .route("/api/system/overview", get(system::overview))
         .route("/api/system/security", get(system::security))

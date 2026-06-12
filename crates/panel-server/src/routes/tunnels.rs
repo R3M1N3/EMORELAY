@@ -2,7 +2,7 @@ use crate::{
     audit,
     auth::extractor::{ActorIp, AuthUser},
     error::{ApiError, ApiResult},
-    models::{settings, tunnel::{Tunnel, TunnelHop}},
+    models::{grant, settings, tunnel::{Tunnel, TunnelHop}},
     state::AppState,
 };
 use axum::{extract::{Path, Query, State}, Json};
@@ -72,12 +72,25 @@ pub struct UpdateTunnelRequest { pub name: Option<String> }
 pub async fn list(
     State(state): State<AppState>, auth: AuthUser, Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<TunnelListResponse>> {
-    auth.require_admin()?;
     let page = q.page.unwrap_or(1).max(1);
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = page.saturating_sub(1).saturating_mul(page_size);
-    let tunnels = Tunnel::list_paged(&state.pool, page_size, offset).await?;
-    let total = Tunnel::count(&state.pool).await?;
+    // 非 admin:只返回被授权的隧道(默认拒绝);admin 走分页全量。
+    let (tunnels, total) = if auth.is_admin() {
+        let t = Tunnel::list_paged(&state.pool, page_size, offset).await?;
+        let c = Tunnel::count(&state.pool).await?;
+        (t, c)
+    } else {
+        let ids = grant::granted_tunnel_ids(&state.pool, auth.0.sub).await?;
+        let mut t = Vec::new();
+        for tid in &ids {
+            if let Some(tn) = Tunnel::find_by_id(&state.pool, *tid).await? {
+                t.push(tn);
+            }
+        }
+        let c = t.len() as i64;
+        (t, c)
+    };
     let mut items = Vec::with_capacity(tunnels.len());
     for t in tunnels {
         let hops = TunnelHop::list_for_tunnel(&state.pool, t.id).await?;
@@ -93,8 +106,11 @@ pub async fn list(
 pub async fn get(
     State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
 ) -> ApiResult<Json<TunnelDetail>> {
-    auth.require_admin()?;
     let t = Tunnel::find_by_id(&state.pool, id).await?.ok_or(ApiError::NotFound)?;
+    // 非 admin 只能看被授权的隧道(未授权按不存在处理)。
+    if !auth.is_admin() && !grant::tunnel_granted(&state.pool, auth.0.sub, id).await? {
+        return Err(ApiError::NotFound);
+    }
     let status = Tunnel::compute_status(&state.pool, id).await?;
     let _ = Tunnel::set_status(&state.pool, id, &status).await;
     let hops = TunnelHop::list_for_tunnel(&state.pool, id).await?;
@@ -116,6 +132,14 @@ pub async fn get(
         rules,
         created_at: t.created_at, updated_at: t.updated_at,
     }))
+}
+
+/// 某隧道被授权给哪些用户(隧道详情页反向显示)。admin only。
+pub async fn grants(
+    State(state): State<AppState>, auth: AuthUser, Path(id): Path<i64>,
+) -> ApiResult<Json<Vec<crate::models::grant::GrantedUser>>> {
+    auth.require_admin()?;
+    Ok(Json(grant::users_for_tunnel(&state.pool, id).await?))
 }
 
 pub async fn create(

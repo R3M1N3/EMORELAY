@@ -46,8 +46,11 @@ async fn create_rule_as(
 async fn user_only_sees_own_rules_in_list() {
     let app = make_app().await.unwrap();
     let node_id = make_node(&app).await;
-    let (_alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
-    let (_bob_id, bob_token) = make_user_token(&app, "bob", "bob-password").await.unwrap();
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    let (bob_id, bob_token) = make_user_token(&app, "bob", "bob-password").await.unwrap();
+    // P7: 普通用户建规则需节点授权。
+    common::grant_node(&app, alice_id, node_id).await;
+    common::grant_node(&app, bob_id, node_id).await;
 
     let alice_rule = create_rule_as(&app, &alice_token, node_id, "alice-rule", 30001).await;
     let bob_rule = create_rule_as(&app, &bob_token, node_id, "bob-rule", 30002).await;
@@ -148,7 +151,8 @@ async fn user_cannot_modify_other_rule() {
 async fn user_can_manage_own_rule_full_cycle() {
     let app = make_app().await.unwrap();
     let node_id = make_node(&app).await;
-    let (_, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    common::grant_node(&app, alice_id, node_id).await;
     let rule_id = create_rule_as(&app, &alice_token, node_id, "alice-rule", 30030).await;
 
     // GET own
@@ -278,6 +282,7 @@ async fn user_cannot_assign_other_owner_or_profile_or_tunnel() {
     let app = make_app().await.unwrap();
     let node_id = make_node(&app).await;
     let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    common::grant_node(&app, alice_id, node_id).await;
 
     // 指定他人归属 → 400
     let req = auth_req(
@@ -309,7 +314,7 @@ async fn user_cannot_assign_other_owner_or_profile_or_tunnel() {
     let (status, _) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // 自挂隧道 → 400
+    // 挂未授权隧道 → 400(P7 起隧道按授权放开,未授权仍拒)
     let req = auth_req(
         Method::POST,
         "/api/rules",
@@ -401,7 +406,8 @@ async fn user_cannot_clear_admin_bandwidth_profile() {
 async fn rule_list_includes_owner_username_for_admin() {
     let app = make_app().await.unwrap();
     let node_id = make_node(&app).await;
-    let (_, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    common::grant_node(&app, alice_id, node_id).await;
     create_rule_as(&app, &alice_token, node_id, "alice-named", 30060).await;
 
     let req = auth_req(Method::GET, "/api/rules", &app.admin_token, None).unwrap();

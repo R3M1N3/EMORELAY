@@ -146,15 +146,18 @@ async fn node_stats_returns_empty_series_initially() {
 #[tokio::test]
 async fn normal_user_gets_sanitized_node_list() {
     let app = make_app().await.unwrap();
-    sqlx::query(
+    let node_id = sqlx::query(
         "INSERT INTO nodes (name, agent_token_hash, region, public_ip, grpc_endpoint, \
                             cpu_usage, rx_bytes_total, agent_version, status) \
          VALUES ('n1', 'x', 'HK', '1.2.3.4', 'https://internal:7001', 55.5, 999, '9.9.9', 'online')",
     )
     .execute(&app.state.pool)
     .await
-    .unwrap();
-    let (_uid, token) = common::make_user_token(&app, "nuser", "password123").await.unwrap();
+    .unwrap()
+    .last_insert_rowid();
+    let (uid, token) = common::make_user_token(&app, "nuser", "password123").await.unwrap();
+    // P7: 普通用户默认拒绝,授权后才可见。
+    common::grant_node(&app, uid, node_id).await;
 
     let req = auth_req(Method::GET, "/api/nodes?page_size=20", &token, None).unwrap();
     let (status, body) = send(app.app.clone(), req).await.unwrap();

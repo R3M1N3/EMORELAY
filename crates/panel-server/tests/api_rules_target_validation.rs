@@ -37,7 +37,9 @@ async fn rejects_ip_shaped_garbage_target() {
 async fn user_cannot_target_internal_ip() {
     let app = common::make_app().await.unwrap();
     let node_id = seed_node(&app).await;
-    let (_, user_token) = common::make_user_token(&app, "bob", "bob1234567").await.unwrap();
+    let (uid, user_token) = common::make_user_token(&app, "bob", "bob1234567").await.unwrap();
+    // P7: 授权节点,确保 400 来自内网目标校验而非授权拒绝。
+    common::grant_node(&app, uid, node_id).await;
     for internal in ["127.0.0.1", "10.0.0.1", "192.168.1.1"] {
         let req = common::auth_req(
             Method::POST,
@@ -72,7 +74,8 @@ async fn admin_may_target_internal_ip() {
 async fn user_may_target_public_domain() {
     let app = common::make_app().await.unwrap();
     let node_id = seed_node(&app).await;
-    let (_, user_token) = common::make_user_token(&app, "carol", "carol123456").await.unwrap();
+    let (uid, user_token) = common::make_user_token(&app, "carol", "carol123456").await.unwrap();
+    common::grant_node(&app, uid, node_id).await;
     let req = common::auth_req(
         Method::POST,
         "/api/rules",
@@ -89,7 +92,8 @@ async fn user_may_target_public_domain() {
 async fn user_update_cannot_switch_to_internal_ip() {
     let app = common::make_app().await.unwrap();
     let node_id = seed_node(&app).await;
-    let (_, user_token) = common::make_user_token(&app, "dave", "dave1234567").await.unwrap();
+    let (uid, user_token) = common::make_user_token(&app, "dave", "dave1234567").await.unwrap();
+    common::grant_node(&app, uid, node_id).await;
     let req = common::auth_req(
         Method::POST,
         "/api/rules",

@@ -97,6 +97,28 @@ pub async fn make_user_token(
     Ok((user_id, token))
 }
 
+/// P7: 直接写授权表(绕过 admin API)。common 按 test binary 各自编译,部分 binary 不用会
+/// 报 dead_code,显式 allow。
+#[allow(dead_code)]
+pub async fn grant_node(app: &TestApp, user_id: i64, node_id: i64) {
+    sqlx::query("INSERT INTO user_node_grants (user_id, node_id) VALUES (?, ?)")
+        .bind(user_id)
+        .bind(node_id)
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+}
+
+#[allow(dead_code)]
+pub async fn grant_tunnel(app: &TestApp, user_id: i64, tunnel_id: i64) {
+    sqlx::query("INSERT INTO user_tunnel_grants (user_id, tunnel_id) VALUES (?, ?)")
+        .bind(user_id)
+        .bind(tunnel_id)
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+}
+
 async fn login(app: &Router, username: &str, password: &str) -> Result<String> {
     let body = serde_json::json!({ "username": username, "password": password });
     // login 路由带 per-IP governor;oneshot 无 ConnectInfo,靠转发头喂 IP。

@@ -5,7 +5,7 @@ use crate::{
         password::hash_password,
     },
     error::{ApiError, ApiResult},
-    models::user::User,
+    models::{grant, user::User},
     state::AppState,
 };
 use axum::{
@@ -119,6 +119,9 @@ pub struct CreateUserRequest {
     pub role: String,
     pub expires_at: Option<String>,
     pub traffic_limit_bytes_30d: Option<i64>,
+    /// 授权可用的节点/隧道 id(默认拒绝;未传/None 表示不授权任何)。
+    pub granted_node_ids: Option<Vec<i64>>,
+    pub granted_tunnel_ids: Option<Vec<i64>>,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +132,9 @@ pub struct UpdateUserRequest {
     pub expires_at: Option<String>,
     /// 0 = 清除
     pub traffic_limit_bytes_30d: Option<i64>,
+    /// 给定则全量替换该用户的授权;None 表示不改动授权。
+    pub granted_node_ids: Option<Vec<i64>>,
+    pub granted_tunnel_ids: Option<Vec<i64>>,
 }
 
 pub async fn list(
@@ -202,6 +208,41 @@ pub async fn get(
     Ok(Json(user.into()))
 }
 
+#[derive(Serialize)]
+pub struct UserGrants {
+    pub granted_node_ids: Vec<i64>,
+    pub granted_tunnel_ids: Vec<i64>,
+}
+
+/// 某用户当前的授权(前端编辑用户时回显已勾选的节点/隧道)。
+pub async fn grants(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<UserGrants>> {
+    auth.require_admin()?;
+    Ok(Json(UserGrants {
+        granted_node_ids: grant::granted_node_ids(&state.pool, id).await?,
+        granted_tunnel_ids: grant::granted_tunnel_ids(&state.pool, id).await?,
+    }))
+}
+
+/// audit payload:用户名 + 授权变更摘要(None=未改动则不出现,保证授权变更可追溯)。
+fn grants_payload(
+    username: &str,
+    node_ids: &Option<Vec<i64>>,
+    tunnel_ids: &Option<Vec<i64>>,
+) -> String {
+    let mut s = username.to_string();
+    if let Some(ids) = node_ids {
+        s.push_str(&format!(" granted_nodes={ids:?}"));
+    }
+    if let Some(ids) = tunnel_ids {
+        s.push_str(&format!(" granted_tunnels={ids:?}"));
+    }
+    s
+}
+
 pub async fn create(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -242,6 +283,16 @@ pub async fn create(
         .await?
         .ok_or(ApiError::NotFound)?;
 
+    // 授权同步(默认拒绝:未传则不授权任何节点/隧道)。
+    if let Some(ids) = &req.granted_node_ids {
+        grant::set_node_grants(&state.pool, new_id, ids).await?;
+    }
+    if let Some(ids) = &req.granted_tunnel_ids {
+        grant::set_tunnel_grants(&state.pool, new_id, ids).await?;
+    }
+
+    // payload 带授权摘要,使授权变更可从 audit_logs 追溯。
+    let payload = grants_payload(username, &req.granted_node_ids, &req.granted_tunnel_ids);
     audit::record_with_ip(
         &state.pool,
         Some(auth.0.sub),
@@ -249,7 +300,7 @@ pub async fn create(
         "user.create",
         Some("user"),
         Some(new_id),
-        Some(username),
+        Some(&payload),
         true,
         None,
     )
@@ -327,6 +378,15 @@ pub async fn update(
         .await?
         .ok_or(ApiError::NotFound)?;
 
+    // 授权同步:给定则全量替换,未给(None)保持不变。
+    if let Some(ids) = &req.granted_node_ids {
+        grant::set_node_grants(&state.pool, id, ids).await?;
+    }
+    if let Some(ids) = &req.granted_tunnel_ids {
+        grant::set_tunnel_grants(&state.pool, id, ids).await?;
+    }
+
+    let payload = grants_payload(&existing.username, &req.granted_node_ids, &req.granted_tunnel_ids);
     audit::record_with_ip(
         &state.pool,
         Some(auth.0.sub),
@@ -334,7 +394,7 @@ pub async fn update(
         "user.update",
         Some("user"),
         Some(id),
-        None,
+        Some(&payload),
         true,
         None,
     )

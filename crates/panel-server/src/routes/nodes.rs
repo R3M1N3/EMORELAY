@@ -5,7 +5,10 @@ use crate::{
         token::{generate_token, hash_token},
     },
     error::{ApiError, ApiResult},
-    models::node::{Node, SORT_FIELDS},
+    models::{
+        grant,
+        node::{Node, SORT_FIELDS},
+    },
     state::AppState,
 };
 use axum::{
@@ -165,6 +168,20 @@ pub async fn list(
     let page_size = q.page_size.unwrap_or(20).clamp(1, 100);
     let offset = page.saturating_sub(1).saturating_mul(page_size);
 
+    // 非 admin:只返回被授权的节点(默认拒绝),供自助建规则选节点;响应净化敏感字段。
+    // 授权节点数有限,逐个取即可,不分页(前端建规则下拉需要全部授权节点)。
+    if !auth.is_admin() {
+        let ids = grant::granted_node_ids(&state.pool, auth.0.sub).await?;
+        let mut items = Vec::new();
+        for nid in &ids {
+            if let Some(n) = Node::find_by_id(&state.pool, *nid).await? {
+                items.push(NodeView::from(n).sanitize_for_user());
+            }
+        }
+        let total = items.len() as i64;
+        return Ok(Json(NodeListResponse { items, total, page, page_size }));
+    }
+
     let sort_field = q.sort.as_deref().unwrap_or("id");
     if !SORT_FIELDS.contains(&sort_field) {
         return Err(ApiError::BadRequest(format!(
@@ -201,16 +218,29 @@ pub async fn get(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<NodeView>> {
-    // 放行普通用户,净化同 list。
     let node = Node::find_by_id(&state.pool, id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    // 非 admin 只能看被授权的节点(未授权按不存在处理,不泄露)。
+    if !auth.is_admin() && !grant::node_granted(&state.pool, auth.0.sub, id).await? {
+        return Err(ApiError::NotFound);
+    }
     let view = NodeView::from(node);
     Ok(Json(if auth.is_admin() {
         view
     } else {
         view.sanitize_for_user()
     }))
+}
+
+/// 某节点被授权给哪些用户(节点详情页反向显示)。admin only。
+pub async fn grants(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<Vec<crate::models::grant::GrantedUser>>> {
+    auth.require_admin()?;
+    Ok(Json(grant::users_for_node(&state.pool, id).await?))
 }
 
 pub async fn create(

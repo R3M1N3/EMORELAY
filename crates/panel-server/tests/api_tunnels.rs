@@ -157,8 +157,14 @@ async fn patch_only_name_and_requires_admin() {
     let (s, body) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(body["name"], "renamed");
+    // P7: list 对普通用户放开但只返回被授权的隧道(此处无授权 → 空);写操作仍 admin-only。
     let (_uid, token) = common::make_user_token(&app, "u", "password123").await.unwrap();
     let req = common::auth_req(Method::GET, "/api/tunnels", &token, None).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 0);
+    let req = common::auth_req(Method::PATCH, &format!("/api/tunnels/{tid}"), &token,
+        Some(json!({ "name": "hijack" }))).unwrap();
     let (s, _) = common::send(app.app.clone(), req).await.unwrap();
     assert_eq!(s, StatusCode::FORBIDDEN);
 }

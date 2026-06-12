@@ -3,6 +3,7 @@ use crate::{
     auth::extractor::{ActorIp, AuthUser},
     error::{ApiError, ApiResult},
     models::{
+        grant,
         node::Node,
         rule::{Rule, SORT_FIELDS},
         settings,
@@ -286,10 +287,9 @@ pub async fn create(
         }
         None => auth.0.sub,
     };
-    // 收紧:限速档/隧道是 admin 管控资产,普通用户不得自配
-    // (否则可挂任意隧道或解除 admin 限速)。
-    if !auth.is_admin() && (req.bandwidth_profile_id.is_some() || req.tunnel_id.is_some()) {
-        return Err(ApiError::BadRequest("仅管理员可配置限速与隧道".into()));
+    // 限速档是 admin 管控资产,普通用户不得自配;隧道改为按授权放开(校验见下)。
+    if !auth.is_admin() && req.bandwidth_profile_id.is_some() {
+        return Err(ApiError::BadRequest("仅管理员可配置限速".into()));
     }
 
     let name = req.name.trim();
@@ -320,8 +320,13 @@ pub async fn create(
     let node = Node::find_by_id(&state.pool, req.node_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("节点不存在".into()))?;
-    // 关联隧道:tunnel_id 给定时,node_id 必须 = 隧道入口(ordinal 0)节点。
+    // 授权校验(默认拒绝,admin 不受限):隧道规则校验隧道授权(入口节点随隧道授权,
+    // 不再单独校验节点授权);普通规则校验节点授权。
     if let Some(tid) = req.tunnel_id {
+        if !auth.is_admin() && !grant::tunnel_granted(&state.pool, owner_id, tid).await? {
+            return Err(ApiError::BadRequest("无权使用该隧道,请联系管理员授权".into()));
+        }
+        // tunnel_id 给定时,node_id 必须 = 隧道入口(ordinal 0)节点。
         use crate::models::tunnel::TunnelHop;
         let hops = TunnelHop::list_for_tunnel(&state.pool, tid).await?;
         let entry = hops.iter().find(|h| h.ordinal == 0)
@@ -330,6 +335,8 @@ pub async fn create(
             return Err(ApiError::BadRequest(
                 "规则节点必须是隧道入口(第 1 跳)节点".into()));
         }
+    } else if !auth.is_admin() && !grant::node_granted(&state.pool, owner_id, req.node_id).await? {
+        return Err(ApiError::BadRequest("无权使用该节点,请联系管理员授权".into()));
     }
     if let Some(pid) = req.bandwidth_profile_id {
         if pid <= 0 {
@@ -341,9 +348,10 @@ pub async fn create(
     }
     let reserved = settings::reserved_ports(&state.pool).await;
     let listen_port_i64 = match req.listen_port {
-        // 隧道入口规则的 listen_port 是隧道 ingress 业务端口,不受节点转发端口池范围约束;
-        // 但保留端口红线对它同样生效(不能监听 22/80/443 等)。
-        Some(p) if req.tunnel_id.is_some() => {
+        // 隧道入口规则的 listen_port 是隧道 ingress 业务端口,admin 可越过节点端口池;
+        // P7 起隧道授权放开给普通用户,端口池豁免仅保留给 admin(防绕开端口管控),
+        // 保留端口红线对所有人生效(不能监听 22/80/443 等)。
+        Some(p) if req.tunnel_id.is_some() && auth.is_admin() => {
             let p = i64::from(p);
             if reserved.contains(&p) {
                 return Err(ApiError::BadRequest(format!("监听端口 {p} 是保留端口,禁止监听")));
