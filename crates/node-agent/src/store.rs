@@ -133,9 +133,29 @@ impl ConfigStore {
         }
         let mut tmp = self.path.clone();
         tmp.as_mut_os_string().push(".tmp");
-        fs::write(&tmp, &bytes)
-            .await
-            .with_context(|| format!("write tmp state: {}", tmp.display()))?;
+        // 状态文件含全部转发规则与隧道拓扑(监听端口/目标 host:port/next_hop);
+        // 与 CA/隧道私钥一致以 0600 一次成型(unix),避免同主机低权限用户读取内网目标/
+        // 链路结构。用 OpenOptions::mode 在 create 时即定权限,消除 chmod 前的可读窗口。
+        {
+            use tokio::io::AsyncWriteExt;
+            #[cfg(unix)]
+            let mut f = {
+                use tokio::fs::OpenOptions;
+                let mut opts = OpenOptions::new();
+                opts.write(true).create(true).truncate(true).mode(0o600);
+                opts.open(&tmp)
+                    .await
+                    .with_context(|| format!("create tmp state: {}", tmp.display()))?
+            };
+            #[cfg(not(unix))]
+            let mut f = fs::File::create(&tmp)
+                .await
+                .with_context(|| format!("create tmp state: {}", tmp.display()))?;
+            f.write_all(&bytes)
+                .await
+                .with_context(|| format!("write tmp state: {}", tmp.display()))?;
+            f.flush().await.ok();
+        }
         fs::rename(&tmp, &self.path)
             .await
             .with_context(|| format!("rename tmp -> {}", self.path.display()))?;

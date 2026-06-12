@@ -450,6 +450,26 @@ pub async fn update(
         .ok_or(ApiError::NotFound)?;
     ensure_can_touch(&auth, &existing)?;
 
+    // 撤权后冻结存量:被撤销节点/隧道授权的普通用户不得再修改规则的目标/监听字段。
+    // 否则「撤权保留存量规则」会被弱化为「撤权后仍可在该节点上任意重定向转发目标」,
+    // 与 create 入口的授权校验对齐(P7 ACL 须在所有入口一致执行)。
+    let redirecting = req.target_host.is_some()
+        || req.target_port.is_some()
+        || req.listen_ip.is_some()
+        || req.listen_port.is_some();
+    if redirecting && !auth.is_admin() {
+        let still_granted = if let Some(tid) = existing.tunnel_id {
+            grant::tunnel_granted(&state.pool, existing.user_id, tid).await?
+        } else {
+            grant::node_granted(&state.pool, existing.user_id, existing.node_id).await?
+        };
+        if !still_granted {
+            return Err(ApiError::BadRequest(
+                "授权已撤销,无法修改该规则的目标或监听;请联系管理员".into(),
+            ));
+        }
+    }
+
     if let Some(n) = req.name.as_deref() {
         if n.trim().is_empty() {
             return Err(ApiError::BadRequest("名称不能为空".into()));

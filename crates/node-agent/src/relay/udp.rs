@@ -170,6 +170,10 @@ async fn forward(
         .connect((target_host, target_port))
         .await
         .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
+    // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
+    if let Ok(peer) = upstream.peer_addr() {
+        crate::relay::guard_resolved_target(target_host, peer)?;
+    }
     counter.connection_count.fetch_add(1, Ordering::Relaxed);
 
     // 反向 task：从 upstream 收响应写回原 client_addr。

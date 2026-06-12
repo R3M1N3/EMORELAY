@@ -171,6 +171,14 @@ pub async fn import(
     Json(items): Json<Vec<RuleExportItem>>,
 ) -> ApiResult<Json<ImportReport>> {
     auth.require_admin()?;
+    // 单次导入条数上限:每项触发数次串行 DB 查询,无上限会被超大数组拖垮连接池。
+    const MAX_IMPORT_ITEMS: usize = 1000;
+    if items.len() > MAX_IMPORT_ITEMS {
+        return Err(ApiError::BadRequest(format!(
+            "单次导入最多 {MAX_IMPORT_ITEMS} 条,当前 {} 条;请拆分文件",
+            items.len()
+        )));
+    }
     let strategy = q.strategy.as_deref().unwrap_or("skip");
     if !matches!(strategy, "skip" | "overwrite") {
         return Err(ApiError::BadRequest("导入策略必须是 skip 或 overwrite".into()));

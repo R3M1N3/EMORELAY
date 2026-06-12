@@ -116,11 +116,29 @@ async fn splice_one(src: &TcpStream, dst: &TcpStream, counted: &AtomicI64) -> io
             // 读分支:pipe 有空间且未 EOF 时启用。
             r = src.readable(), if can_read => {
                 r?;
-                let want = pipe.cap - pending;
-                match src.try_io(Interest::READABLE, || raw_splice(src_fd, pipe_w, want)) {
-                    Ok(0) => eof = true,
-                    Ok(n) => pending += n,
-                    // try_io 已在 WouldBlock 时清掉读就绪,下轮 readable() 重等。
+                // 就绪后内层批量 splice-in,直到 pipe 满或 socket 排空(减少 select! 往返)。
+                // 关键:splice 的 EAGAIN 有两种不可区分的原因——
+                //   (a) socket 缓冲空 → 应清读就绪,等下一个数据事件;
+                //   (b) pipe 已满(按页/slot 计,字节数可能远未达 cap)→ socket 里可能仍有数据,
+                //       此时绝不能清读就绪(mio 边缘触发下会 stall 到下个包才恢复)。
+                // 用「pending < cap 时才继续读」区分:循环因 pending>=cap 退出 → pipe 满 →
+                // 返回 Ok 不清就绪;循环因 raw EAGAIN 退出 → socket 空 → 返回 Err 让 try_io 清就绪。
+                let res = src.try_io(Interest::READABLE, || {
+                    while pending < pipe.cap {
+                        match raw_splice(src_fd, pipe_w, pipe.cap - pending) {
+                            Ok(0) => { eof = true; return Ok(()); }
+                            Ok(n) => pending += n,
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Err(e),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    // pipe 满:保留读就绪,排空后下轮直接续读,不 stall。
+                    // 取舍:每个「填满→部分排空」周期会多一次「立即就绪→EAGAIN→清就绪」的
+                    // 有限空转 syscall,自限(一次即清,非忙循环),换来消除 stall,净收益为正。
+                    Ok(())
+                });
+                match res {
+                    Ok(()) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                     Err(e) => return Err(e),
                 }
@@ -128,12 +146,25 @@ async fn splice_one(src: &TcpStream, dst: &TcpStream, counted: &AtomicI64) -> io
             // 写分支:pipe 有数据时启用。
             w = dst.writable(), if can_write => {
                 w?;
-                match dst.try_io(Interest::WRITABLE, || raw_splice(pipe_r, dst_fd, pending)) {
-                    Ok(n) => {
-                        pending -= n;
-                        total += n as u64;
-                        counted.fetch_add(n as i64, Ordering::Relaxed);
+                // 就绪后内层批量 splice-out,直到 pipe 排空或 socket 不可写。
+                // pipe 排空 → 返回 Ok 保留写就绪;socket 不可写(EAGAIN)→ 返回 Err 清写就绪。
+                let res = dst.try_io(Interest::WRITABLE, || {
+                    while pending > 0 {
+                        match raw_splice(pipe_r, dst_fd, pending) {
+                            Ok(0) => return Ok(()), // 仅防御:pipe_r 在 pending>0 时不会真 EOF
+                            Ok(n) => {
+                                pending -= n;
+                                total += n as u64;
+                                counted.fetch_add(n as i64, Ordering::Relaxed);
+                            }
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Err(e),
+                            Err(e) => return Err(e),
+                        }
                     }
+                    Ok(()) // pipe 排空:保留写就绪。
+                });
+                match res {
+                    Ok(()) => {}
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
                     Err(e) => return Err(e),
                 }

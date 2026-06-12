@@ -124,6 +124,41 @@ impl ControlPlane for ControlPlaneImpl {
                 .await;
                 return Err(Status::permission_denied("permission denied"));
             }
+
+            // 证书 ⇄ node 绑定：client 证书指纹必须等于签发给该 node_id 的那张
+            // (nodes.cert_fingerprint)。否则「本 CA 签的任意 client 证书皆可冒充任意
+            // node_id」,mTLS 在 Agent 身份认证上退化为只验链不验身。
+            // 仅 mTLS 模式(peer_fp 存在)生效;存量/异常无 fingerprint 的节点放行并告警。
+            let bound: Option<Option<String>> = sqlx::query_scalar(
+                "SELECT cert_fingerprint FROM nodes WHERE id = ? AND deleted_at IS NULL",
+            )
+            .bind(req.node_id)
+            .fetch_optional(&self.state.pool)
+            .await
+            .map_err(|e| Status::internal(format!("db: {e}")))?;
+            match bound.flatten() {
+                Some(expected) if &expected != fp => {
+                    audit::record(
+                        &self.state.pool,
+                        None,
+                        "agent.register",
+                        Some("node"),
+                        Some(req.node_id),
+                        Some(&format!("version={}", req.version)),
+                        false,
+                        Some("cert_node_mismatch"),
+                    )
+                    .await;
+                    return Err(Status::permission_denied("permission denied"));
+                }
+                None => {
+                    warn!(
+                        node_id = req.node_id,
+                        "node has no bound cert_fingerprint; cert-node binding skipped"
+                    );
+                }
+                _ => {}
+            }
         }
 
         // 颁发 session_token：明文进内存，hash 落 agent_sessions 表（审计）。
@@ -323,6 +358,17 @@ impl ControlPlane for ControlPlaneImpl {
                 if bucket.bucket_at_unix <= 0 {
                     continue;
                 }
+                // 流量字节由 Agent 完全可控,负值会污染累计会计(把用量做负绕过配额)。
+                // 字节字段必须非负,否则丢弃该 bucket。
+                if bucket.rx_bytes < 0 || bucket.tx_bytes < 0 {
+                    warn!(
+                        node_id = batch.node_id,
+                        rx = bucket.rx_bytes,
+                        tx = bucket.tx_bytes,
+                        "rejected node_stats bucket with negative bytes"
+                    );
+                    continue;
+                }
                 let Some(bucket_at) =
                     chrono::DateTime::<chrono::Utc>::from_timestamp(bucket.bucket_at_unix, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -437,6 +483,18 @@ impl ControlPlane for ControlPlaneImpl {
                 if bucket.bucket_at_unix <= 0 {
                     continue;
                 }
+                // 上报数值由 Agent 可控,负值会污染规则/用户配额会计,直接丢弃该 bucket。
+                if bucket.rx_bytes < 0
+                    || bucket.tx_bytes < 0
+                    || bucket.connection_count < 0
+                    || bucket.error_count < 0
+                {
+                    warn!(
+                        rule_id = bucket.rule_id,
+                        "rejected rule_stats bucket with negative value"
+                    );
+                    continue;
+                }
                 let Some(bucket_at) =
                     chrono::DateTime::<chrono::Utc>::from_timestamp(bucket.bucket_at_unix, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -453,6 +511,42 @@ impl ControlPlane for ControlPlaneImpl {
                         continue;
                     }
                 };
+                // 先累加 forward_rules,并把「规则归属本节点」作为 WHERE 条件:
+                // 恶意 Agent 在自己合法 session 内上报别的节点的 rule_id 会命中 0 行,
+                // 据此 rollback 跳过,防止跨节点污染他人规则流量 / 触发其配额超额 DoS。
+                let accumulate = sqlx::query(
+                    "UPDATE forward_rules SET \
+                        rx_bytes = rx_bytes + ?, \
+                        tx_bytes = tx_bytes + ?, \
+                        connection_count = connection_count + ?, \
+                        updated_at = datetime('now') \
+                     WHERE id = ? AND node_id = ? AND deleted_at IS NULL",
+                )
+                .bind(bucket.rx_bytes)
+                .bind(bucket.tx_bytes)
+                .bind(bucket.connection_count)
+                .bind(bucket.rule_id)
+                .bind(session_node_id)
+                .execute(&mut *tx)
+                .await;
+                let accumulate = match accumulate {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(error = ?e, rule_id = bucket.rule_id, "forward_rules accumulate failed");
+                        let _ = tx.rollback().await;
+                        continue;
+                    }
+                };
+                if accumulate.rows_affected() == 0 {
+                    // 规则不属于本节点(或已删):拒绝写入 rule_stats,丢弃该 bucket。
+                    warn!(
+                        node_id = session_node_id,
+                        rule_id = bucket.rule_id,
+                        "rejected rule_stats for rule not owned by reporting node"
+                    );
+                    let _ = tx.rollback().await;
+                    continue;
+                }
                 let upsert = sqlx::query(
                     "INSERT INTO rule_stats (rule_id, bucket_at, rx_bytes, tx_bytes, connection_count, error_count) \
                      VALUES (?, ?, ?, ?, ?, ?) \
@@ -472,25 +566,6 @@ impl ControlPlane for ControlPlaneImpl {
                 .await;
                 if let Err(e) = upsert {
                     warn!(error = ?e, rule_id = bucket.rule_id, "rule_stats upsert failed");
-                    let _ = tx.rollback().await;
-                    continue;
-                }
-                let accumulate = sqlx::query(
-                    "UPDATE forward_rules SET \
-                        rx_bytes = rx_bytes + ?, \
-                        tx_bytes = tx_bytes + ?, \
-                        connection_count = connection_count + ?, \
-                        updated_at = datetime('now') \
-                     WHERE id = ? AND deleted_at IS NULL",
-                )
-                .bind(bucket.rx_bytes)
-                .bind(bucket.tx_bytes)
-                .bind(bucket.connection_count)
-                .bind(bucket.rule_id)
-                .execute(&mut *tx)
-                .await;
-                if let Err(e) = accumulate {
-                    warn!(error = ?e, rule_id = bucket.rule_id, "forward_rules accumulate failed");
                     let _ = tx.rollback().await;
                     continue;
                 }

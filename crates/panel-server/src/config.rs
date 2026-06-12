@@ -32,11 +32,21 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self> {
         let _ = dotenvy::dotenv();
+        let jwt_secret = env::var("PANEL_JWT_SECRET").context("PANEL_JWT_SECRET is required")?;
+        // 弱 JWT secret 可被离线爆破后伪造任意 admin token,等于完全接管。HS256 推荐
+        // 密钥熵 ≥ 256bit,这里 fail-fast 拒绝 < 32 字符的弱配置(deploy.sh 默认生成 48 字符)。
+        if jwt_secret.len() < 32 {
+            anyhow::bail!(
+                "PANEL_JWT_SECRET 太短(当前 {} 字符),至少需 32 字符以防 token 伪造;\
+                 可用 `head -c 36 /dev/urandom | base64` 生成",
+                jwt_secret.len()
+            );
+        }
         Ok(Self {
             bind_addr: env::var("PANEL_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into()),
             database_url: env::var("PANEL_DATABASE_URL")
                 .context("PANEL_DATABASE_URL is required")?,
-            jwt_secret: env::var("PANEL_JWT_SECRET").context("PANEL_JWT_SECRET is required")?,
+            jwt_secret,
             jwt_expiry_hours: env::var("PANEL_JWT_EXPIRY_HOURS")
                 .ok()
                 .and_then(|s| s.parse().ok())

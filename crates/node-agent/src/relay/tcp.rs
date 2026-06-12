@@ -108,10 +108,16 @@ async fn bridge(
         .await
         .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
 
+    // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
+    if let Ok(peer) = server.peer_addr() {
+        crate::relay::guard_resolved_target(&target_host, peer)?;
+    }
+
     // Linux 不限速:走 splice 零拷贝,数据不过用户态(消除 pump 的两次 memcpy)。
     // 限速或非 Linux 回退下方 pump(用户态拷贝才能插入令牌桶计量)。
+    // AGENT_RELAY_FORCE_PUMP=1 强制走 pump:仅用于 splice vs pump 的性能 A/B 对照。
     #[cfg(target_os = "linux")]
-    if bucket.is_none() {
+    if bucket.is_none() && !crate::relay::force_pump() {
         return crate::relay::splice::splice_bidi(client, server, counter).await;
     }
 
