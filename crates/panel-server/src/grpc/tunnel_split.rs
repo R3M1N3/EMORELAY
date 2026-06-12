@@ -14,6 +14,8 @@ pub struct SplitInput {
     pub target_port: u32,
     pub enabled: bool,
     pub bandwidth_mbps: i64,
+    /// 并发连接上限。0 = 不限;仅 entry 生效。
+    pub max_connections: i64,
     pub tunnel_id: i64,
     pub transport: String,
 }
@@ -54,9 +56,10 @@ pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, Pro
             target_host: input.target_host.clone(),
             target_port: input.target_port,
             enabled: input.enabled,
-            // 限速只在 entry 起作用,mid/exit 置 0 避免逐跳重复扣量。
+            // 限速/连接数只在 entry 起作用,mid/exit 置 0 避免逐跳重复计。
             bandwidth_mbps: if i == 0 { input.bandwidth_mbps } else { 0 },
             tunnel: Some(tunnel),
+            max_connections: if i == 0 { input.max_connections } else { 0 },
         };
         (hop.node_id, proto)
     }).collect()

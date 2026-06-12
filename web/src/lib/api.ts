@@ -130,6 +130,8 @@ export interface RuleView {
   bandwidth_profile_id: number | null
   bandwidth_mbps: number | null
   tunnel_id: number | null
+  /** 并发连接上限(仅 TCP);null = 不限 */
+  max_connections: number | null
   rx_bytes: number
   tx_bytes: number
   connection_count: number
@@ -199,6 +201,8 @@ export interface CreateRuleRequest {
   tunnel_id?: number | null
   /** 归属用户:仅 admin 可指定 */
   user_id?: number
+  /** 并发连接上限(仅 TCP,admin 管控);不传 = 不限 */
+  max_connections?: number
 }
 
 export interface UpdateRuleRequest {
@@ -209,6 +213,8 @@ export interface UpdateRuleRequest {
   target_port?: number
   /** 0 = 解除关联 */
   bandwidth_profile_id?: number
+  /** 0 = 清除上限(admin 管控) */
+  max_connections?: number
 }
 
 export interface RuleStatsBucket {

@@ -36,6 +36,9 @@ struct RuleJson {
     /// P3b 数据面新增。`#[serde(default)]` 兼容旧版 agent-state.json(缺字段 → 非隧道规则)。
     #[serde(default)]
     tunnel: Option<TunnelJson>,
+    /// P10a 新增。缺字段 → 0 = 不限。
+    #[serde(default)]
+    max_connections: i64,
 }
 
 impl From<&Rule> for RuleJson {
@@ -49,6 +52,7 @@ impl From<&Rule> for RuleJson {
             target_port: r.target_port,
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
+            max_connections: r.max_connections,
             tunnel: r.tunnel.as_ref().map(|t| TunnelJson {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -73,6 +77,7 @@ impl From<RuleJson> for Rule {
             target_port: r.target_port,
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
+            max_connections: r.max_connections,
             tunnel: r.tunnel.map(|t| emorelay_common::control::v1::TunnelContext {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -159,6 +164,7 @@ mod tests {
             target_port: 443,
             enabled: true,
             bandwidth_mbps: 30,
+            max_connections: 0,
             tunnel: Some(TunnelContext {
                 tunnel_id: 7,
                 role: TunnelRole::Mid as i32,

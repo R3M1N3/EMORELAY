@@ -163,6 +163,7 @@ mod tests {
             target_port: 1,
             enabled: true,
             bandwidth_mbps: 0,
+            max_connections: 0,
             tunnel: Some(TunnelContext {
                 tunnel_id: 3,
                 role: TunnelRole::Entry as i32,

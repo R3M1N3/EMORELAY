@@ -19,6 +19,8 @@ pub struct Rule {
     /// 派生列:关联 profile 的 Mbps(活跃 profile);无关联/已删 → None。
     pub bandwidth_mbps: Option<i64>,
     pub tunnel_id: Option<i64>,
+    /// 并发连接上限(仅 TCP)。None = 不限。
+    pub max_connections: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -28,7 +30,7 @@ const RULE_COLUMNS: &str = "id, user_id, node_id, name, protocol, listen_ip, lis
     bandwidth_profile_id, \
     (SELECT bp.bandwidth_mbps FROM bandwidth_profiles bp \
         WHERE bp.id = forward_rules.bandwidth_profile_id AND bp.deleted_at IS NULL) AS bandwidth_mbps, \
-    tunnel_id, created_at, updated_at";
+    tunnel_id, max_connections, created_at, updated_at";
 
 /// 允许的排序字段白名单。值必须为 schema 真实列名且非敏感字段；
 /// SQL 拼接前必须经此过滤。
@@ -186,12 +188,13 @@ impl Rule {
         target_port: i64,
         bandwidth_profile_id: Option<i64>,
         tunnel_id: Option<i64>,
+        max_connections: Option<i64>,
     ) -> sqlx::Result<i64> {
         let res = sqlx::query(
             "INSERT INTO forward_rules \
                 (user_id, node_id, name, protocol, listen_ip, listen_port, \
-                 target_host, target_port, bandwidth_profile_id, tunnel_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 target_host, target_port, bandwidth_profile_id, tunnel_id, max_connections) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(node_id)
@@ -203,12 +206,13 @@ impl Rule {
         .bind(target_port)
         .bind(bandwidth_profile_id)
         .bind(tunnel_id)
+        .bind(max_connections)
         .execute(pool)
         .await?;
         Ok(res.last_insert_rowid())
     }
 
-    /// PATCH 语义：None 字段保留旧值;bandwidth_profile_id 传 0 = 解除关联。
+    /// PATCH 语义：None 字段保留旧值;bandwidth_profile_id / max_connections 传 0 = 清除。
     /// 改 protocol / node_id 需要 delete+create。
     #[allow(clippy::too_many_arguments)]
     pub async fn update_fields(
@@ -220,6 +224,7 @@ impl Rule {
         target_host: Option<&str>,
         target_port: Option<i64>,
         bandwidth_profile_id: Option<i64>,
+        max_connections: Option<i64>,
     ) -> sqlx::Result<u64> {
         let res = sqlx::query(
             "UPDATE forward_rules SET \
@@ -232,8 +237,12 @@ impl Rule {
                     WHEN ?6 IS NULL THEN bandwidth_profile_id \
                     WHEN ?6 = 0 THEN NULL \
                     ELSE ?6 END, \
+                max_connections = CASE \
+                    WHEN ?7 IS NULL THEN max_connections \
+                    WHEN ?7 = 0 THEN NULL \
+                    ELSE ?7 END, \
                 updated_at = datetime('now') \
-             WHERE id = ?7 AND deleted_at IS NULL",
+             WHERE id = ?8 AND deleted_at IS NULL",
         )
         .bind(name)
         .bind(listen_ip)
@@ -241,6 +250,7 @@ impl Rule {
         .bind(target_host)
         .bind(target_port)
         .bind(bandwidth_profile_id)
+        .bind(max_connections)
         .bind(id)
         .execute(pool)
         .await?;

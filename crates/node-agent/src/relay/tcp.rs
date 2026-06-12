@@ -47,6 +47,10 @@ pub async fn start(
     let target_port: u16 = u16::try_from(rule.target_port)
         .with_context(|| format!("target_port out of u16 range: {}", rule.target_port))?;
     let rule_id = rule.id;
+    // P10a 并发连接上限:permit 跟随 bridge task 生命周期,断开自动释放。
+    // 上限变更走 re-apply 重建 listener+全新 limiter,存量连接持旧 permit 至自然断开
+    // (与下方限速桶同一 MVP 语义),下调后短暂可能超员。
+    let limiter = crate::limit::conn_limiter(rule.max_connections);
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
 
     let join = tokio::spawn(async move {
@@ -59,12 +63,19 @@ pub async fn start(
                 res = listener.accept() => {
                     match res {
                         Ok((client, peer)) => {
+                            let Ok(permit) = crate::limit::try_acquire(&limiter) else {
+                                // 达上限:直接断开(drop socket = RST/FIN),计 error 供观测。
+                                counter.error_count.fetch_add(1, Ordering::Relaxed);
+                                warn!(rule_id, %peer, "connection rejected: max_connections reached");
+                                continue;
+                            };
                             counter.connection_count.fetch_add(1, Ordering::Relaxed);
                             let target_host = target_host.clone();
                             let counter = counter.clone();
                             // 限速变更走 re-apply 重建 listener+新桶,但存量连接持旧桶直到自然断开(沿用 stop 不断存量连接的 MVP 语义);新限速仅对新连接生效。
                             let bucket = bucket.clone();
                             tokio::spawn(async move {
+                                let _permit = permit;
                                 if let Err(e) = bridge(client, target_host, target_port, counter.clone(), bucket).await {
                                     counter.error_count.fetch_add(1, Ordering::Relaxed);
                                     warn!(rule_id, %peer, error = ?e, "tcp bridge error");
@@ -196,6 +207,7 @@ mod tests {
             target_port: target_port as u32,
             enabled: true,
             bandwidth_mbps: 0,
+            max_connections: 0,
             tunnel: None,
         }
     }
@@ -232,6 +244,53 @@ mod tests {
         assert!(s.tx_bytes >= 5, "tx_bytes={}", s.tx_bytes);
         assert!(s.rx_bytes >= 5, "rx_bytes={}", s.rx_bytes);
         assert_eq!(s.error_count, 0, "should be no errors");
+    }
+
+    /// P10a 并发上限:max_connections=1 时第二个并发连接被立即断开,
+    /// 第一个断开后名额释放、新连接恢复可用。
+    #[tokio::test]
+    async fn tcp_relay_enforces_max_connections() {
+        let echo_port = spawn_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let mut rule = rule_for(listen_port, echo_port);
+        rule.max_connections = 1;
+
+        let handle = start(rule, stats.clone(), None).await.expect("relay start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // 第一个连接占住名额(完成一次 echo 确认桥接已建立)。
+        let mut c1 = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        c1.write_all(b"hold").await.unwrap();
+        let mut buf = [0u8; 4];
+        c1.read_exact(&mut buf).await.unwrap();
+
+        // 第二个连接:accept 后立即被 drop,读端应见 EOF/RST 而非 echo。
+        let mut c2 = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        let _ = c2.write_all(b"deny").await;
+        let mut buf2 = [0u8; 4];
+        let denied = match tokio::time::timeout(Duration::from_secs(2), c2.read(&mut buf2)).await {
+            Ok(Ok(0)) => true,       // EOF
+            Ok(Ok(_)) => false,      // 收到了 echo = 没被拒
+            Ok(Err(_)) => true,      // RST
+            Err(_) => false,         // 超时挂着 = 行为不对
+        };
+        assert!(denied, "second concurrent connection must be rejected");
+
+        // 释放第一个连接 → 名额回收 → 新连接恢复。
+        drop(c1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut c3 = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        c3.write_all(b"back").await.unwrap();
+        let mut buf3 = [0u8; 4];
+        c3.read_exact(&mut buf3).await.unwrap();
+        assert_eq!(&buf3, b"back");
+
+        handle.stop().await;
+        let snap = stats.drain_snapshot();
+        let s = snap.iter().find(|s| s.rule_id == 1).unwrap();
+        assert_eq!(s.connection_count, 2, "rejected connection must not count");
+        assert!(s.error_count >= 1, "rejection should be observable via error_count");
     }
 
     #[tokio::test]

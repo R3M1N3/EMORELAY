@@ -11,6 +11,7 @@ fn rule_input() -> SplitInput {
         target_port: 443,
         enabled: true,
         bandwidth_mbps: 50,
+        max_connections: 25,
         tunnel_id: 7,
         transport: "tls".into(),
     }
@@ -35,6 +36,7 @@ fn two_hop_split_entry_and_exit() {
     assert_eq!(t0.transport, "tls");
     assert_eq!(r0.listen_port, 20000);
     assert_eq!(r0.bandwidth_mbps, 50);
+    assert_eq!(r0.max_connections, 25, "连接数上限仅 entry 生效");
     assert_eq!(t0.self_ordinal, 0);
 
     let (n1, r1) = &out[1];
@@ -45,6 +47,7 @@ fn two_hop_split_entry_and_exit() {
     assert_eq!(t1.next_hop_inter_port, 0);
     assert_eq!(r1.target_host, "9.9.9.9");
     assert_eq!(r1.bandwidth_mbps, 0);
+    assert_eq!(r1.max_connections, 0, "exit 不重复计连接数");
     assert_eq!(t1.self_ordinal, 1);
 }
 

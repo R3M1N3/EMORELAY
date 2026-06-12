@@ -783,6 +783,7 @@ interface RuleFormState {
   bandwidth_profile_id: string
   tunnel_id: string
   user_id: string
+  max_connections: string
 }
 
 export function RuleForm({
@@ -821,6 +822,7 @@ export function RuleForm({
       initial?.bandwidth_profile_id != null ? String(initial.bandwidth_profile_id) : '',
     tunnel_id: initial?.tunnel_id != null ? String(initial.tunnel_id) : '',
     user_id: initial != null ? String(initial.user_id) : '',
+    max_connections: initial?.max_connections != null ? String(initial.max_connections) : '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -910,6 +912,7 @@ export function RuleForm({
             ? Number(form.bandwidth_profile_id)
             : null
           if (form.user_id) payload.user_id = Number(form.user_id)
+          if (form.max_connections) payload.max_connections = Number(form.max_connections)
         }
         payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
         await rules.create(payload)
@@ -935,6 +938,15 @@ export function RuleForm({
               (initial.bandwidth_profile_id ?? 0)
               ? form.bandwidth_profile_id
                 ? Number(form.bandwidth_profile_id)
+                : 0
+              : undefined,
+          // 同上;0 = 清除上限。
+          max_connections:
+            isAdmin &&
+            (form.max_connections ? Number(form.max_connections) : 0) !==
+              (initial.max_connections ?? 0)
+              ? form.max_connections
+                ? Number(form.max_connections)
                 : 0
               : undefined,
         }
@@ -1134,23 +1146,39 @@ export function RuleForm({
       </div>
 
       {isAdmin && (
-        <div>
-          <label className={fieldLabelCls}>限速配置</label>
-          <select
-            value={form.bandwidth_profile_id}
-            onChange={(e) => set('bandwidth_profile_id', e.target.value)}
-            className={fieldInputCls}
-          >
-            <option value="">不限速</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}（{p.bandwidth_mbps} Mbps）
-              </option>
-            ))}
-          </select>
-          <p className="text-[11px] text-zinc-500 mt-1">
-            在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
-          </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={fieldLabelCls}>限速配置</label>
+            <select
+              value={form.bandwidth_profile_id}
+              onChange={(e) => set('bandwidth_profile_id', e.target.value)}
+              className={fieldInputCls}
+            >
+              <option value="">不限速</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}（{p.bandwidth_mbps} Mbps）
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-zinc-500 mt-1">
+              在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
+            </p>
+          </div>
+          <div>
+            <label className={fieldLabelCls}>并发连接上限</label>
+            <input
+              type="number"
+              min={1}
+              value={form.max_connections}
+              onChange={(e) => set('max_connections', e.target.value)}
+              className={fieldInputCls}
+              placeholder="留空 = 不限"
+            />
+            <p className="text-[11px] text-zinc-500 mt-1">
+              仅 TCP 生效;达到上限时新连接被直接断开。
+            </p>
+          </div>
         </div>
       )}
 

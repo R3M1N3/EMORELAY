@@ -15,6 +15,7 @@ pub fn rule_to_proto(rule: &DbRule) -> ProtoRule {
         enabled: rule.enabled != 0,
         bandwidth_mbps: rule.bandwidth_mbps.unwrap_or(0),
         tunnel: None,
+        max_connections: rule.max_connections.unwrap_or(0),
     }
 }
 

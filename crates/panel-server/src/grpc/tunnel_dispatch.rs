@@ -50,6 +50,7 @@ async fn split_for(
         target_port: rule.target_port as u32,
         enabled: rule.enabled != 0,
         bandwidth_mbps: rule.bandwidth_mbps.unwrap_or(0),
+        max_connections: rule.max_connections.unwrap_or(0),
         tunnel_id,
         transport: tunnel.transport.clone(),
     };

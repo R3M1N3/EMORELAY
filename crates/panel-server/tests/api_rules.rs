@@ -282,3 +282,83 @@ async fn create_rule_without_profile_returns_null_bandwidth() {
     assert!(body["bandwidth_profile_id"].is_null());
     assert!(body["bandwidth_mbps"].is_null());
 }
+
+// ============ P10a: 并发连接上限 ============
+
+#[tokio::test]
+async fn rule_max_connections_admin_managed_with_clear_semantics() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+
+    // admin 建带上限规则 → 回显
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &app.admin_token,
+        Some(json!({ "node_id": node_id, "name": "capped", "protocol": "tcp", "listen_port": 20010,
+                     "target_host": "1.2.3.4", "target_port": 443, "max_connections": 50 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rule_id = body["id"].as_i64().unwrap();
+    assert_eq!(body["max_connections"], 50);
+
+    // 负数 → 400
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &app.admin_token,
+        Some(json!({ "node_id": node_id, "name": "neg", "protocol": "tcp", "listen_port": 20011,
+                     "target_host": "1.2.3.4", "target_port": 443, "max_connections": -1 })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 普通用户自配 → 400;改 admin 设的上限 → 400
+    let (uid, token) = common::make_user_token(&app, "capuser", "password123").await.unwrap();
+    common::grant_node(&app, uid, node_id).await;
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        &token,
+        Some(json!({ "node_id": node_id, "name": "u", "protocol": "tcp", "listen_port": 20012,
+                     "target_host": "1.2.3.4", "target_port": 443, "max_connections": 10 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // 把规则转给该用户场景简化:直接用 admin 规则验证用户 PATCH 被拒
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        &token,
+        Some(json!({ "max_connections": 0 })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    // 非本人规则 404 在 owner 校验之前/之后都可,这里用 admin 规则,user 校验先于 owner 时为 400,否则 404。
+    assert!(status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND);
+
+    // admin PATCH 0 → 清除(回显 null);PATCH 不传 → 不动
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        &app.admin_token,
+        Some(json!({ "name": "still-capped" })),
+    )
+    .unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(body["max_connections"], 50, "未传字段不得改动");
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/rules/{rule_id}"),
+        &app.admin_token,
+        Some(json!({ "max_connections": 0 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["max_connections"].is_null(), "0 = 清除: {body}");
+}

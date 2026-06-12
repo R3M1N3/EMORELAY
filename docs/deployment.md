@@ -259,13 +259,24 @@ WantedBy=multi-user.target
 
 ## 六、备份与升级
 
-- **备份**(panel-server runtime 镜像不带 sqlite3 CLI,用 alpine 侧车直接拷文件):
-  ```sh
-  docker run --rm \
-    -v emorelay_sqlite-data:/var/lib/emorelay \
-    -v "$PWD/backup":/backup \
-    alpine sh -c 'cp /var/lib/emorelay/emorelay.db /backup/emorelay-$(date +%F).db'
-  ```
+- **备份**:库开着 WAL,服务运行中直接 `cp` 活库可能拷到未 checkpoint 的半截状态。
+  两种安全姿势任选:
+  - **在线备份(推荐,不停服)**:用带 sqlite3 CLI 的侧车跑 `.backup`(会自动处理 WAL):
+    ```sh
+    docker run --rm \
+      -v emorelay_sqlite-data:/var/lib/emorelay \
+      -v "$PWD/backup":/backup \
+      keinos/sqlite3 sqlite3 /var/lib/emorelay/emorelay.db \
+      ".backup /backup/emorelay-$(date +%F).db"
+    ```
+    systemd 部署同理(宿主机 `apt install sqlite3`):
+    ```sh
+    sqlite3 /var/lib/emorelay/emorelay.db ".backup /root/backup/emorelay-$(date +%F).db"
+    ```
+  - **停服拷贝**:`docker compose stop panel-server`(或 `systemctl stop emorelay-panel`)后
+    把 `emorelay.db`、`emorelay.db-wal`、`emorelay.db-shm` 三个文件一起拷走再起服务。
+  - 除 db 外,`${PANEL_DATA_DIR}/tls/` 整目录(内置 CA 私钥)必须随库一起备份——
+    丢了 CA 等于全部 Agent 凭据作废,需逐节点轮换重装。
   (compose 项目名默认是目录名,例如 `emorelay_sqlite-data`,用 `docker volume ls` 确认。)
 - **升级**: `docker compose pull && docker compose up -d --build`。Migration 由 panel-server 启动时 `sqlx::migrate!` 自动跑。
 - **回滚**: 备份目录里恢复 db 文件(`docker run --rm -v emorelay_sqlite-data:/var/lib/emorelay -v "$PWD/backup":/backup alpine cp /backup/<file>.db /var/lib/emorelay/emorelay.db`),降级镜像 tag。

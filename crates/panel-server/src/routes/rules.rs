@@ -41,6 +41,8 @@ pub struct RuleView {
     pub bandwidth_profile_id: Option<i64>,
     pub bandwidth_mbps: Option<i64>,
     pub tunnel_id: Option<i64>,
+    /// 并发连接上限(仅 TCP);None = 不限。
+    pub max_connections: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -65,6 +67,7 @@ impl From<Rule> for RuleView {
             bandwidth_profile_id: r.bandwidth_profile_id,
             bandwidth_mbps: r.bandwidth_mbps,
             tunnel_id: r.tunnel_id,
+            max_connections: r.max_connections,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -104,6 +107,8 @@ pub struct CreateRuleRequest {
     pub tunnel_id: Option<i64>,
     /// 归属用户:仅 admin 可指定;普通用户只能为自己建(留空即可)。
     pub user_id: Option<i64>,
+    /// 并发连接上限(仅 TCP)。admin 管控字段;None = 不限。
+    pub max_connections: Option<i64>,
 }
 
 fn default_listen_ip() -> String {
@@ -119,6 +124,8 @@ pub struct UpdateRuleRequest {
     pub target_port: Option<u16>,
     /// 0 = 解除关联
     pub bandwidth_profile_id: Option<i64>,
+    /// 0 = 清除上限(不限);admin 管控字段
+    pub max_connections: Option<i64>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -287,9 +294,12 @@ pub async fn create(
         }
         None => auth.0.sub,
     };
-    // 限速档是 admin 管控资产,普通用户不得自配;隧道改为按授权放开(校验见下)。
-    if !auth.is_admin() && req.bandwidth_profile_id.is_some() {
-        return Err(ApiError::BadRequest("仅管理员可配置限速".into()));
+    // 限速档/连接数上限是 admin 管控资产,普通用户不得自配;隧道改为按授权放开(校验见下)。
+    if !auth.is_admin() && (req.bandwidth_profile_id.is_some() || req.max_connections.is_some()) {
+        return Err(ApiError::BadRequest("仅管理员可配置限速与连接数上限".into()));
+    }
+    if matches!(req.max_connections, Some(n) if n < 0) {
+        return Err(ApiError::BadRequest("连接数上限不能为负数".into()));
     }
 
     let name = req.name.trim();
@@ -398,6 +408,7 @@ pub async fn create(
         i64::from(req.target_port),
         req.bandwidth_profile_id,
         req.tunnel_id,
+        req.max_connections.filter(|n| *n > 0),
     )
     .await
     .map_err(map_sqlx_to_api)?;
@@ -464,6 +475,13 @@ pub async fn update(
     if matches!(req.listen_port, Some(0)) || matches!(req.target_port, Some(0)) {
         return Err(ApiError::BadRequest("端口必须在 1-65535 之间".into()));
     }
+    // 收紧:普通用户不得改连接数上限(否则可解除 admin 设的上限)。
+    if req.max_connections.is_some() && !auth.is_admin() {
+        return Err(ApiError::BadRequest("仅管理员可修改连接数上限".into()));
+    }
+    if matches!(req.max_connections, Some(n) if n < 0) {
+        return Err(ApiError::BadRequest("连接数上限不能为负数".into()));
+    }
     if let Some(pid) = req.bandwidth_profile_id {
         // 收紧:普通用户不得改限速关联(否则可解除 admin 挂的限速档)。
         if !auth.is_admin() {
@@ -518,6 +536,7 @@ pub async fn update(
         req.target_host.as_deref().map(str::trim),
         req.target_port.map(i64::from),
         req.bandwidth_profile_id,
+        req.max_connections,
     )
     .await
     .map_err(map_sqlx_to_api)?;

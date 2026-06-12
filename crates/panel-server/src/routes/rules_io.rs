@@ -412,6 +412,8 @@ async fn execute_create(
         i64::from(item.target_port),
         bandwidth_profile_id,
         None,
+        // 导入不携带连接数上限(admin 管控资产,导入后按需另设)。
+        None,
     )
     .await?;
     if !item.enabled {
@@ -439,6 +441,8 @@ async fn execute_overwrite(
         Some(i64::from(item.target_port)),
         // None=不改;导入 profile 缺失映射为解除关联(0)
         Some(bandwidth_profile_id.unwrap_or(0)),
+        // 连接数上限不随导入改动
+        None,
     )
     .await?;
     Rule::set_enabled(&state.pool, existing_id, item.enabled).await?;

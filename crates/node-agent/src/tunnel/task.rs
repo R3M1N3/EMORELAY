@@ -106,9 +106,11 @@ async fn start_entry(
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     let join = tokio::spawn(async move {
+        // P10a 并发连接上限:split 已保证仅 entry 非 0(此处即 entry)。
+        let limiter = crate::limit::conn_limiter(rule.max_connections);
         let tcp_loop = async {
             match tcp_listener {
-                Some(l) => entry_tcp_loop(rule_id, l, &transport, &next_hop, &counter, &bucket).await,
+                Some(l) => entry_tcp_loop(rule_id, l, &transport, &next_hop, &counter, &bucket, &limiter).await,
                 None => std::future::pending().await,
             }
         };
@@ -134,16 +136,23 @@ async fn entry_tcp_loop(
     next_hop: &str,
     counter: &Arc<RuleCounter>,
     bucket: &Option<Arc<TokenBucket>>,
+    limiter: &Option<Arc<tokio::sync::Semaphore>>,
 ) {
     loop {
         match listener.accept().await {
             Ok((client, peer)) => {
+                let Ok(permit) = crate::limit::try_acquire(limiter) else {
+                    counter.error_count.fetch_add(1, Ordering::Relaxed);
+                    warn!(rule_id, %peer, "tunnel entry connection rejected: max_connections reached");
+                    continue;
+                };
                 counter.connection_count.fetch_add(1, Ordering::Relaxed);
                 let transport = transport.clone();
                 let next_hop = next_hop.to_string();
                 let counter = counter.clone();
                 let bucket = bucket.clone();
                 tokio::spawn(async move {
+                    let _permit = permit;
                     if let Err(e) = entry_tcp_conn(client, transport, &next_hop, &counter, bucket).await {
                         counter.error_count.fetch_add(1, Ordering::Relaxed);
                         warn!(rule_id, %peer, error = ?e, "tunnel entry tcp bridge error");
@@ -557,6 +566,7 @@ mod tests {
             target_port: target_port as u32,
             enabled: true,
             bandwidth_mbps: 0,
+            max_connections: 0,
             tunnel: Some(TunnelContext {
                 tunnel_id: 9,
                 role: role as i32,
