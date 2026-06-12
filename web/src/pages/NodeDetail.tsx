@@ -5,6 +5,7 @@ import {
   formatBytes,
   nodes,
   shortTime,
+  type GrantedUser,
   type NodeStatsResponse,
   type NodeView,
 } from '../lib/api'
@@ -40,6 +41,8 @@ export default function NodeDetail() {
   const [confirmingRevoke, setConfirmingRevoke] = useState(false)
   const [revoking, setRevoking] = useState(false)
   const [revokedCreds, setRevokedCreds] = useState<RevokedCreds | null>(null)
+  // P7:该节点被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
+  const [grantedUsers, setGrantedUsers] = useState<GrantedUser[] | null>(null)
   // 30s 静默刷新心跳/资源/时序。
   const [refreshTick, setRefreshTick] = useState(0)
   useAutoRefresh(() => setRefreshTick((n) => n + 1), 30_000)
@@ -99,6 +102,23 @@ export default function NodeDetail() {
     }
   }, [nodeId, refreshTick])
 
+  // 授权用户列表只拉一次(变更入口在用户编辑弹窗,本页只读展示)。
+  useEffect(() => {
+    if (!Number.isFinite(nodeId)) return
+    let cancelled = false
+    nodes
+      .grants(nodeId)
+      .then((g) => {
+        if (!cancelled) setGrantedUsers(g)
+      })
+      .catch(() => {
+        // 加载失败不阻塞详情页,该区块显示「—」。
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [nodeId])
+
   if (state.loading) return <div className="text-zinc-400">加载中…</div>
   if (state.error)
     return (
@@ -156,6 +176,26 @@ export default function NodeDetail() {
           <div className="text-[11px] text-zinc-500 mt-2">
             Agent 接入凭据在创建节点时一次性显示；
             凭据遗失或泄露时，点右上角「轮换凭据」重新签发(旧证书随即吊销)。
+          </div>
+          {/* P7:已授权使用本节点的用户(在「用户」页编辑授权)。 */}
+          <div className="mt-3 pt-3 border-t border-white/5">
+            <div className="text-[11px] text-zinc-500 mb-1.5">已授权用户</div>
+            {grantedUsers == null ? (
+              <span className="text-[12px] text-zinc-500">—</span>
+            ) : grantedUsers.length === 0 ? (
+              <span className="text-[12px] text-zinc-500">无（普通用户默认不可用本节点）</span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {grantedUsers.map((u) => (
+                  <span
+                    key={u.id}
+                    className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-zinc-200"
+                  >
+                    {u.username}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 

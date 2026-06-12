@@ -63,6 +63,9 @@ export default function Rules() {
   const [busy, setBusy] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  // P7:用户视角的 nodes/tunnels 列表即「被授权集合」,加载成功后才能判定授权撤销。
+  const [nodesLoaded, setNodesLoaded] = useState(false)
+  const [tunnelsLoaded, setTunnelsLoaded] = useState(false)
 
   const nodesById = useMemo(() => new Map(nodeList.map((n) => [n.id, n])), [nodeList])
 
@@ -95,7 +98,9 @@ export default function Rules() {
     nodes
       .list({ page_size: 100 })
       .then((r) => {
-        if (!cancelled) setNodeList(r.items)
+        if (cancelled) return
+        setNodeList(r.items)
+        setNodesLoaded(true)
       })
       .catch(() => {
         // 节点拉取失败不阻塞规则列表，仅创建表单会缺下拉项。
@@ -137,16 +142,20 @@ export default function Rules() {
     }
   }, [user?.role])
 
-  // 隧道列表只加载一次（admin 权限才有，创建规则时关联隧道用）。
+  // 隧道列表只加载一次(P7 起对普通用户也放开,只返回被授权的隧道;表单关联下拉用)。
+  // grantsLoaded:节点+隧道都拉成功才做「授权已撤销」判定,避免加载失败误标。
   useEffect(() => {
-    if (user?.role !== 'admin') return
     let cancelled = false
     tunnels
       .list({ page_size: 100 })
-      .then((r) => { if (!cancelled) setTunnelList(r.items) })
+      .then((r) => {
+        if (cancelled) return
+        setTunnelList(r.items)
+        setTunnelsLoaded(true)
+      })
       .catch(() => {}) // 非关键数据，失败静默（表单退化为无隧道下拉）
     return () => { cancelled = true }
-  }, [user?.role])
+  }, [])
 
   // 规则列表：筛选项 / 翻页 / pageSize 变化都重新拉取。
   // 内联 promise chain 避免 react-hooks/set-state-in-effect。
@@ -314,8 +323,15 @@ export default function Rules() {
           )}
           <button
             onClick={() => setEditing({ mode: 'create' })}
-            disabled={nodeList.length === 0}
-            title={nodeList.length === 0 ? '请先创建节点' : ''}
+            // 只授权了隧道(无节点授权)的用户也能建隧道规则。
+            disabled={nodeList.length === 0 && tunnelList.length === 0}
+            title={
+              nodeList.length === 0 && tunnelList.length === 0
+                ? isAdmin
+                  ? '请先创建节点'
+                  : '暂无可用节点/隧道,请联系管理员授权'
+                : ''
+            }
             className="btn-accent shrink-0"
           >
             新增规则
@@ -422,10 +438,18 @@ export default function Rules() {
                     rule={r}
                     node={nodesById.get(r.node_id)}
                     tunnelName={
-                      // user 的 tunnelList 恒空(admin-only 端点),只会显示裸 id,不渲染。
-                      isAdmin && r.tunnel_id != null
+                      // P7 起用户也能拉到(被授权的)隧道列表;查不到名字时显示裸 id。
+                      r.tunnel_id != null
                         ? tunnelList.find((t) => t.id === r.tunnel_id)?.name ?? `#${r.tunnel_id}`
                         : null
+                    }
+                    // P7 撤销授权标黄:用户视角 nodes/tunnels 列表即授权集合,
+                    // 规则挂的节点/隧道不在其中 = 授权已撤销(规则保留运行,仅禁止新建)。
+                    grantRevoked={
+                      !isAdmin &&
+                      (r.tunnel_id != null
+                        ? tunnelsLoaded && !tunnelList.some((t) => t.id === r.tunnel_id)
+                        : nodesLoaded && !nodesById.has(r.node_id))
                     }
                     showOwner={isAdmin}
                     acting={actingId === r.id}
@@ -592,6 +616,7 @@ function RuleRow({
   rule,
   node,
   tunnelName,
+  grantRevoked,
   showOwner,
   acting,
   onEdit,
@@ -603,6 +628,8 @@ function RuleRow({
   node: NodeView | undefined
   /** 关联隧道名(null = 直连);列表页用 tunnelList 映射,无需逐行请求 */
   tunnelName: string | null
+  /** P7:规则所挂节点/隧道的授权已被撤销(规则保留运行,标黄提示) */
+  grantRevoked: boolean
   /** admin 模式显示归属列 */
   showOwner: boolean
   acting: boolean
@@ -613,7 +640,7 @@ function RuleRow({
 }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
   return (
-    <tr className="hover:bg-white/[0.02]">
+    <tr className={grantRevoked ? 'bg-amber-500/[0.06] hover:bg-amber-500/10' : 'hover:bg-white/[0.02]'}>
       <td className="px-4 py-3 align-top">
         <Link
           to={`/rules/${rule.id}`}
@@ -622,6 +649,14 @@ function RuleRow({
           {rule.name}
         </Link>
         <div className="text-[11px] text-zinc-500 mt-0.5">ID #{rule.id}</div>
+        {grantRevoked && (
+          <div
+            className="mt-1 inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300"
+            title="管理员已撤销该节点/隧道的使用授权:此规则保留运行,但不能再新建同类规则。"
+          >
+            授权已撤销
+          </div>
+        )}
       </td>
       {showOwner && (
         <td className="px-4 py-3 align-top text-zinc-300 text-[12px]">
@@ -724,7 +759,7 @@ export function RuleForm({
   tunnelList: TunnelView[]
   /** admin 归属下拉的候选(仅前 100;user 模式忽略) */
   userList?: UserDetail[]
-  /** user 模式隐藏 限速/隧道/归属 字段且不发送对应 payload */
+  /** user 模式隐藏 限速/归属 字段且不发送对应 payload(隧道 P7 起按授权对用户开放) */
   isAdmin?: boolean
   onCancel: () => void
   onSuccess: () => void | Promise<void>
@@ -824,14 +859,15 @@ export function RuleForm({
           target_host: form.target_host.trim(),
           target_port: targetPort,
         }
-        // 限速/隧道/归属是 admin 管控字段;user 模式不发送(后端也会 400 拦截)。
+        // 限速/归属是 admin 管控字段;user 模式不发送(后端也会 400 拦截)。
+        // 隧道 P7 起按授权对用户开放,user 也可发送。
         if (isAdmin) {
           payload.bandwidth_profile_id = form.bandwidth_profile_id
             ? Number(form.bandwidth_profile_id)
             : null
-          payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
           if (form.user_id) payload.user_id = Number(form.user_id)
         }
+        payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
         await rules.create(payload)
       } else if (initial) {
         // 协议与所属节点不允许编辑（端口绑定语义会变），UI 上禁用了字段。
@@ -889,6 +925,12 @@ export function RuleForm({
                 {n.name} ({n.port_pool_min}-{n.port_pool_max})
               </option>
             ))}
+            {/* 节点不在(授权)列表时的占位项:选隧道=入口节点;编辑普通规则=节点授权已撤销。 */}
+            {form.node_id && !nodeList.some((n) => String(n.id) === form.node_id) && (
+              <option value={form.node_id}>
+                节点 #{form.node_id}{form.tunnel_id ? '（隧道入口）' : '（授权已撤销）'}
+              </option>
+            )}
           </select>
         </div>
         <div>
@@ -906,7 +948,7 @@ export function RuleForm({
         </div>
       </div>
 
-      {isAdmin && tunnelList.length > 0 && (
+      {tunnelList.length > 0 && (
         <div>
           <label htmlFor="rule-tunnel" className={fieldLabelCls}>关联隧道</label>
           <select
@@ -914,7 +956,11 @@ export function RuleForm({
             value={form.tunnel_id}
             onChange={(e) => {
               set('tunnel_id', e.target.value)
-              if (!e.target.value) setEntryNodeId(null)
+              if (!e.target.value) {
+                setEntryNodeId(null)
+                // 反选隧道时入口节点可能不在(授权)节点列表里,残留会被后端 400,重置回首个可选节点。
+                set('node_id', nodeList[0] ? String(nodeList[0].id) : '')
+              }
             }}
             disabled={mode === 'edit'}
             className={fieldInputCls}

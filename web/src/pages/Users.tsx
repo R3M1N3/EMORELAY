@@ -2,9 +2,13 @@ import { useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
   formatBytes,
+  nodes,
   shortTime,
+  tunnels,
   users,
   type CreateUserRequest,
+  type NodeView,
+  type TunnelView,
   type UpdateUserRequest,
   type UserDetail,
 } from '../lib/api'
@@ -335,6 +339,49 @@ function localInputToUtc(local: string): string {
   return d.toISOString().slice(0, 16)
 }
 
+/** P7 授权复选列表(节点/隧道共用):滚动容器内逐项 checkbox。 */
+function GrantPicker({
+  label,
+  empty,
+  options,
+  chosen,
+  onToggle,
+}: {
+  label: string
+  empty: string
+  options: { id: number; name: string }[]
+  chosen: Set<number>
+  onToggle: (id: number) => void
+}) {
+  return (
+    <div>
+      <label className={fieldLabelCls}>
+        {label}
+        <span className="ml-1 text-zinc-500 font-normal">({chosen.size})</span>
+      </label>
+      <div className="max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 space-y-0.5">
+        {options.length === 0 ? (
+          <div className="px-1 py-1 text-[12px] text-zinc-500">{empty}</div>
+        ) : (
+          options.map((o) => (
+            <label
+              key={o.id}
+              className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[12px] text-zinc-200 hover:bg-white/5 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={chosen.has(o.id)}
+                onChange={() => onToggle(o.id)}
+              />
+              <span className="truncate">{o.name}</span>
+            </label>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 interface UserFormState {
   username: string
   password: string
@@ -365,6 +412,52 @@ function UserForm({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // P7 授权多选:候选节点/隧道 + 当前勾选;编辑模式回显已授权再 diff,避免无变更也全量替换。
+  const [nodeOptions, setNodeOptions] = useState<NodeView[]>([])
+  const [tunnelOptions, setTunnelOptions] = useState<TunnelView[]>([])
+  const [grantedNodes, setGrantedNodes] = useState<Set<number>>(new Set())
+  const [grantedTunnels, setGrantedTunnels] = useState<Set<number>>(new Set())
+  const [initialGrants, setInitialGrants] = useState<{ nodes: number[]; tunnels: number[] } | null>(
+    mode === 'create' ? { nodes: [], tunnels: [] } : null,
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    const work: [
+      ReturnType<typeof nodes.list>,
+      ReturnType<typeof tunnels.list>,
+      Promise<{ granted_node_ids: number[]; granted_tunnel_ids: number[] } | null>,
+    ] = [
+      nodes.list({ page_size: 100 }),
+      tunnels.list({ page_size: 100 }),
+      mode === 'edit' && initial ? users.grants(initial.id) : Promise.resolve(null),
+    ]
+    Promise.all(work)
+      .then(([n, t, g]) => {
+        if (cancelled) return
+        setNodeOptions(n.items)
+        setTunnelOptions(t.items)
+        if (g) {
+          setGrantedNodes(new Set(g.granted_node_ids))
+          setGrantedTunnels(new Set(g.granted_tunnel_ids))
+          setInitialGrants({ nodes: g.granted_node_ids, tunnels: g.granted_tunnel_ids })
+        }
+      })
+      .catch(() => {
+        // 加载失败:授权区选项为空(显示「暂无」);编辑模式 initialGrants 保持 null,
+        // 提交时跳过授权字段,不会误发空数组清掉既有授权。
+      })
+    return () => {
+      cancelled = true
+    }
+    // 仅挂载时拉一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function sameIds(a: number[], chosen: Set<number>): boolean {
+    return a.length === chosen.size && a.every((id) => chosen.has(id))
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -394,6 +487,11 @@ function UserForm({
           expires_at: form.expires_at ? localInputToUtc(form.expires_at) : null,
           traffic_limit_bytes_30d: limitBytes,
         }
+        // 默认拒绝:不勾选即不发送(admin 角色不受授权限制,不发送)。
+        if (form.role === 'user') {
+          if (grantedNodes.size > 0) payload.granted_node_ids = [...grantedNodes]
+          if (grantedTunnels.size > 0) payload.granted_tunnel_ids = [...grantedTunnels]
+        }
         await users.create(payload)
       } else if (initial) {
         // 编辑时密码为空表示不改;角色变了才发送。
@@ -417,6 +515,15 @@ function UserForm({
         const initialLimit = initial.traffic_limit_bytes_30d
         if ((limitBytes ?? 0) !== (initialLimit ?? 0)) {
           payload.traffic_limit_bytes_30d = limitBytes ?? 0 // 0 = 清除
+        }
+        // 授权变更检测:回显成功(initialGrants 非 null)且勾选有变化才发送全量替换。
+        if (initialGrants && form.role === 'user') {
+          if (!sameIds(initialGrants.nodes, grantedNodes)) {
+            payload.granted_node_ids = [...grantedNodes]
+          }
+          if (!sameIds(initialGrants.tunnels, grantedTunnels)) {
+            payload.granted_tunnel_ids = [...grantedTunnels]
+          }
         }
         if (Object.keys(payload).length === 0) {
           onCancel()
@@ -507,6 +614,46 @@ function UserForm({
           <p className="text-[11px] text-zinc-500 mt-1">滚动 30 天窗口;超限后该用户全部规则自动停用。</p>
         </div>
       </div>
+
+      {/* P7 授权:仅 user 角色;默认拒绝,勾选即授权。撤销不影响存量规则,仅禁止新建。 */}
+      {form.role === 'user' && (
+        <div className="grid grid-cols-2 gap-3">
+          <GrantPicker
+            label="可用节点"
+            empty="暂无节点"
+            options={nodeOptions.map((n) => ({ id: n.id, name: n.name }))}
+            chosen={grantedNodes}
+            onToggle={(id) =>
+              setGrantedNodes((s) => {
+                const next = new Set(s)
+                if (next.has(id)) next.delete(id)
+                else next.add(id)
+                return next
+              })
+            }
+          />
+          <GrantPicker
+            label="可用隧道"
+            empty="暂无隧道"
+            options={tunnelOptions.map((t) => ({
+              id: t.id,
+              name: `${t.name}（${t.transport.toUpperCase()}）`,
+            }))}
+            chosen={grantedTunnels}
+            onToggle={(id) =>
+              setGrantedTunnels((s) => {
+                const next = new Set(s)
+                if (next.has(id)) next.delete(id)
+                else next.add(id)
+                return next
+              })
+            }
+          />
+          <p className="col-span-2 text-[11px] text-zinc-500 -mt-1">
+            默认拒绝:未勾选的节点/隧道该用户不可见、不可建规则。撤销授权不影响已建规则(保留运行,仅禁止新建)。
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">

@@ -286,6 +286,9 @@ export interface CreateUserRequest {
   role: 'admin' | 'user'
   expires_at?: string | null
   traffic_limit_bytes_30d?: number | null
+  /** P7 授权(默认拒绝):未传 = 不授权任何节点/隧道 */
+  granted_node_ids?: number[]
+  granted_tunnel_ids?: number[]
 }
 
 export interface UpdateUserRequest {
@@ -295,6 +298,21 @@ export interface UpdateUserRequest {
   expires_at?: string
   /** 0 = 清除限额 */
   traffic_limit_bytes_30d?: number
+  /** 给定则全量替换该用户授权;不传 = 不改动 */
+  granted_node_ids?: number[]
+  granted_tunnel_ids?: number[]
+}
+
+/** P7: 用户当前授权(编辑回显)。 */
+export interface UserGrants {
+  granted_node_ids: number[]
+  granted_tunnel_ids: number[]
+}
+
+/** P7: 节点/隧道详情页反向显示「已授权用户」。 */
+export interface GrantedUser {
+  id: number
+  username: string
 }
 
 export interface SystemOverview {
@@ -373,6 +391,8 @@ export const nodes = {
   update: (id: number, req: UpdateNodeRequest) => api.patch<NodeView>(`/api/nodes/${id}`, req),
   del: (id: number) => api.del<{ ok: boolean }>(`/api/nodes/${id}`),
   stats: (id: number) => api.get<NodeStatsResponse>(`/api/nodes/${id}/stats`),
+  /** admin-only:该节点被授权给哪些用户 */
+  grants: (id: number) => api.get<GrantedUser[]>(`/api/nodes/${id}/grants`),
   revokeCredentials: (id: number) =>
     api.post<{ ca_pem: string; client_cert_pem: string; client_key_pem: string }>(
       `/api/nodes/${id}/revoke-credentials`,
@@ -391,6 +411,8 @@ export const users = {
   create: (req: CreateUserRequest) => api.post<UserDetail>('/api/users', req),
   update: (id: number, req: UpdateUserRequest) => api.patch<UserDetail>(`/api/users/${id}`, req),
   del: (id: number) => api.del<{ ok: boolean }>(`/api/users/${id}`),
+  /** admin-only:该用户当前的节点/隧道授权(编辑回显) */
+  grants: (id: number) => api.get<UserGrants>(`/api/users/${id}/grants`),
 }
 
 export interface BandwidthProfileView {
@@ -583,6 +605,8 @@ export const tunnels = {
   del: (id: number) => api.del<{ ok: boolean }>(`/api/tunnels/${id}`),
   restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/tunnels/${id}/restart`),
   status: (id: number) => api.get<{ id: number; status: TunnelView['status'] }>(`/api/tunnels/${id}/status`),
+  /** admin-only:该隧道被授权给哪些用户 */
+  grants: (id: number) => api.get<GrantedUser[]>(`/api/tunnels/${id}/grants`),
 }
 
 // ============ 工具 ============

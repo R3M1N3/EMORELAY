@@ -89,8 +89,8 @@ describe('RuleForm tunnel association', () => {
   })
 })
 
-describe('RuleForm user mode (P4)', () => {
-  it('hides admin-only fields and omits them from payload', async () => {
+describe('RuleForm user mode (P4/P7)', () => {
+  it('hides admin-only fields, keeps granted tunnel select (P7)', async () => {
     render(
       <RuleForm
         mode="create"
@@ -102,8 +102,8 @@ describe('RuleForm user mode (P4)', () => {
         onSuccess={() => {}}
       />,
     )
-    // 限速/隧道/归属下拉对普通用户不渲染。
-    expect(screen.queryByLabelText('关联隧道')).toBeNull()
+    // 限速/归属下拉对普通用户不渲染;隧道 P7 起按授权开放(tunnelList 即被授权集合)。
+    expect(screen.getByLabelText('关联隧道')).toBeDefined()
     expect(screen.queryByText('限速配置')).toBeNull()
     expect(screen.queryByLabelText('归属用户')).toBeNull()
 
@@ -116,10 +116,25 @@ describe('RuleForm user mode (P4)', () => {
       string,
       unknown
     >
-    // 管控字段一律不出现在 payload(后端对普通用户传这些字段会 400)。
+    // 管控字段不出现在 payload(后端对普通用户传这些字段会 400);未选隧道时 tunnel_id 为 null。
     expect(payload).not.toHaveProperty('bandwidth_profile_id')
-    expect(payload).not.toHaveProperty('tunnel_id')
     expect(payload).not.toHaveProperty('user_id')
+    expect(payload).toHaveProperty('tunnel_id', null)
+  })
+
+  it('user without granted tunnels gets no tunnel select', () => {
+    render(
+      <RuleForm
+        mode="create"
+        nodeList={nodeList}
+        profiles={[]}
+        tunnelList={[]}
+        isAdmin={false}
+        onCancel={() => {}}
+        onSuccess={() => {}}
+      />,
+    )
+    expect(screen.queryByLabelText('关联隧道')).toBeNull()
   })
 
   it('admin mode renders owner select', () => {

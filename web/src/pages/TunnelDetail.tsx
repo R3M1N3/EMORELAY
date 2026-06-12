@@ -5,6 +5,7 @@ import {
   nodes,
   shortTime,
   tunnels,
+  type GrantedUser,
   type TunnelDetailView,
 } from '../lib/api'
 import { StatusDot } from '../lib/ui'
@@ -42,9 +43,28 @@ export default function TunnelDetail() {
     error: null,
   })
   const [restarting, setRestarting] = useState(false)
+  // P7:该隧道被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
+  const [grantedUsers, setGrantedUsers] = useState<GrantedUser[] | null>(null)
   // 15s 静默刷新 hop 心跳聚合状态(隧道 up/degraded/down 变化较快)。
   const [refreshTick, setRefreshTick] = useState(0)
   useAutoRefresh(() => setRefreshTick((n) => n + 1), 15_000)
+
+  // 授权用户列表只拉一次(变更入口在用户编辑弹窗,本页只读展示)。
+  useEffect(() => {
+    if (!Number.isFinite(tunnelId)) return
+    let cancelled = false
+    tunnels
+      .grants(tunnelId)
+      .then((g) => {
+        if (!cancelled) setGrantedUsers(g)
+      })
+      .catch(() => {
+        // 加载失败不阻塞详情页,该区块显示「—」。
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [tunnelId])
 
   useEffect(() => {
     let cancelled = false
@@ -161,6 +181,27 @@ export default function TunnelDetail() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* P7:已授权用户(在「用户」页编辑授权;被授权用户可在被授权隧道上自建规则) */}
+      <section className="glass-card rise p-5">
+        <h3 className="text-sm font-medium text-zinc-200 mb-3">已授权用户</h3>
+        {grantedUsers == null ? (
+          <span className="text-[12px] text-zinc-500">—</span>
+        ) : grantedUsers.length === 0 ? (
+          <span className="text-[12px] text-zinc-500">无（普通用户默认不可用本隧道）</span>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {grantedUsers.map((u) => (
+              <span
+                key={u.id}
+                className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-zinc-200"
+              >
+                {u.username}
+              </span>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* 关联规则表 */}
