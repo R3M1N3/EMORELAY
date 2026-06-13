@@ -299,6 +299,15 @@ WantedBy=multi-user.target
 - [ ] Agent token 在面板创建节点时复制后立即清屏,DB 内仅存哈希
 - [ ] 系统设置中的 `reserved_ports` 已根据机器实际占用调整
 
+### 8.1 供应链信任边界
+
+不同安装/下载链路的完整性保证强度不同,**在不可信网络下优先选有校验的通道**:
+
+- **GitHub Release 预编译二进制**(deploy.sh「快速安装」/ 节点一键安装)— **有 SHA256 校验**:release 资产带 `SHA256SUMS`;节点 `/install.sh` 渲染脚本内联 agent 二进制 sha256,下载后 `sha256sum -c`、不匹配即中止。**不可信网络/CN 代理下首选此通道。**
+- **CN 加速代理 `ghfast.top`**(`EMORELAY_GH_PROXY` 可覆盖)— 仅加速大文件下载。release 通道经其下载仍校验 SHA256(代理投毒会校验失败中止);但**源码/Docker 编译模式的 `git clone` 经代理无签名校验**,代理可篡改源码后在本机编译执行——故 CN 用户在不可信网络优先用 release 通道。
+- **第三方上游安装器**(`curl https://get.docker.com | sh`、`curl https://sh.rustup.rs | sh`、NodeSource `setup_22.x | bash`)— 仅源码/Docker 模式用到,以 root 执行官方上游脚本,属「信任即执行」(TOFU),无版本 pin / 签名校验。信任边界为这些上游官方域名 + 传输层 TLS;若有顾虑,可改用发行版仓库 + GPG keyring 自行装好 Docker/Node 再跑 deploy.sh。
+- **面板分发的 agent 二进制 `/dist/*`** — 完整性由内联 sha256(节点安装)与 mTLS 控制面下发的 sha256(P10b 自升级)双重保证。
+
 ---
 
 ## 九、Rate limit 与反代 header
