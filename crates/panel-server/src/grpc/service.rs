@@ -36,7 +36,10 @@ impl ControlPlaneImpl {
         Self { state }
     }
 
-    fn verify_session<T>(&self, req: &Request<T>) -> Result<i64, Status> {
+    /// 校验 session token 并在 mTLS 模式下额外复核:本次连接 peer 证书指纹须与
+    /// 签发 session 时一致,且未被 CRL 吊销(I5;防窃 token 换证书冒充)。
+    /// dev plaintext 下 issuing_fp 为 None → 跳过证书复核,仅校验 token 有效期。
+    fn verify_session_with_cert<T>(&self, req: &Request<T>) -> Result<i64, Status> {
         let raw = req
             .metadata()
             .get(SESSION_METADATA_KEY)
@@ -47,6 +50,21 @@ impl ControlPlaneImpl {
             .sessions
             .verify(raw, Utc::now().timestamp())
             .ok_or_else(|| Status::unauthenticated("invalid or expired session"))?;
+        if let Some(expected) = &info.issuing_fp {
+            let peer_fp = req.peer_certs().and_then(|c| {
+                c.first().map(|leaf| {
+                    use sha2::{Digest, Sha256};
+                    hex::encode(Sha256::digest(leaf.as_ref()))
+                })
+            });
+            match peer_fp {
+                Some(fp) if &fp == expected => {}
+                _ => return Err(Status::permission_denied("session cert mismatch")),
+            }
+            if self.state.crl.is_revoked(expected) {
+                return Err(Status::permission_denied("revoked"));
+            }
+        }
         Ok(info.node_id)
     }
 }
@@ -183,6 +201,9 @@ impl ControlPlane for ControlPlaneImpl {
             SessionInfo {
                 node_id: req.node_id,
                 expires_at_unix,
+                // 绑定本次 mTLS 的 client 证书指纹;后续 RPC 复核须一致(I5)。
+                // plaintext dev 无 peer cert → None,复核被跳过。
+                issuing_fp: peer_fp.clone(),
             },
         );
 
@@ -239,7 +260,7 @@ impl ControlPlane for ControlPlaneImpl {
         &self,
         req: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
-        let session_node_id = self.verify_session(&req)?;
+        let session_node_id = self.verify_session_with_cert(&req)?;
         let inner = req.into_inner();
         if inner.node_id != session_node_id {
             return Err(Status::permission_denied("session/node mismatch"));
@@ -289,7 +310,7 @@ impl ControlPlane for ControlPlaneImpl {
         &self,
         req: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeCommandsStream>, Status> {
-        let session_node_id = self.verify_session(&req)?;
+        let session_node_id = self.verify_session_with_cert(&req)?;
         let inner = req.into_inner();
         if inner.node_id != session_node_id {
             return Err(Status::permission_denied("session/node mismatch"));
@@ -346,7 +367,7 @@ impl ControlPlane for ControlPlaneImpl {
         &self,
         req: Request<Streaming<NodeStatsBatch>>,
     ) -> Result<Response<Ack>, Status> {
-        let session_node_id = self.verify_session(&req)?;
+        let session_node_id = self.verify_session_with_cert(&req)?;
         // 第三条把 status 写回 online 的路径(循环内逐 bucket UPDATE);
         // 流开始前取一次旧状态,处理完若发生过 offline→online 翻转发恢复事件。
         let prev_status: Option<String> =
@@ -483,7 +504,7 @@ impl ControlPlane for ControlPlaneImpl {
         &self,
         req: Request<Streaming<RuleStatsBatch>>,
     ) -> Result<Response<Ack>, Status> {
-        let session_node_id = self.verify_session(&req)?;
+        let session_node_id = self.verify_session_with_cert(&req)?;
         let mut stream = req.into_inner();
         let mut total_buckets = 0usize;
         while let Some(batch) = stream
@@ -605,7 +626,7 @@ impl ControlPlane for ControlPlaneImpl {
     ) -> Result<Response<Ack>, Status> {
         // 鉴权:必须是合法 session(节点身份)。结果按 probe_id 投递给 REST 诊断等待者;
         // 无对应等待者(已超时移除/伪造 id)则静默忽略,不报错。
-        let _node_id = self.verify_session(&req)?;
+        let _node_id = self.verify_session_with_cert(&req)?;
         let result = req.into_inner();
         self.state.resolve_probe(result);
         Ok(Response::new(Ack {
