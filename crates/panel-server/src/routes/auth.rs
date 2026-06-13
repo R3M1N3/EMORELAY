@@ -1,7 +1,7 @@
 use crate::{
     audit,
     auth::{
-        extractor::{ActorIp, AuthUser},
+        extractor::{ActorIp, AuthUserAllowMcp},
         jwt::encode_jwt,
         password::{dummy_hash, hash_password, verify_password},
     },
@@ -125,6 +125,7 @@ pub async fn login(
         &user.username,
         &user.role,
         state.config.jwt_expiry_hours,
+        user.must_change_password != 0,
     )
     .map_err(ApiError::Internal)?;
 
@@ -154,7 +155,7 @@ pub async fn login(
 
 pub async fn me(
     State(state): State<AppState>,
-    AuthUser(claims): AuthUser,
+    AuthUserAllowMcp(claims): AuthUserAllowMcp,
 ) -> ApiResult<Json<MeView>> {
     // 单行聚合,JOIN 结构与 users::list 同构(COUNT/SUM 预聚合避免笛卡尔积)。
     type MeRow = (
@@ -208,7 +209,7 @@ pub struct ChangePasswordRequest {
 /// 任何登录用户均可调用(含首登强制改密场景);不需要 admin。
 pub async fn change_password(
     State(state): State<AppState>,
-    AuthUser(claims): AuthUser,
+    AuthUserAllowMcp(claims): AuthUserAllowMcp,
     actor_ip: ActorIp,
     Json(req): Json<ChangePasswordRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {

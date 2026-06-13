@@ -88,6 +88,57 @@ async fn admin_created_user_is_forced_to_change_password_then_cleared() {
 }
 
 #[tokio::test]
+async fn mcp_token_blocked_on_business_routes() {
+    let app = make_app().await.unwrap();
+    let admin = &app.admin_token;
+
+    // admin 新建用户 → must_change_password=true,登录所得为 mcp token。
+    let req = auth_req(
+        Method::POST,
+        "/api/users",
+        admin,
+        Some(json!({ "username": "dave", "password": "temp-pass-123", "role": "user" })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = login_raw(&app.app, "dave", "temp-pass-123").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["must_change_password"], true);
+    let mcp_token = body["token"].as_str().unwrap().to_string();
+
+    // 1) mcp token 访问业务路由 → 403(服务端 enforcement,不再仅靠前端)。
+    let req = auth_req(Method::GET, "/api/rules", &mcp_token, None).unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "mcp token 不得访问业务路由");
+
+    // 2) me 与 change-password 仍放行。
+    let req = auth_req(Method::GET, "/api/auth/me", &mcp_token, None).unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "me 应允许 mcp token");
+
+    let req = auth_req(
+        Method::POST,
+        "/api/auth/change-password",
+        &mcp_token,
+        Some(json!({ "old_password": "temp-pass-123", "new_password": "brand-new-9988" })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "change-password 应允许 mcp token");
+
+    // 3) 改密后重新登录,新 token 不再带 mcp,可访问业务路由。
+    let (status, body) = login_raw(&app.app, "dave", "brand-new-9988").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["must_change_password"], false);
+    let fresh_token = body["token"].as_str().unwrap().to_string();
+    let req = auth_req(Method::GET, "/api/rules", &fresh_token, None).unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "改密后的新 token 应可访问业务路由");
+}
+
+#[tokio::test]
 async fn bootstrap_admin_is_not_forced_to_change_password() {
     let app = make_app().await.unwrap();
     // 测试夹具的 admin 由 User::create(must_change=false) 建,不应被强制。

@@ -44,11 +44,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMustChangePassword(false)
   }, [])
 
-  const markPasswordChanged = useCallback(() => setMustChangePassword(false), [])
-
   return (
     <AuthContext.Provider
-      value={{ user, loading, mustChangePassword, login, logout, markPasswordChanged }}
+      value={{ user, loading, mustChangePassword, login, logout }}
     >
       {children}
     </AuthContext.Provider>

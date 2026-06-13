@@ -9,6 +9,9 @@ pub struct Claims {
     pub username: String,
     pub role: String,
     pub exp: i64,
+    /// must-change-password:为 true 时只允许访问 me/change-password,其余路由拒绝(I1)。
+    #[serde(default)]
+    pub mcp: bool,
 }
 
 pub fn encode_jwt(
@@ -17,6 +20,7 @@ pub fn encode_jwt(
     username: &str,
     role: &str,
     expiry_hours: u64,
+    mcp: bool,
 ) -> Result<String> {
     let exp = (Utc::now() + chrono::Duration::hours(expiry_hours as i64)).timestamp();
     let claims = Claims {
@@ -24,6 +28,7 @@ pub fn encode_jwt(
         username: username.to_string(),
         role: role.to_string(),
         exp,
+        mcp,
     };
     let token = encode(
         &Header::default(),

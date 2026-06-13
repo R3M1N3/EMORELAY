@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/use-auth'
 import { useToast } from '../lib/use-toast'
 import { ApiError, auth as authApi } from '../lib/api'
@@ -8,9 +7,8 @@ import { Backdrop, fieldInputCls } from '../lib/ui'
 // 首登强制改密页(对标 flux change-password):无侧栏布局,改成功前出不去。
 // 由 App 路由守卫保证:mustChangePassword 为 true 时全站受保护路由都跳到这里。
 export default function ChangePassword() {
-  const navigate = useNavigate()
   const toast = useToast()
-  const { user, logout, markPasswordChanged } = useAuth()
+  const { user, logout } = useAuth()
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -31,9 +29,9 @@ export default function ChangePassword() {
     setSubmitting(true)
     try {
       await authApi.changePassword(oldPassword, newPassword)
-      markPasswordChanged()
-      toast.success('密码已修改')
-      navigate('/', { replace: true })
+      toast.success('密码已修改，请用新密码重新登录')
+      // 旧 token 仍带 mcp 标志(仅可访问 me/改密),必须清掉换新 token,故强制重登。
+      logout()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '修改失败，请重试')
     } finally {

@@ -28,7 +28,33 @@ impl FromRequestParts<AppState> for AuthUser {
         let token = raw.strip_prefix("Bearer ").ok_or(ApiError::Unauthorized)?;
         let claims =
             decode_jwt(&state.config.jwt_secret, token).map_err(|_| ApiError::Unauthorized)?;
+        if claims.mcp {
+            // 强制改密未完成:除 me/change-password 外一律拒绝(服务端 enforcement,I1)。
+            return Err(ApiError::Forbidden);
+        }
         Ok(AuthUser(claims))
+    }
+}
+
+/// 与 AuthUser 同,但允许 mcp(强制改密)token——仅供 me / change-password 使用。
+pub struct AuthUserAllowMcp(pub Claims);
+
+impl FromRequestParts<AppState> for AuthUserAllowMcp {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let raw = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or(ApiError::Unauthorized)?;
+        let token = raw.strip_prefix("Bearer ").ok_or(ApiError::Unauthorized)?;
+        let claims =
+            decode_jwt(&state.config.jwt_secret, token).map_err(|_| ApiError::Unauthorized)?;
+        Ok(AuthUserAllowMcp(claims))
     }
 }
 
