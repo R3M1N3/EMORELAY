@@ -3,10 +3,32 @@
 //! 的 hop 凭据由内置 CA 即时签发(不入 DB,重签幂等),创建/restart/reconcile 下发。
 //! Agent 离线时 dispatch 返回 false 仅 warn——reconcile 在下次 subscribe 时兜底。
 use emorelay_common::control::v1::{
-    command::Body, ApplyRule, Command, RevokeTunnelCredentials, Rule as ProtoRule,
+    command::Body, ApplyRule, Command, ReconcileRules, RevokeTunnelCredentials, Rule as ProtoRule,
     TunnelCredentials,
 };
 use tracing::warn;
+
+/// 从 reconcile 重放命令里抽出权威规则 id 全集(去重排序)= 全部 ApplyRule 的 rule.id。
+/// 用于在 reconcile 末尾构造 ReconcileRules,令 Agent 删除不在此集合内的孤儿规则。
+pub fn authoritative_rule_ids(cmds: &[Command]) -> Vec<i64> {
+    let mut ids: Vec<i64> = cmds
+        .iter()
+        .filter_map(|c| match &c.body {
+            Some(Body::ApplyRule(a)) => a.rule.as_ref().map(|r| r.id),
+            _ => None,
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+/// 构造 reconcile 末尾的对账命令。
+pub fn reconcile_rules_command(rule_ids: Vec<i64>) -> Command {
+    Command {
+        body: Some(Body::ReconcileRules(ReconcileRules { rule_ids })),
+    }
+}
 
 use crate::grpc::commands::{apply_command, remove_command, restart_command};
 use crate::grpc::tunnel_split::{split_tunnel_rule, HopInput, SplitInput};

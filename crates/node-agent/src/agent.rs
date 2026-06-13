@@ -335,6 +335,13 @@ async fn handle_command(
                 info!(rule_id = r.rule_id, "restart rule");
                 mgr.restart(r.rule_id).await?;
             }
+            Body::ReconcileRules(rec) => {
+                // 对账:删除不在权威集合内的孤儿规则(reconcile 重放 ApplyRule 之后到达)。
+                let removed = mgr.reconcile(&rec.rule_ids).await;
+                if !removed.is_empty() {
+                    info!(?removed, "reconcile removed orphan rules");
+                }
+            }
             Body::TunnelCredentials(_) | Body::RevokeTunnelCredentials(_) | Body::UpgradeAgent(_) => {
                 unreachable!("credentials/upgrade commands intercepted before manager lock")
             }

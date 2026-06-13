@@ -301,9 +301,18 @@ impl ControlPlane for ControlPlaneImpl {
         {
             Ok(cmds) => {
                 let n = cmds.len();
+                // 权威规则 id 全集 = 本次重放的全部 ApplyRule 的 rule.id;末尾追加 ReconcileRules,
+                // 令 Agent 删除断网期间被删、RemoveRule 丢失的孤儿,与面板真值收敛。
+                // 注意:查询成功返回空集合 = 该节点确无规则,Agent 应清空(有意);仅查询 Err
+                // (下方分支)才保守不下发 ReconcileRules——勿把「成功空集」也改成 fail-safe。
+                let keep_ids = crate::grpc::tunnel_dispatch::authoritative_rule_ids(&cmds);
                 for cmd in cmds {
                     self.state.dispatcher.dispatch(inner.node_id, cmd);
                 }
+                self.state.dispatcher.dispatch(
+                    inner.node_id,
+                    crate::grpc::tunnel_dispatch::reconcile_rules_command(keep_ids),
+                );
                 n
             }
             Err(e) => {

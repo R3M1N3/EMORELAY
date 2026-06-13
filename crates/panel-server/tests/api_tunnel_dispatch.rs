@@ -158,6 +158,41 @@ async fn reconcile_replays_tunnel_hop_rules_with_credentials_first() {
     let hop = saw_hop_rule_at.expect("reconcile 必须含本 hop 拆分 Rule");
     assert!(creds < hop, "凭据必须先于隧道规则下发");
     saw_plain_at.expect("非隧道规则也要 reconcile");
+
+    // 对账:权威 id 全集 = reconcile 里全部 ApplyRule 的 rule.id(隧道规则 + 非隧道规则)。
+    let keep = panel_server::grpc::tunnel_dispatch::authoritative_rule_ids(&cmds);
+    let plain_rule_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM forward_rules WHERE name = 'plain' AND node_id = ?",
+    )
+    .bind(nodes[1])
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert!(keep.contains(&plain_rule_id), "权威集合须含本节点非隧道规则");
+    // 去重有序。
+    let mut sorted = keep.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(keep, sorted, "权威 id 须去重且有序");
+}
+
+#[test]
+fn authoritative_rule_ids_extracts_and_dedups() {
+    use emorelay_common::control::v1::{command::Body, ApplyRule, Command, Rule, TunnelCredentials};
+    fn apply(id: i64) -> Command {
+        Command {
+            body: Some(Body::ApplyRule(ApplyRule {
+                rule: Some(Rule { id, ..Default::default() }),
+            })),
+        }
+    }
+    let creds = Command {
+        body: Some(Body::TunnelCredentials(TunnelCredentials::default())),
+    };
+    // 含重复 id(同规则跨 hop 可能多次 ApplyRule)与非 ApplyRule 命令。
+    let cmds = vec![apply(3), creds, apply(1), apply(3)];
+    let ids = panel_server::grpc::tunnel_dispatch::authoritative_rule_ids(&cmds);
+    assert_eq!(ids, vec![1, 3], "去重 + 有序,忽略非 ApplyRule");
 }
 
 #[tokio::test]

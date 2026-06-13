@@ -116,6 +116,12 @@ message RevokeTunnelCredentials {
 
 message ApplyRule { Rule rule = 1; }
 message RemoveRule { int64 rule_id = 1; }
+
+// 配置对账(重连兜底):server 在 reconcile 重放完该节点应有的全部 ApplyRule 后,
+// 发一条本命令携带「权威规则 id 全集」。Agent 删除本地任何不在该集合内的规则
+// (断网期间被删、RemoveRule 丢失的孤儿),使数据面与面板真值收敛。空集合 = 该
+// 节点不应运行任何规则,Agent 清空全部。仅在 reconcile 末尾发,不在常规 CRUD 路径。
+message ReconcileRules { repeated int64 rule_ids = 1; }
 message EnableRule { int64 rule_id = 1; }
 message DisableRule { int64 rule_id = 1; }
 message RestartRule { int64 rule_id = 1; }
@@ -141,6 +147,7 @@ message Command {
     TunnelCredentials tunnel_credentials = 6;
     RevokeTunnelCredentials revoke_tunnel_credentials = 7;
     UpgradeAgent upgrade_agent = 8;
+    ReconcileRules reconcile_rules = 9;
   }
 }
 

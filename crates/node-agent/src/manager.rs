@@ -121,6 +121,24 @@ impl RuleManager {
         }
     }
 
+    /// 配置对账:删除本地任何不在 keep_ids 内的规则(断网期间被删的孤儿)。
+    /// 返回被删的 rule id 列表(供日志/审计)。在 reconcile ApplyRule 重放之后调用。
+    pub async fn reconcile(&mut self, keep_ids: &[i64]) -> Vec<i64> {
+        let keep: std::collections::HashSet<i64> = keep_ids.iter().copied().collect();
+        let orphans: Vec<i64> = self
+            .handles
+            .keys()
+            .copied()
+            .filter(|id| !keep.contains(id))
+            .collect();
+        for id in &orphans {
+            if let Some(h) = self.handles.remove(id) {
+                h.stop_all().await;
+            }
+        }
+        orphans
+    }
+
     pub async fn restart(&mut self, rule_id: i64) -> Result<()> {
         if let Some(bundle) = self.handles.remove(&rule_id) {
             let rule = bundle.rule.clone();
@@ -205,6 +223,55 @@ mod tests {
         let mut rule = entry_tunnel_rule(ephemeral_port());
         rule.tunnel.as_mut().unwrap().transport = "quic".into();
         assert!(mgr.apply(rule).await.is_err());
+        assert!(mgr.current_rules().is_empty());
+    }
+
+    fn plain_rule(id: i64, listen_port: u16) -> Rule {
+        Rule {
+            id,
+            protocol: "tcp".into(),
+            listen_ip: "127.0.0.1".into(),
+            listen_port: listen_port as u32,
+            target_host: "127.0.0.1".into(),
+            target_port: 1,
+            enabled: true,
+            bandwidth_mbps: 0,
+            max_connections: 0,
+            tunnel: None,
+        }
+    }
+
+    /// 对账:删除不在 keep 集合内的孤儿,保留集合内的;返回被删 id。
+    #[tokio::test]
+    async fn reconcile_removes_orphans_and_keeps_authoritative() {
+        let stats = Arc::new(StatsCollector::new());
+        let mut mgr = RuleManager::new(stats, "./unused".into());
+        let p1 = ephemeral_port();
+        let p2 = ephemeral_port();
+        mgr.apply(plain_rule(1, p1)).await.unwrap();
+        mgr.apply(plain_rule(2, p2)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(mgr.current_rules().len(), 2);
+
+        // 权威集合只含 1 → 规则 2 是孤儿被删,端口释放。
+        let removed = mgr.reconcile(&[1]).await;
+        assert_eq!(removed, vec![2]);
+        let ids: Vec<i64> = mgr.current_rules().iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![1]);
+        TcpListener::bind(("127.0.0.1", p2))
+            .await
+            .expect("孤儿规则 2 端口应释放");
+    }
+
+    /// 空权威集合 → 清空全部本地规则(该节点不应运行任何规则)。
+    #[tokio::test]
+    async fn reconcile_empty_set_clears_all() {
+        let stats = Arc::new(StatsCollector::new());
+        let mut mgr = RuleManager::new(stats, "./unused".into());
+        mgr.apply(plain_rule(1, ephemeral_port())).await.unwrap();
+        let mut removed = mgr.reconcile(&[]).await;
+        removed.sort_unstable();
+        assert_eq!(removed, vec![1]);
         assert!(mgr.current_rules().is_empty());
     }
 }

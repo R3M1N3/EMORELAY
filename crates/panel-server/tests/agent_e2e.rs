@@ -118,7 +118,18 @@ async fn agent_e2e_register_dispatch_stats() {
     assert_eq!(status, StatusCode::OK, "create rule: {body}");
     let rule_id = body["id"].as_i64().unwrap();
 
-    // 8) Agent (mock) 收到 ApplyRule
+    // 8a) 订阅时 server 先发 reconcile 末尾的 ReconcileRules(fresh DB → 空集合)。
+    let recon = tokio::time::timeout(Duration::from_secs(3), stream.next())
+        .await
+        .expect("subscribe 等 reconcile 超时")
+        .expect("stream 提前结束")
+        .expect("stream 错误");
+    match recon.body {
+        Some(Body::ReconcileRules(r)) => assert!(r.rule_ids.is_empty(), "fresh DB 权威集合应为空"),
+        other => panic!("expected leading ReconcileRules, got {other:?}"),
+    }
+
+    // 8b) Agent (mock) 收到 ApplyRule
     let cmd = tokio::time::timeout(Duration::from_secs(3), stream.next())
         .await
         .expect("subscribe 等命令超时")
