@@ -523,6 +523,10 @@ pub async fn stream(
         // 强制改密未完成:绕过 AuthUser 的直解路径也须拒 mcp token(I1 补漏)。
         return Err(ApiError::Forbidden);
     }
+    if claims.scope == "sub" {
+        // 订阅专用 token 仅限用量端点,绕过 AuthUser 的直解路径同样须拒(I4 纵深防御)。
+        return Err(ApiError::Forbidden);
+    }
     if claims.role != "admin" {
         return Err(ApiError::Forbidden);
     }

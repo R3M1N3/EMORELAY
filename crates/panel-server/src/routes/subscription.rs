@@ -3,6 +3,7 @@
 //! 返回 Clash 风格 `Subscription-Userinfo` 头,让用户在客户端直接看到套餐余量。
 //! 鉴权:Authorization: Bearer <jwt>(同站)或 ?token=<jwt>(订阅客户端取不了 header)。
 use crate::{
+    auth::extractor::AuthUser,
     auth::jwt::decode_jwt,
     error::{ApiError, ApiResult},
     state::AppState,
@@ -31,11 +32,40 @@ fn resolve_user_id(state: &AppState, headers: &HeaderMap, q: &SubQuery) -> ApiRe
         .or_else(|| q.token.clone())
         .ok_or(ApiError::Unauthorized)?;
     let claims = decode_jwt(&state.config.jwt_secret, &token).map_err(|_| ApiError::Unauthorized)?;
-    if claims.mcp {
-        // 强制改密未完成:绕过 AuthUser 的直解路径也须拒 mcp token(I1 补漏)。
+    if claims.scope != "sub" {
+        // 订阅端点只认订阅专用 token(I4):不再接受完整登录 JWT。
         return Err(ApiError::Forbidden);
     }
     Ok(claims.sub)
+}
+
+/// 为当前登录用户签发订阅专用 token(scope=sub,到账号有效期;无到期则远期)。
+/// 前端订阅链接展示用,替代把完整登录 JWT 放进 URL(I4)。可重复调用(非一次性)。
+pub async fn issue_token(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+) -> ApiResult<Json<serde_json::Value>> {
+    let expires_at: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT expires_at FROM users WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(claims.sub)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
+    // exp = 账号到期;无到期(parse 返回 0)则远期 10 年。
+    let exp = expires_at
+        .as_deref()
+        .map(crate::grpc::commands::parse_sqlite_datetime)
+        .filter(|ts| *ts > 0)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() + 10 * 365 * 24 * 3600);
+    let token = crate::auth::jwt::encode_sub_token(
+        &state.config.jwt_secret,
+        claims.sub,
+        &claims.username,
+        exp,
+    )
+    .map_err(ApiError::Internal)?;
+    Ok(Json(json!({ "token": token, "expire_unix": exp })))
 }
 
 pub async fn usage(

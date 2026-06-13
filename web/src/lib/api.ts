@@ -544,6 +544,12 @@ export const system = {
   uiConfig: () => api.get<{ accent_color: string | null }>('/api/ui-config'),
 }
 
+export const subscription = {
+  /** 为当前登录用户签发订阅专用 token(scope=sub,仅查用量),订阅链接展示用(I4)。 */
+  issueToken: () =>
+    api.get<{ token: string; expire_unix: number }>('/api/subscription/token'),
+}
+
 /**
  * 生成节点安装命令字符串(用户复制走)。
  * base URL 取自 window.location.origin —— 生产期需用反代将面板对外 origin 指向 panel-server,

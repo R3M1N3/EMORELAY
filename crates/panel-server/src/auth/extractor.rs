@@ -32,6 +32,10 @@ impl FromRequestParts<AppState> for AuthUser {
             // 强制改密未完成:除 me/change-password 外一律拒绝(服务端 enforcement,I1)。
             return Err(ApiError::Forbidden);
         }
+        if claims.scope == "sub" {
+            // 订阅专用 token 仅限用量端点,不得访问其它路由(I4)。
+            return Err(ApiError::Forbidden);
+        }
         Ok(AuthUser(claims))
     }
 }
@@ -54,6 +58,10 @@ impl FromRequestParts<AppState> for AuthUserAllowMcp {
         let token = raw.strip_prefix("Bearer ").ok_or(ApiError::Unauthorized)?;
         let claims =
             decode_jwt(&state.config.jwt_secret, token).map_err(|_| ApiError::Unauthorized)?;
+        if claims.scope == "sub" {
+            // 订阅专用 token 仅限用量端点,不得访问其它路由(I4)。
+            return Err(ApiError::Forbidden);
+        }
         Ok(AuthUserAllowMcp(claims))
     }
 }

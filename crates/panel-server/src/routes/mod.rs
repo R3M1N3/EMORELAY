@@ -84,6 +84,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/change-password", post(auth::change_password))
         .route("/api/subscription/usage", get(subscription::usage))
+        .route("/api/subscription/token", get(subscription::issue_token))
         .route("/api/nodes", get(nodes::list).post(nodes::create))
         .route("/api/nodes/stream", get(nodes::stream))
         .route(

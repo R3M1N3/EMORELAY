@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom'
 import {
   auth,
   formatBytes,
-  getToken,
   rules,
   shortTime,
+  subscription,
   type MeView,
   type RuleView,
 } from '../lib/api'
@@ -22,6 +22,8 @@ export default function UserDashboard() {
   const [me, setMe] = useState<MeView | null>(null)
   const [myRules, setMyRules] = useState<RuleView[]>([])
   const [error, setError] = useState<string | null>(null)
+  // 订阅专用 token(scope=sub,仅查用量),进页面获取一次;失败则不展示链接(温和降级)。
+  const [subToken, setSubToken] = useState<string | null>(null)
 
   const load = useCallback(() => {
     Promise.all([auth.me(), rules.list({ page_size: 100 })])
@@ -42,6 +44,14 @@ export default function UserDashboard() {
     load()
   }, [load])
   useAutoRefresh(load, 30_000)
+
+  // 订阅链接用的受限 token 进页面取一次即可(到账号到期才失效,无需随用量刷新)。
+  useEffect(() => {
+    subscription
+      .issueToken()
+      .then((r) => setSubToken(r.token))
+      .catch(() => setSubToken(null))
+  }, [])
 
   // 到期预警:me 拉到后据 expires_at 分级 toast,localStorage 按「级别+日期」去重,
   // 避免每次进页/30s 刷新重复轰炸。expired/critical 用 error,其余用 info。
@@ -117,17 +127,25 @@ export default function UserDashboard() {
       <section className="glass-card rise p-5">
         <div className="flex items-center justify-between gap-3 mb-2">
           <h3 className="text-sm font-medium text-zinc-200">订阅用量链接</h3>
-          <CopyButton
-            value={`${window.location.origin}/api/subscription/usage?token=${getToken() ?? ''}`}
-            label="复制订阅链接"
-          />
+          {subToken && (
+            <CopyButton
+              value={`${window.location.origin}/api/subscription/usage?token=${subToken}`}
+              label="复制订阅链接"
+            />
+          )}
         </div>
-        <p className="text-[12px] text-zinc-400 break-all font-mono">
-          {`${window.location.origin}/api/subscription/usage?token=…`}
-        </p>
-        <p className="text-[11px] text-zinc-500 mt-1.5">
-          在 Clash 等客户端里添加此链接，可直接查看套餐余量与到期。链接含登录凭据，请勿外传；登录过期后需重新复制。
-        </p>
+        {subToken ? (
+          <>
+            <p className="text-[12px] text-zinc-400 break-all font-mono">
+              {`${window.location.origin}/api/subscription/usage?token=…`}
+            </p>
+            <p className="text-[11px] text-zinc-500 mt-1.5">
+              在 Clash 等客户端里添加此链接，可直接查看套餐余量与到期。此链接为只读用量链接（仅能查看本人流量余额，无法操作其它功能），有效期到账号到期。
+            </p>
+          </>
+        ) : (
+          <p className="text-[12px] text-zinc-500">订阅链接获取失败，请刷新页面重试。</p>
+        )}
       </section>
 
       <section className="glass-card rise p-5">
