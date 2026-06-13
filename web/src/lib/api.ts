@@ -107,6 +107,8 @@ export interface NodeView {
   tx_bytes_total: number
   port_pool_min: number
   port_pool_max: number
+  /** 协议嗅探阻断位掩码:bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。用户视角恒 0 */
+  block_protocols: number
   created_at: string
   updated_at: string
 }
@@ -169,7 +171,10 @@ export interface CreateNodeResponse {
   client_key_pem: string
 }
 
-export type UpdateNodeRequest = Partial<CreateNodeRequest>
+export type UpdateNodeRequest = Partial<CreateNodeRequest> & {
+  /** 协议嗅探阻断位掩码 0-7(bit0=http bit1=tls bit2=socks) */
+  block_protocols?: number
+}
 
 export interface NodeStatsBucket {
   bucket_at: string

@@ -75,6 +75,46 @@ async fn node_full_crud_cycle() {
 }
 
 #[tokio::test]
+async fn node_block_protocols_patch_and_validation() {
+    let app = make_app().await.unwrap();
+    let t = &app.admin_token;
+    let req = auth_req(
+        Method::POST,
+        "/api/nodes",
+        t,
+        Some(json!({ "name": "bp-node", "public_ip": "1.2.3.4" })),
+    )
+    .unwrap();
+    let (_, body) = send(app.app.clone(), req).await.unwrap();
+    let node_id = body["node"]["id"].as_i64().unwrap();
+    // 默认 0(不阻断)。
+    assert_eq!(body["node"]["block_protocols"], 0);
+
+    // 设掩码 = http|tls = 3。
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/nodes/{node_id}"),
+        t,
+        Some(json!({ "block_protocols": 3 })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "patch failed: {body}");
+    assert_eq!(body["block_protocols"], 3);
+
+    // 越界(>7)被拒。
+    let req = auth_req(
+        Method::PATCH,
+        &format!("/api/nodes/{node_id}"),
+        t,
+        Some(json!({ "block_protocols": 8 })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn create_node_without_auth_returns_401() {
     let app = make_app().await.unwrap();
     let req = Request::post("/api/nodes")

@@ -104,12 +104,23 @@ pub async fn dispatch_rule_apply(state: &AppState, rule: &DbRule) -> sqlx::Resul
             Ok(())
         }
         None => {
-            if !state.dispatcher.dispatch(rule.node_id, apply_command(rule)) {
+            let mask = node_block_protocols(state, rule.node_id).await?;
+            if !state.dispatcher.dispatch(rule.node_id, apply_command(rule, mask)) {
                 warn_offline(rule.node_id, rule.id, "rule");
             }
             Ok(())
         }
     }
+}
+
+/// 查节点协议嗅探阻断位掩码(非隧道规则下发时填入 proto);失败/缺失回落 0(不阻断)。
+async fn node_block_protocols(state: &AppState, node_id: i64) -> sqlx::Result<u32> {
+    let m: Option<i64> =
+        sqlx::query_scalar("SELECT block_protocols FROM nodes WHERE id = ? AND deleted_at IS NULL")
+            .bind(node_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    Ok(m.unwrap_or(0).max(0) as u32)
 }
 
 async fn tunnel_node_ids(state: &AppState, tunnel_id: i64) -> sqlx::Result<Vec<i64>> {
@@ -232,9 +243,10 @@ pub async fn reconcile_commands_for_node(
     node_id: i64,
 ) -> sqlx::Result<Vec<Command>> {
     let mut out = Vec::new();
+    let mask = node_block_protocols(state, node_id).await?;
     for rule in DbRule::list_active_for_node(&state.pool, node_id).await? {
         if rule.tunnel_id.is_none() {
-            out.push(apply_command(&rule));
+            out.push(apply_command(&rule, mask));
         }
     }
     for tid in TunnelHop::list_tunnel_ids_for_node(&state.pool, node_id).await? {

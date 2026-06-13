@@ -76,6 +76,9 @@ message Rule {
   TunnelContext tunnel = 12;
   // P10a 并发连接上限(仅 TCP)。0 = 不限;隧道规则仅 entry 生效(mid/exit 恒 0)。
   int64 max_connections = 13;
+  // P1 协议嗅探阻断位掩码(节点级,仅普通 TCP relay 生效)。
+  // bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。防转发被滥用为开放代理。
+  uint32 blocked_protocols = 14;
 }
 
 // 多跳隧道上下文。dispatcher 按 hop 拆 Rule 时填充,告诉 Agent 自己的角色与下一跳。

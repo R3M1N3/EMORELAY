@@ -39,6 +39,9 @@ struct RuleJson {
     /// P10a 新增。缺字段 → 0 = 不限。
     #[serde(default)]
     max_connections: i64,
+    /// P1 协议嗅探阻断掩码。缺字段 → 0 = 不阻断(重连后由 reconcile 重发刷新)。
+    #[serde(default)]
+    blocked_protocols: u32,
 }
 
 impl From<&Rule> for RuleJson {
@@ -53,6 +56,7 @@ impl From<&Rule> for RuleJson {
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
             max_connections: r.max_connections,
+            blocked_protocols: r.blocked_protocols,
             tunnel: r.tunnel.as_ref().map(|t| TunnelJson {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -78,6 +82,7 @@ impl From<RuleJson> for Rule {
             enabled: r.enabled,
             bandwidth_mbps: r.bandwidth_mbps,
             max_connections: r.max_connections,
+            blocked_protocols: r.blocked_protocols,
             tunnel: r.tunnel.map(|t| emorelay_common::control::v1::TunnelContext {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -185,6 +190,7 @@ mod tests {
             enabled: true,
             bandwidth_mbps: 30,
             max_connections: 0,
+            blocked_protocols: 0,
             tunnel: Some(TunnelContext {
                 tunnel_id: 7,
                 role: TunnelRole::Mid as i32,

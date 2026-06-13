@@ -234,6 +234,14 @@ export default function NodeDetail() {
           </div>
         </section>
 
+        <ProtocolBlockCard
+          node={node}
+          onChanged={() => {
+            toast.success('协议阻断设置已更新')
+            setRefreshTick((n) => n + 1)
+          }}
+        />
+
         <section className="glass-card rise p-5">
           <h3 className="text-sm font-medium text-zinc-200 mb-3">当前资源</h3>
           <div className="grid grid-cols-3 gap-3 text-sm">
@@ -432,5 +440,61 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] text-zinc-500">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
+  )
+}
+
+// 协议嗅探阻断:3 个位的开关(HTTP/TLS/SOCKS),改动即 PATCH 节点并重发规则。
+const PROTO_BITS: { bit: number; label: string; hint: string }[] = [
+  { bit: 1, label: 'HTTP', hint: '阻断明文 HTTP 请求(防当开放代理)' },
+  { bit: 2, label: 'TLS', hint: '阻断 TLS ClientHello(防套 CDN/HTTPS 代理)' },
+  { bit: 4, label: 'SOCKS', hint: '阻断 SOCKS4/5 握手' },
+]
+
+function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: () => void }) {
+  const toast = useToast()
+  const [saving, setSaving] = useState(false)
+  const mask = node.block_protocols
+
+  async function toggle(bit: number) {
+    if (saving) return
+    setSaving(true)
+    const next = mask & bit ? mask & ~bit : mask | bit
+    try {
+      await nodes.update(node.id, { block_protocols: next })
+      onChanged()
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : '更新失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="glass-card rise p-5">
+      <h3 className="text-sm font-medium text-zinc-200 mb-1">协议阻断</h3>
+      <p className="text-[11px] text-zinc-500 mb-3">
+        对普通 TCP 转发的首包做被动指纹识别，命中即断连，防止转发被滥用为开放代理。默认全关。
+      </p>
+      <div className="space-y-2">
+        {PROTO_BITS.map(({ bit, label, hint }) => (
+          <label
+            key={bit}
+            className="flex items-start gap-2.5 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 cursor-pointer hover:bg-white/[0.04]"
+          >
+            <input
+              type="checkbox"
+              checked={(mask & bit) !== 0}
+              disabled={saving}
+              onChange={() => toggle(bit)}
+              className="mt-0.5 accent-accent"
+            />
+            <span className="min-w-0">
+              <span className="text-sm text-zinc-200">阻断 {label}</span>
+              <span className="block text-[11px] text-zinc-500">{hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </section>
   )
 }

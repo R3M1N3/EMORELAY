@@ -39,6 +39,8 @@ pub struct NodeView {
     pub port_pool_min: i64,
     pub port_pool_max: i64,
     pub agent_version: String,
+    /// 协议嗅探阻断位掩码:bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。
+    pub block_protocols: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -62,6 +64,7 @@ impl From<Node> for NodeView {
             port_pool_min: n.port_pool_min,
             port_pool_max: n.port_pool_max,
             agent_version: n.agent_version,
+            block_protocols: n.block_protocols,
             created_at: n.created_at,
             updated_at: n.updated_at,
         }
@@ -80,6 +83,7 @@ impl NodeView {
         self.display_address = String::new();
         self.grpc_endpoint = String::new();
         self.agent_version = String::new();
+        self.block_protocols = 0;
         self.cpu_usage = 0.0;
         self.memory_usage = 0.0;
         self.load_average = 0.0;
@@ -141,6 +145,8 @@ pub struct UpdateNodeRequest {
     pub grpc_endpoint: Option<String>,
     pub port_pool_min: Option<u16>,
     pub port_pool_max: Option<u16>,
+    /// 协议嗅探阻断位掩码 0-7(bit0=http bit1=tls bit2=socks);None 不改。
+    pub block_protocols: Option<i64>,
 }
 
 #[derive(Serialize, FromRow)]
@@ -430,6 +436,14 @@ pub async fn update(
         }
     }
 
+    if let Some(m) = req.block_protocols {
+        if !(0..=7).contains(&m) {
+            return Err(ApiError::BadRequest(
+                "协议阻断掩码必须在 0-7 之间(bit0=http bit1=tls bit2=socks)".into(),
+            ));
+        }
+    }
+
     let rows = Node::update(
         &state.pool,
         id,
@@ -447,6 +461,16 @@ pub async fn update(
 
     if rows == 0 {
         return Err(ApiError::NotFound);
+    }
+
+    // 协议阻断掩码变更:落库后重发该节点全部非隧道规则,让 Agent 拿到新掩码。
+    if let Some(m) = req.block_protocols {
+        Node::set_block_protocols(&state.pool, id, m).await?;
+        for rule in crate::models::rule::Rule::list_active_for_node(&state.pool, id).await? {
+            if rule.tunnel_id.is_none() {
+                let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
+            }
+        }
     }
 
     let node = Node::find_by_id(&state.pool, id)

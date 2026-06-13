@@ -60,6 +60,8 @@ pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, Pro
             bandwidth_mbps: if i == 0 { input.bandwidth_mbps } else { 0 },
             tunnel: Some(tunnel),
             max_connections: if i == 0 { input.max_connections } else { 0 },
+            // 隧道规则走隧道 transport,不做明文协议嗅探(嗅探仅普通 TCP relay)。
+            blocked_protocols: 0,
         };
         (hop.node_id, proto)
     }).collect()

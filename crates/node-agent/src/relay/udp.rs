@@ -305,6 +305,7 @@ mod tests {
             enabled: true,
             bandwidth_mbps: 0,
             max_connections: 0,
+            blocked_protocols: 0,
             tunnel: None,
         }
     }

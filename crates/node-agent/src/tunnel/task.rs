@@ -590,6 +590,7 @@ mod tests {
             enabled: true,
             bandwidth_mbps: 0,
             max_connections: 0,
+            blocked_protocols: 0,
             tunnel: Some(TunnelContext {
                 tunnel_id: 9,
                 role: role as i32,

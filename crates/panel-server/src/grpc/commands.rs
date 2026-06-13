@@ -4,7 +4,8 @@ use emorelay_common::control::v1::{
 };
 
 /// DB Rule → 协议 Rule。bandwidth_mbps 派生列 None→0(无限速)。
-pub fn rule_to_proto(rule: &DbRule) -> ProtoRule {
+/// blocked_protocols 是节点级嗅探阻断位掩码(由调用方查节点设置传入,仅非隧道 TCP relay 用)。
+pub fn rule_to_proto(rule: &DbRule, blocked_protocols: u32) -> ProtoRule {
     ProtoRule {
         id: rule.id,
         protocol: rule.protocol.clone(),
@@ -16,6 +17,7 @@ pub fn rule_to_proto(rule: &DbRule) -> ProtoRule {
         bandwidth_mbps: rule.bandwidth_mbps.unwrap_or(0),
         tunnel: None,
         max_connections: rule.max_connections.unwrap_or(0),
+        blocked_protocols,
     }
 }
 
@@ -28,10 +30,10 @@ pub fn parse_sqlite_datetime(s: &str) -> i64 {
         .unwrap_or(0)
 }
 
-pub fn apply_command(rule: &DbRule) -> Command {
+pub fn apply_command(rule: &DbRule, blocked_protocols: u32) -> Command {
     Command {
         body: Some(Body::ApplyRule(ApplyRule {
-            rule: Some(rule_to_proto(rule)),
+            rule: Some(rule_to_proto(rule, blocked_protocols)),
         })),
     }
 }

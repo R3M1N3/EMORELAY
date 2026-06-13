@@ -3,6 +3,7 @@ use emorelay_common::control::v1::Rule;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
@@ -51,6 +52,8 @@ pub async fn start(
     // 上限变更走 re-apply 重建 listener+全新 limiter,存量连接持旧 permit 至自然断开
     // (与下方限速桶同一 MVP 语义),下调后短暂可能超员。
     let limiter = crate::limit::conn_limiter(rule.max_connections);
+    // 节点级协议嗅探阻断掩码(0=不阻断);随 re-apply 重建 listener 生效。
+    let blocked_protocols = rule.blocked_protocols;
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     // 取消闩:stop 时置 true,通知存量 bridge task 主动终止(断连=停止计费)。
     // 用 watch 而非 JoinSet/CancellationToken:仅需已启用的 tokio sync feature,零新依赖。
@@ -85,7 +88,7 @@ pub async fn start(
                                     // stop 触发:丢弃 bridge future,client/server socket 随之 drop 关闭。
                                     // wait_for 的 Err(sender 已 drop)亦视为取消,fail-safe 不会漏断。
                                     _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
-                                    r = bridge(client, target_host, target_port, counter.clone(), bucket) => {
+                                    r = bridge(client, target_host, target_port, counter.clone(), bucket, blocked_protocols) => {
                                         if let Err(e) = r {
                                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                                             warn!(rule_id, %peer, error = ?e, "tcp bridge error");
@@ -115,7 +118,21 @@ async fn bridge(
     target_port: u16,
     counter: Arc<RuleCounter>,
     bucket: Option<Arc<TokenBucket>>,
+    blocked_protocols: u32,
 ) -> Result<()> {
+    // 协议嗅探阻断:peek 首包(不消费,后续 splice/pump 仍能读到),命中被阻断协议则断连。
+    // 客户端不先说话(2s 超时)则放行——无法指纹的流量不阻断(best-effort 防滥用)。
+    // bail 走调用方的 error_count(被阻断连接计 error,可观测);此连接在 sniff 前已计
+    // connection_count、已持 permit,最长占名额 2s(HTTP/TLS/SOCKS 首包即到,实际微秒级)。
+    if blocked_protocols != 0 {
+        let mut peekbuf = [0u8; 16];
+        if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(2), client.peek(&mut peekbuf)).await {
+            if let Some(proto) = crate::sniff::sniff_blocked(&peekbuf[..n], blocked_protocols) {
+                anyhow::bail!("blocked protocol: {proto}");
+            }
+        }
+    }
+
     let mut server = TcpStream::connect((target_host.as_str(), target_port))
         .await
         .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
@@ -226,6 +243,7 @@ mod tests {
             enabled: true,
             bandwidth_mbps: 0,
             max_connections: 0,
+            blocked_protocols: 0,
             tunnel: None,
         }
     }
@@ -398,6 +416,36 @@ mod tests {
             elapsed >= Duration::from_millis(180),
             "40Mbps 下 2MB 往返应明显被限速, got {elapsed:?}"
         );
+        handle.stop().await;
+    }
+
+    /// 协议嗅探:阻断 HTTP 时,发 HTTP 请求的连接被断(读到 EOF),普通流量放行。
+    #[tokio::test]
+    async fn tcp_relay_blocks_sniffed_protocol() {
+        let echo_port = spawn_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let mut rule = rule_for(listen_port, echo_port);
+        rule.blocked_protocols = crate::sniff::BLOCK_HTTP;
+        let handle = start(rule, stats.clone(), None).await.expect("relay start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // HTTP 请求 → 被嗅探阻断,连接断开,读不到回显。
+        let mut http = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        http.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+        let mut buf = [0u8; 8];
+        let r = tokio::time::timeout(Duration::from_secs(2), http.read(&mut buf))
+            .await
+            .expect("read 应迅速返回(连接被断)");
+        assert!(matches!(r, Ok(0)) || r.is_err(), "HTTP 连接应被断开, got {r:?}");
+
+        // 普通(非 HTTP/TLS/SOCKS)流量正常转发。
+        let mut ok = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        ok.write_all(b"\x00\x01ping").await.unwrap();
+        let mut echo = [0u8; 6];
+        ok.read_exact(&mut echo).await.expect("普通流量应放行并回显");
+        assert_eq!(&echo, b"\x00\x01ping");
+
         handle.stop().await;
     }
 }

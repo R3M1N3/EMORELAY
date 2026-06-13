@@ -7,6 +7,7 @@ pub mod limit;
 pub mod manager;
 pub mod relay;
 pub mod retry;
+pub mod sniff;
 pub mod stats;
 pub mod store;
 pub mod system;

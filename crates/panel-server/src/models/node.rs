@@ -20,13 +20,15 @@ pub struct Node {
     pub port_pool_min: i64,
     pub port_pool_max: i64,
     pub agent_version: String,
+    /// 协议嗅探阻断位掩码:bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。
+    pub block_protocols: i64,
     pub created_at: String,
     pub updated_at: String,
 }
 
 const NODE_COLUMNS: &str = "id, name, region, public_ip, display_address, grpc_endpoint, status, last_seen_at, \
     cpu_usage, memory_usage, load_average, rx_bytes_total, tx_bytes_total, \
-    port_pool_min, port_pool_max, agent_version, created_at, updated_at";
+    port_pool_min, port_pool_max, agent_version, block_protocols, created_at, updated_at";
 
 /// 允许的排序字段白名单。SQL 拼接前必须经此过滤。
 pub const SORT_FIELDS: &[&str] = &["id", "name", "status", "region", "created_at", "updated_at"];
@@ -169,6 +171,19 @@ impl Node {
             "UPDATE nodes SET deleted_at = datetime('now'), updated_at = datetime('now') \
              WHERE id = ? AND deleted_at IS NULL",
         )
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// 设置协议嗅探阻断位掩码(admin 改节点设置)。
+    pub async fn set_block_protocols(pool: &SqlitePool, id: i64, mask: i64) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE nodes SET block_protocols = ?, updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(mask)
         .bind(id)
         .execute(pool)
         .await?;
