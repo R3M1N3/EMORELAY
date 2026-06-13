@@ -5,6 +5,7 @@ pub mod config;
 pub mod control;
 pub mod limit;
 pub mod manager;
+pub mod probe;
 pub mod relay;
 pub mod retry;
 pub mod sniff;

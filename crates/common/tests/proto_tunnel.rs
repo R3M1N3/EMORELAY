@@ -16,6 +16,7 @@ fn rule_carries_tunnel_context() {
         enabled: true,
         bandwidth_mbps: 0,
         max_connections: 0,
+        blocked_protocols: 0,
         tunnel: Some(TunnelContext {
             tunnel_id: 7,
             role: TunnelRole::Entry as i32,

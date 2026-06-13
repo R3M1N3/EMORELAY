@@ -1,7 +1,8 @@
 use chrono::Utc;
 use emorelay_common::control::v1::{
     control_plane_server::ControlPlane, Ack, Command, HeartbeatRequest, HeartbeatResponse,
-    NodeStatsBatch, RegisterRequest, RegisterResponse, RuleStatsBatch, SubscribeRequest,
+    NodeStatsBatch, ProbeResult, RegisterRequest, RegisterResponse, RuleStatsBatch,
+    SubscribeRequest,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -592,6 +593,21 @@ impl ControlPlane for ControlPlaneImpl {
             }
         }
         info!(node_id = session_node_id, buckets = total_buckets, "rule stats persisted");
+        Ok(Response::new(Ack {
+            ok: true,
+            error: String::new(),
+        }))
+    }
+
+    async fn report_probe_result(
+        &self,
+        req: Request<ProbeResult>,
+    ) -> Result<Response<Ack>, Status> {
+        // 鉴权:必须是合法 session(节点身份)。结果按 probe_id 投递给 REST 诊断等待者;
+        // 无对应等待者(已超时移除/伪造 id)则静默忽略,不报错。
+        let _node_id = self.verify_session(&req)?;
+        let result = req.into_inner();
+        self.state.resolve_probe(result);
         Ok(Response::new(Ack {
             ok: true,
             error: String::new(),

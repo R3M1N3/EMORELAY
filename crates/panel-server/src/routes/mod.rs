@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod bandwidth_profiles;
+pub mod diagnose;
 pub mod health;
 pub mod install;
 pub mod nodes;
@@ -106,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rules/{id}/restart", post(rules::restart))
         .route("/api/rules/{id}/stats", get(rules::stats))
         .route("/api/rules/{id}/logs", get(rules::logs))
+        .route("/api/rules/{id}/diagnose", post(diagnose::diagnose_rule))
         .route("/api/rules/export", get(rules_io::export))
         .route("/api/rules/import", post(rules_io::import))
         .route("/api/users", get(users::list).post(users::create))
@@ -131,6 +133,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/tunnels/{id}/restart", post(tunnels::restart))
         .route("/api/tunnels/{id}/status", get(tunnels::status))
+        .route("/api/tunnels/{id}/diagnose", post(diagnose::diagnose_tunnel))
         .route("/api/tunnels/{id}/grants", get(tunnels::grants))
         .route("/api/ui-config", get(system::ui_config))
         .route("/api/system/overview", get(system::overview))

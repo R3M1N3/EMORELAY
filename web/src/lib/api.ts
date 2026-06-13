@@ -152,6 +152,24 @@ export interface RuleListResponse {
   page_size: number
 }
 
+/** 逐段诊断:一段链路(源节点 → 目标)的探测结果。 */
+export interface SegmentResult {
+  label: string
+  source_node_id: number
+  source_node_name: string
+  target: string
+  /** 命令是否送达源节点(节点在线) */
+  dispatched: boolean
+  reachable: boolean
+  avg_latency_ms: number
+  loss_pct: number
+  error: string
+}
+
+export interface DiagnoseResponse {
+  segments: SegmentResult[]
+}
+
 export interface CreateNodeRequest {
   name: string
   region?: string
@@ -553,6 +571,7 @@ export const rules = {
   restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/rules/${id}/restart`),
   stats: (id: number) => api.get<RuleStatsResponse>(`/api/rules/${id}/stats`),
   logs: (id: number) => api.get<RuleLogEntry[]>(`/api/rules/${id}/logs`),
+  diagnose: (id: number) => api.post<DiagnoseResponse>(`/api/rules/${id}/diagnose`),
   /** 按当前筛选导出并触发浏览器下载(需带 Authorization,不能用 <a href>)。 */
   exportDownload: async (q: { node_id?: number; tunnel_id?: number } = {}) => {
     const sp = new URLSearchParams()
@@ -666,6 +685,7 @@ export const tunnels = {
   ) => api.patch<TunnelView>(`/api/tunnels/${id}`, req),
   del: (id: number) => api.del<{ ok: boolean }>(`/api/tunnels/${id}`),
   restart: (id: number) => api.post<{ ok: boolean; dispatched: boolean }>(`/api/tunnels/${id}/restart`),
+  diagnose: (id: number) => api.post<DiagnoseResponse>(`/api/tunnels/${id}/diagnose`),
   status: (id: number) => api.get<{ id: number; status: TunnelView['status'] }>(`/api/tunnels/${id}/status`),
   /** admin-only:该隧道被授权给哪些用户 */
   grants: (id: number) => api.get<GrantedUser[]>(`/api/tunnels/${id}/grants`),

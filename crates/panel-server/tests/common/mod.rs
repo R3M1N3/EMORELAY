@@ -67,6 +67,8 @@ pub async fn make_app() -> Result<TestApp> {
         ca,
         crl,
         node_events: Arc::new(tokio::sync::broadcast::channel(256).0),
+        probe_waiters: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        probe_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
     };
 
     // 直接创建 admin(跳过 bootstrap 的 env 依赖)。

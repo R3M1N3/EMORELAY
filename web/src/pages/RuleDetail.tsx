@@ -11,6 +11,7 @@ import {
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
 import { CopyButton } from '../components/CopyButton'
+import { DiagnosePanel } from '../components/DiagnosePanel'
 import { formatHostPort } from '../lib/format-addr'
 import { StatusDot } from '../lib/ui'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -124,6 +125,8 @@ export default function RuleDetail() {
           txFill="fill-rose-500/10"
         />
       </div>
+
+      <DiagnosePanel run={() => rules.diagnose(rule.id)} />
 
       <LogsCard logs={logs} />
     </div>

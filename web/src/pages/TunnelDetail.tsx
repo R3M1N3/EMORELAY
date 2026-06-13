@@ -11,6 +11,7 @@ import {
   type TunnelDetailView,
 } from '../lib/api'
 import { StatusDot } from '../lib/ui'
+import { DiagnosePanel } from '../components/DiagnosePanel'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -272,6 +273,8 @@ export default function TunnelDetail() {
           </div>
         )}
       </section>
+
+      <DiagnosePanel run={() => tunnels.diagnose(detail.id)} />
     </div>
   )
 }

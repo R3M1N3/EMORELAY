@@ -35,6 +35,9 @@ service ControlPlane {
   rpc ReportNodeStats(stream NodeStatsBatch) returns (Ack);
 
   rpc ReportRuleStats(stream RuleStatsBatch) returns (Ack);
+
+  // P1 逐段诊断:Agent 执行 Probe 命令后回报结果(按 probe_id 关联面板的等待者)。
+  rpc ReportProbeResult(ProbeResult) returns (Ack);
 }
 
 // ============= Auth =============
@@ -120,6 +123,24 @@ message RevokeTunnelCredentials {
 message ApplyRule { Rule rule = 1; }
 message RemoveRule { int64 rule_id = 1; }
 
+// P1 逐段诊断:面板下发 Probe,Agent 对 target_host:target_port 做 count 次 TCP connect
+// 计时,回报 ProbeResult(白名单指令,类同 getStats,不执行 shell、不扫描第三方目标——
+// 仅探测面板已配置的转发链路节点/目标)。probe_id 关联面板的请求-响应等待者。
+message Probe {
+  string probe_id = 1;
+  string target_host = 2;
+  uint32 target_port = 3;
+  uint32 count = 4;
+}
+
+message ProbeResult {
+  string probe_id = 1;
+  bool reachable = 2;       // 至少一次 connect 成功
+  double avg_latency_ms = 3; // 成功连接的平均握手延迟
+  double loss_pct = 4;       // 失败次数 / 总次数 * 100
+  string error = 5;          // 全失败时的最后一个错误(便于排障)
+}
+
 // 配置对账(重连兜底):server 在 reconcile 重放完该节点应有的全部 ApplyRule 后,
 // 发一条本命令携带「权威规则 id 全集」。Agent 删除本地任何不在该集合内的规则
 // (断网期间被删、RemoveRule 丢失的孤儿),使数据面与面板真值收敛。空集合 = 该
@@ -151,6 +172,7 @@ message Command {
     RevokeTunnelCredentials revoke_tunnel_credentials = 7;
     UpgradeAgent upgrade_agent = 8;
     ReconcileRules reconcile_rules = 9;
+    Probe probe = 10;
   }
 }
 

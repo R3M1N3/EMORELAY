@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use emorelay_common::control::v1::{
-    control_plane_client::ControlPlaneClient, Command, HeartbeatRequest, NodeStatsBatch,
+    control_plane_client::ControlPlaneClient, Command, HeartbeatRequest, NodeStatsBatch, ProbeResult,
     RegisterRequest, RuleStatsBatch, SubscribeRequest,
 };
 use tokio_stream::Stream;
@@ -153,6 +153,15 @@ impl ControlClient {
         Ok(())
     }
 
+    /// 取一个轻量探测回报器(克隆底层 channel + session token),交给 spawn 出去的探测
+    /// 任务异步回报,不占用主循环的 &mut self。未注册时返回 None。
+    pub fn probe_reporter(&self) -> Option<ProbeReporter> {
+        self.session_token.as_ref().map(|t| ProbeReporter {
+            client: self.client.clone(),
+            session_token: t.clone(),
+        })
+    }
+
     pub async fn report_node_stats<S>(&mut self, batches: S) -> Result<()>
     where
         S: Stream<Item = NodeStatsBatch> + Send + 'static,
@@ -168,6 +177,26 @@ impl ControlClient {
             .report_node_stats(req)
             .await
             .context("report_node_stats rpc")?;
+        Ok(())
+    }
+}
+
+/// 探测结果回报器:持有克隆的 channel,可被 move 进 spawn 的探测任务。
+pub struct ProbeReporter {
+    client: ControlPlaneClient<Channel>,
+    session_token: String,
+}
+
+impl ProbeReporter {
+    pub async fn report(mut self, result: ProbeResult) -> Result<()> {
+        let mut req = Request::new(result);
+        let value = MetadataValue::try_from(&self.session_token)
+            .context("session token → metadata value")?;
+        req.metadata_mut().insert(SESSION_METADATA_KEY, value);
+        self.client
+            .report_probe_result(req)
+            .await
+            .context("report_probe_result rpc")?;
         Ok(())
     }
 }

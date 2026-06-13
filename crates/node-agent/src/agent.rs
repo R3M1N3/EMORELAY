@@ -117,6 +117,24 @@ async fn run_session(
             msg = command_stream.message() => {
                 match msg {
                     Ok(Some(cmd)) => {
+                        // Probe 是请求-响应诊断:spawn 出去跑 TCP 探测并异步回报,不进 retry/
+                        // manager(不改规则状态),也不阻塞主循环(count 次 connect 可能耗时)。
+                        if let Some(emorelay_common::control::v1::command::Body::Probe(p)) = &cmd.body {
+                            if let Some(reporter) = client.probe_reporter() {
+                                let p = p.clone();
+                                tokio::spawn(async move {
+                                    let port = u16::try_from(p.target_port).unwrap_or(0);
+                                    let result = crate::probe::run_probe(
+                                        p.probe_id, &p.target_host, port, p.count,
+                                    )
+                                    .await;
+                                    if let Err(e) = reporter.report(result).await {
+                                        warn!(error = ?e, "report probe result failed");
+                                    }
+                                });
+                            }
+                            continue;
+                        }
                         retry.supersede(&cmd);
                         if let Err(e) =
                             handle_command(&manager, &store, cmd.clone(), &config.data_dir).await
@@ -342,8 +360,11 @@ async fn handle_command(
                     info!(?removed, "reconcile removed orphan rules");
                 }
             }
-            Body::TunnelCredentials(_) | Body::RevokeTunnelCredentials(_) | Body::UpgradeAgent(_) => {
-                unreachable!("credentials/upgrade commands intercepted before manager lock")
+            Body::TunnelCredentials(_)
+            | Body::RevokeTunnelCredentials(_)
+            | Body::UpgradeAgent(_)
+            | Body::Probe(_) => {
+                unreachable!("credentials/upgrade/probe commands intercepted before manager lock")
             }
         }
         mgr.current_rules()
