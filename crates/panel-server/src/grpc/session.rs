@@ -30,4 +30,23 @@ impl SessionRegistry {
         let map = self.sessions.read().unwrap();
         map.get(token).copied().filter(|s| s.expires_at_unix > now_unix)
     }
+
+    /// 失效某 node 的全部 session(吊销/删除节点后立即生效,不等 24h 过期)。
+    pub fn revoke_node(&self, node_id: i64) {
+        self.sessions.write().unwrap().retain(|_, s| s.node_id != node_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn revoke_node_drops_all_its_sessions() {
+        let reg = SessionRegistry::new();
+        reg.insert("tok-a".into(), SessionInfo { node_id: 1, expires_at_unix: i64::MAX });
+        reg.insert("tok-b".into(), SessionInfo { node_id: 2, expires_at_unix: i64::MAX });
+        reg.revoke_node(1);
+        assert!(reg.verify("tok-a", 0).is_none(), "node1 session 应被吊销");
+        assert!(reg.verify("tok-b", 0).is_some(), "node2 session 不受影响");
+    }
 }

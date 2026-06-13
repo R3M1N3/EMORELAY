@@ -592,6 +592,8 @@ pub async fn delete(
     if rows == 0 {
         return Err(ApiError::NotFound);
     }
+    // 防删除后旧 session 残留仍可上报:立即失效该 node 的全部在线 session(H3)。
+    state.sessions.revoke_node(id);
     audit::record_with_ip(
         &state.pool,
         Some(auth.0.sub),
@@ -632,6 +634,9 @@ pub async fn revoke_credentials(
     // 重签新证书 + 落新 meta。
     let issued = crate::tls::issue::issue_client_cert(&state.ca, id).map_err(ApiError::Internal)?;
     Node::set_cert_meta(&state.pool, id, &issued.serial, &issued.fingerprint).await?;
+
+    // 吊销凭据后立即踢掉该 node 的在线 session,使吊销即时生效(H3)。
+    state.sessions.revoke_node(id);
 
     audit::record_with_ip(
         &state.pool,
