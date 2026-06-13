@@ -139,6 +139,35 @@ async fn mcp_token_blocked_on_business_routes() {
 }
 
 #[tokio::test]
+async fn mcp_admin_token_blocked_on_sse_stream() {
+    // 绕过 AuthUser 直解 JWT 的 SSE 端点也须拒 mcp token(I1 补漏):
+    // admin 新建的 admin 用户同样恒置 must_change_password,登录得 mcp admin token,
+    // 不修则可订阅全节点 SSE 快照而永不改密。
+    let app = make_app().await.unwrap();
+    let admin = &app.admin_token;
+
+    let req = auth_req(
+        Method::POST,
+        "/api/users",
+        admin,
+        Some(json!({ "username": "eve", "password": "temp-pass-123", "role": "admin" })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = login_raw(&app.app, "eve", "temp-pass-123").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["must_change_password"], true);
+    let mcp_admin_token = body["token"].as_str().unwrap().to_string();
+
+    // mcp admin token 即便角色是 admin,SSE 流仍须 403(mcp 拦截先于 role 检查)。
+    let req = auth_req(Method::GET, "/api/nodes/stream", &mcp_admin_token, None).unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "mcp admin token 不得订阅 SSE 流");
+}
+
+#[tokio::test]
 async fn bootstrap_admin_is_not_forced_to_change_password() {
     let app = make_app().await.unwrap();
     // 测试夹具的 admin 由 User::create(must_change=false) 建,不应被强制。

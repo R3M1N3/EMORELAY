@@ -31,6 +31,10 @@ fn resolve_user_id(state: &AppState, headers: &HeaderMap, q: &SubQuery) -> ApiRe
         .or_else(|| q.token.clone())
         .ok_or(ApiError::Unauthorized)?;
     let claims = decode_jwt(&state.config.jwt_secret, &token).map_err(|_| ApiError::Unauthorized)?;
+    if claims.mcp {
+        // 强制改密未完成:绕过 AuthUser 的直解路径也须拒 mcp token(I1 补漏)。
+        return Err(ApiError::Forbidden);
+    }
     Ok(claims.sub)
 }
 
