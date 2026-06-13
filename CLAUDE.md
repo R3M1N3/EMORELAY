@@ -68,7 +68,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Rust workspace: `crates/panel-server`、`crates/node-agent`、`crates/common`(protobuf + 共享类型)
 - 前端: `web/`（React 19 + Vite 8 + Tailwind 4 + TS）
-- 数据库: `migrations/0001_init.sql` → `0012`（基础 8 表 + 用户配额字段 + `bandwidth_profiles` + `nodes.cert_*` + `tunnels`/`tunnel_hops` + `nodes.agent_version` + `user_node_grants`/`user_tunnel_grants` + `nodes.display_address` + `forward_rules.max_connections` + `tunnels.creds_rotated_at` + WAL + 软删 + 部分唯一索引 + PG 兼容）
+- 数据库: `migrations/0001_init.sql` → `0017`（基础 8 表 + 用户配额字段 + `bandwidth_profiles` + `nodes.cert_*` + `tunnels`/`tunnel_hops` + `nodes.agent_version` + `user_node_grants`/`user_tunnel_grants` + `nodes.display_address` + `forward_rules.max_connections` + `tunnels.creds_rotated_at` + `users.must_change_password`(0013) + `tunnels.traffic_ratio`/`billing_mode`(0014) + `users.quota_reset_day`(0015) + `nodes.block_protocols`(0016) + `forward_rules.extra_targets`/`lb_strategy`(0017) + WAL + 软删 + 部分唯一索引 + PG 兼容）
 - 安全: 内置 CA + 默认强制 mTLS（panel-server 启动自签 CA,gRPC 控制面强制 client cert + CRL 吊销;`PANEL_DEV_DISABLE_MTLS=1` 退 plaintext）;登录 per-IP 限速
 - 部署: `docker-compose.yml`、`docker/{panel-server,web}.Dockerfile`、`docker/Caddyfile.example`、`deploy.sh`(快速安装=拉 GitHub Release 预编译 musl 静态二进制/Docker/systemd 源码编译三模式)、`.github/workflows/release.yml`(打 `v*` tag 发版)
 - 文档: `README.md`、`docs/deployment.md`、`docs/api.md`、`docs/ux-review-2026-06-11.md`、`.env.example`
@@ -80,7 +80,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **2026-06-13 增量(二)**：P10b Agent 一键升级交付(proto UpgradeAgent + `/api/nodes/{id}/upgrade-agent`,Agent 下载/sha256 校验/.bak 原子替换/exec 重启,120s 超时 256MB 上限,后台执行不阻塞心跳;install.sh unit 模板 ReadWritePaths 加 /usr/local/bin,**老节点需手动改 unit**,见 api.md);隧道凭据短有效期+自动轮换交付(hop 证书 5 年→30 天,`tunnel_creds` sweeper 默认 20 天阈值每小时扫,重签下发+per-hop 重启,audit `tunnel.creds_rotated`;升级后首 tick 会集中轮换全部存量 tls/wss 隧道)。
 
-**待推进**：WSS e2e(按需,单测已覆盖);P11 候选池按需触发(多目标 LB/2FA+会话管理/分组,见 `docs/p1-gap-review-2026-06-13.md`);P10a/P10b/凭据轮换的真机冒烟(下次部署 VPS 时顺带)。
+**2026-06-13 增量(三) flux-parity**（对标 flux-panel 2.0.7-beta,报告 `docs/flux-panel-comparison-2026-06-13.md`,计划 `docs/superpowers/plans/2026-06-13-flux-parity.md`,分支 `feat/flux-parity`,每单元子代理 review）：
+- 修复 2 项计费正确性:relay/tcp stop 主动断存量连接(watch 取消闩;禁用/删除即停计费)、stats 上报失败回填(消除丢数窗口)。
+- P0:点击复制地址(CopyButton)、删除回显节点送达状态(离线提示对账后清理)、首登强制改密(`must_change_password`,POST `/api/auth/change-password`)、到期预警 toast。
+- P1:隧道流量倍率+单/双向计费(`tunnels.traffic_ratio/billing_mode`,仅配额扣减换算,原始 stats 不变)、月度固定日重置(`users.quota_reset_day`,与滚动 30 天并存,chrono 算期起点)、配置对账自愈(proto `ReconcileRules` 重连删孤儿规则)、协议嗅探阻断(`nodes.block_protocols` 位掩码,agent 首包 peek 指纹断连防开放代理)、逐段链路诊断(proto `Probe`/`ReportProbeResult` 请求-响应,REST `/api/{rules,tunnels}/{id}/diagnose`)、SSE 节点实时推送(`/api/nodes/stream` broadcast)、订阅用量 API(`/api/subscription/usage` 只读 Subscription-Userinfo,不分发配置)。
+- P2:多目标负载均衡(`forward_rules.extra_targets/lb_strategy`,proto `TargetEndpoint`,agent fifo/round/rand/hash 选择+故障转移+connect 5s 超时;**注:单目标 connect 现也有 5s 上限**,原依赖 OS 超时)、移动端 safe-area(body env() 内边距)+路由滚动复位、deploy.sh CN 加速镜像(ghfast.top,`EMORELAY_GH_PROXY` 可覆盖)。
+- 有意未做:拖拽排序(不适配我们分页+可排序表格设计)、声明式 Settings 重构(不重构没坏的工作代码)。
+- 全程 `cargo test --workspace`(39 binary)+ web vitest(47)/eslint/build 全绿。**真机冒烟未做**(下次部署 VPS 时顺带验证 0013-0017 迁移 + 多目标/诊断/SSE/嗅探)。
+
+**待推进**：flux-parity 真机冒烟;WSS e2e(按需,单测已覆盖);P11 剩余(2FA+会话管理/分组,见 `docs/p1-gap-review-2026-06-13.md`);P10a/P10b/凭据轮换的真机冒烟(下次部署 VPS 时顺带)。
 
 ## 目标架构
 
