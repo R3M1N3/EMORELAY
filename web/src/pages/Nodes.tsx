@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   ApiError,
   formatBytes,
+  getToken,
   nodes,
   renderInstallCommand,
   rules,
@@ -89,10 +90,37 @@ export default function Nodes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize])
 
-  // 评审 P2-1:节点上线/掉线此前必须手动刷新才能看到。15s 静默轮询。
+  // 评审 P2-1:节点上线/掉线此前必须手动刷新才能看到。15s 静默轮询兜底。
   useAutoRefresh(() => {
     void reload({ silent: true })
   }, 15_000)
+
+  // SSE 实时推送:节点上线/掉线/指标变更即时合并进当前列表(替代等轮询),
+  // 失败/不支持时静默回落轮询。仅合并已在当前页的节点,避免越权/分页错乱。
+  useEffect(() => {
+    const tok = getToken()
+    if (!tok || typeof EventSource === 'undefined') return
+    const es = new EventSource(`/api/nodes/stream?token=${encodeURIComponent(tok)}`)
+    const onNode = (e: MessageEvent) => {
+      try {
+        const node = JSON.parse(e.data) as NodeView
+        setList((s) => {
+          const idx = s.items.findIndex((n) => n.id === node.id)
+          if (idx === -1) return s // 不在当前页:留给轮询/翻页处理
+          const items = s.items.slice()
+          items[idx] = node
+          return { ...s, items }
+        })
+      } catch {
+        // 坏帧忽略
+      }
+    }
+    es.addEventListener('node', onNode as EventListener)
+    return () => {
+      es.removeEventListener('node', onNode as EventListener)
+      es.close()
+    }
+  }, [])
 
   // 删除预检:用规则列表 total 判断引用数(page_size=1 最小开销)。
   // 状态重置在事件回调(openConfirm/关闭)做,effect 只负责拉取。

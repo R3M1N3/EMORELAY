@@ -50,6 +50,7 @@ async fn main() -> Result<()> {
         dispatcher: Arc::new(CommandDispatcher::new()),
         ca,
         crl,
+        node_events: Arc::new(tokio::sync::broadcast::channel(256).0),
     };
 
     // P3a 存量迁移:活跃但无证书的节点(P1/P2 创建)自动签发 client cert。

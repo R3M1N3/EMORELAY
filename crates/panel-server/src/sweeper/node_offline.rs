@@ -61,6 +61,8 @@ pub async fn offline_tick_once(state: &AppState) -> anyhow::Result<u64> {
                 "node.offline",
                 serde_json::json!({ "node_id": id, "name": name }),
             );
+            // SSE:掉线 → 推送变更。
+            state.publish_node_event(*id);
         }
     }
     if flipped > 0 {

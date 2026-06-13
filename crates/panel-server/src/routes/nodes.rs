@@ -2,6 +2,7 @@ use crate::{
     audit,
     auth::{
         extractor::{ActorIp, AuthUser},
+        jwt::decode_jwt,
         token::{generate_token, hash_token},
     },
     error::{ApiError, ApiResult},
@@ -13,11 +14,15 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
+    response::sse::{Event, KeepAlive, Sse},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::prelude::FromRow;
+use std::convert::Infallible;
+use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
 
 #[derive(Serialize)]
 pub struct NodeView {
@@ -491,6 +496,49 @@ pub async fn update(
     .await;
 
     Ok(Json(node.into()))
+}
+
+#[derive(Deserialize)]
+pub struct StreamQuery {
+    pub token: Option<String>,
+}
+
+/// 节点实时事件 SSE(admin only)。订阅 node_events 广播,每个变更 node_id 拉取该
+/// 节点最新快照推给客户端,替代前端轮询(前端仍保留轮询兜底)。EventSource 取不到
+/// header,故鉴权走 ?token=<jwt>(回落 Authorization: Bearer);校验角色为 admin。
+pub async fn stream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<StreamQuery>,
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(str::to_string)
+        .or(q.token)
+        .ok_or(ApiError::Unauthorized)?;
+    let claims = decode_jwt(&state.config.jwt_secret, &token).map_err(|_| ApiError::Unauthorized)?;
+    if claims.role != "admin" {
+        return Err(ApiError::Forbidden);
+    }
+
+    let pool = state.pool.clone();
+    let rx = state.node_events.subscribe();
+    // BroadcastStream 滞后(慢消费者)时丢 lagged 错误继续;每事件拉节点快照转 SSE。
+    let stream = BroadcastStream::new(rx)
+        .then(move |res| {
+            let pool = pool.clone();
+            async move {
+                let node_id = res.ok()?;
+                let node = Node::find_by_id(&pool, node_id).await.ok().flatten()?;
+                let json = serde_json::to_string(&NodeView::from(node)).ok()?;
+                Some(Event::default().event("node").data(json))
+            }
+        })
+        .filter_map(|opt: Option<Event>| opt.map(Ok::<_, Infallible>));
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 pub async fn delete(

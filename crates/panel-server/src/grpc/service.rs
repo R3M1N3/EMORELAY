@@ -211,6 +211,8 @@ impl ControlPlane for ControlPlaneImpl {
                 serde_json::json!({ "node_id": req.node_id }),
             );
         }
+        // SSE:节点上线/版本更新 → 推送变更。
+        self.state.publish_node_event(req.node_id);
 
         audit::record(
             &self.state.pool,
@@ -271,6 +273,8 @@ impl ControlPlane for ControlPlaneImpl {
                 serde_json::json!({ "node_id": inner.node_id }),
             );
         }
+        // SSE:CPU/内存/负载更新 → 推送变更。
+        self.state.publish_node_event(inner.node_id);
 
         Ok(Response::new(HeartbeatResponse {
             server_time_unix: Utc::now().timestamp(),
@@ -466,6 +470,8 @@ impl ControlPlane for ControlPlaneImpl {
             );
         }
         info!(node_id = session_node_id, buckets = total_buckets, "node stats persisted");
+        // SSE:网卡累计流量更新 → 推送变更。
+        self.state.publish_node_event(session_node_id);
         Ok(Response::new(Ack {
             ok: true,
             error: String::new(),

@@ -66,6 +66,7 @@ pub async fn make_app() -> Result<TestApp> {
         dispatcher: Arc::new(CommandDispatcher::new()),
         ca,
         crl,
+        node_events: Arc::new(tokio::sync::broadcast::channel(256).0),
     };
 
     // 直接创建 admin(跳过 bootstrap 的 env 依赖)。
