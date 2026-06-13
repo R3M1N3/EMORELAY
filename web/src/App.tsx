@@ -110,11 +110,11 @@ function ProtectedShell() {
   if (mustChangePassword) return <Navigate to="/change-password" replace />
 
   return (
-    <div className="min-h-svh text-zinc-100 flex gap-5 p-3 md:p-5 relative safe-x safe-bottom">
+    <div className="min-h-svh text-zinc-100 flex gap-5 p-3 md:p-5 relative">
       <Backdrop />
       {/* Sidebar:大屏为悬浮玻璃板;小屏隐藏(translate-x),由汉堡触发覆盖 drawer。 */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-56 shrink-0 p-4 safe-top flex flex-col transition-transform duration-300 glass-card rounded-none md:rounded-3xl md:translate-x-0 md:sticky md:top-5 md:inset-y-auto md:h-[calc(100svh-2.5rem)] md:self-start ${
+        className={`fixed inset-y-0 left-0 z-30 w-56 shrink-0 p-4 pt-[max(1rem,env(safe-area-inset-top))] flex flex-col transition-transform duration-300 glass-card rounded-none md:rounded-3xl md:translate-x-0 md:sticky md:top-5 md:inset-y-auto md:h-[calc(100svh-2.5rem)] md:self-start ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

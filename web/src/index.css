@@ -45,7 +45,18 @@
 
 /* ---------- 全局基底 ---------- */
 html { color-scheme: dark; }
-body { background: #04070f; }
+/* 移动端刘海屏安全区:给 body 加 env() 内边距,把整个应用从设备安全区内收。
+   桌面 env()=0 无副作用;body 无 Tailwind 工具类竞争,不会被 p-* 覆盖(固定定位的
+   侧栏抽屉不受 body padding 影响,单独在 App.tsx 用 pt-[max(...)] 避让)。
+   viewport-fit=cover(见 index.html)是 env() 生效前提。 */
+body {
+  background: #04070f;
+  padding:
+    env(safe-area-inset-top, 0)
+    env(safe-area-inset-right, 0)
+    env(safe-area-inset-bottom, 0)
+    env(safe-area-inset-left, 0);
+}
 ::selection { background: color-mix(in oklab, var(--accent) 35%, transparent); }
 * { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.14) transparent; }
 /* 原生下拉弹出列表由操作系统绘制,不继承 select 的 Tailwind 背景类:
@@ -59,15 +70,6 @@ select optgroup {
 /* 自定义类必须进 @layer components:未分层声明会压过 Tailwind 分层工具类
    (曾导致 glass-card 的 position:relative 击败 fixed/sticky,小屏 drawer 布局损坏)。 */
 @layer components {
-
-/* ---------- 移动端刘海屏安全区(viewport-fit=cover 配合) ---------- */
-/* env() 在不支持的环境回退 0px,桌面无副作用;max() 保证至少原内边距。 */
-.safe-top { padding-top: env(safe-area-inset-top, 0px); }
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
-.safe-x {
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
-}
 
 /* ---------- 极光背景层（Backdrop 组件使用） ---------- */
 .aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; filter: blur(90px) saturate(1.4); pointer-events: none; }
