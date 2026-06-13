@@ -21,6 +21,10 @@ pub struct Rule {
     pub tunnel_id: Option<i64>,
     /// 并发连接上限(仅 TCP)。None = 不限。
     pub max_connections: Option<i64>,
+    /// P2 多目标:额外目标 JSON 数组 [{host,port}];None/空 = 单目标。
+    pub extra_targets: Option<String>,
+    /// 负载策略 fifo/round/rand/hash;默认 fifo。仅目标数 > 1 时生效。
+    pub lb_strategy: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -30,7 +34,7 @@ const RULE_COLUMNS: &str = "id, user_id, node_id, name, protocol, listen_ip, lis
     bandwidth_profile_id, \
     (SELECT bp.bandwidth_mbps FROM bandwidth_profiles bp \
         WHERE bp.id = forward_rules.bandwidth_profile_id AND bp.deleted_at IS NULL) AS bandwidth_mbps, \
-    tunnel_id, max_connections, created_at, updated_at";
+    tunnel_id, max_connections, extra_targets, lb_strategy, created_at, updated_at";
 
 /// 允许的排序字段白名单。值必须为 schema 真实列名且非敏感字段；
 /// SQL 拼接前必须经此过滤。
@@ -210,6 +214,27 @@ impl Rule {
         .execute(pool)
         .await?;
         Ok(res.last_insert_rowid())
+    }
+
+    /// 设置多目标:extra_targets(JSON,None=清空)+ lb_strategy。
+    /// 单独成方法,避免改 create/update_fields 签名波及多处调用点(同 P2 倍率/月重置取舍)。
+    pub async fn set_targets(
+        pool: &SqlitePool,
+        id: i64,
+        extra_targets: Option<&str>,
+        lb_strategy: &str,
+    ) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE forward_rules SET extra_targets = ?, lb_strategy = ?, \
+                 updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(extra_targets)
+        .bind(lb_strategy)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     /// PATCH 语义：None 字段保留旧值;bandwidth_profile_id / max_connections 传 0 = 清除。

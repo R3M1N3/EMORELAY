@@ -62,6 +62,9 @@ pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, Pro
             max_connections: if i == 0 { input.max_connections } else { 0 },
             // 隧道规则走隧道 transport,不做明文协议嗅探(嗅探仅普通 TCP relay)。
             blocked_protocols: 0,
+            // 隧道规则暂不支持多目标(出口走单一业务目标),保持单目标 fifo。
+            extra_targets: Vec::new(),
+            lb_strategy: String::new(),
         };
         (hop.node_id, proto)
     }).collect()

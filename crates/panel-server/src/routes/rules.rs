@@ -21,6 +21,18 @@ use sqlx::prelude::FromRow;
 
 // ============= DTOs =============
 
+/// 多目标条目(请求与视图共用)。
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TargetDto {
+    pub host: String,
+    pub port: u16,
+}
+
+fn parse_extra_targets(json: Option<&str>) -> Vec<TargetDto> {
+    json.and_then(|s| serde_json::from_str::<Vec<TargetDto>>(s).ok())
+        .unwrap_or_default()
+}
+
 #[derive(Serialize)]
 pub struct RuleView {
     pub id: i64,
@@ -43,6 +55,9 @@ pub struct RuleView {
     pub tunnel_id: Option<i64>,
     /// 并发连接上限(仅 TCP);None = 不限。
     pub max_connections: Option<i64>,
+    /// P2 多目标额外目标 + 负载策略。
+    pub extra_targets: Vec<TargetDto>,
+    pub lb_strategy: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -68,6 +83,8 @@ impl From<Rule> for RuleView {
             bandwidth_mbps: r.bandwidth_mbps,
             tunnel_id: r.tunnel_id,
             max_connections: r.max_connections,
+            extra_targets: parse_extra_targets(r.extra_targets.as_deref()),
+            lb_strategy: r.lb_strategy,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -109,6 +126,10 @@ pub struct CreateRuleRequest {
     pub user_id: Option<i64>,
     /// 并发连接上限(仅 TCP)。admin 管控字段;None = 不限。
     pub max_connections: Option<i64>,
+    /// P2 多目标额外目标(主目标 = target_host:target_port);空/未传 = 单目标。
+    pub extra_targets: Option<Vec<TargetDto>>,
+    /// 负载策略 fifo/round/rand/hash;未传 = fifo。
+    pub lb_strategy: Option<String>,
 }
 
 fn default_listen_ip() -> String {
@@ -126,6 +147,54 @@ pub struct UpdateRuleRequest {
     pub bandwidth_profile_id: Option<i64>,
     /// 0 = 清除上限(不限);admin 管控字段
     pub max_connections: Option<i64>,
+    /// 给定则全量替换额外目标(空数组 = 清空回单目标);None = 不改。
+    pub extra_targets: Option<Vec<TargetDto>>,
+    pub lb_strategy: Option<String>,
+}
+
+/// 校验多目标 + 策略,返回 (extra_targets_json, lb_strategy)。每个额外目标做与主目标
+/// 同等的 host 形状校验;非 admin 不得指向内网。空列表 → None(清空)。
+fn validate_targets(
+    extra: &[TargetDto],
+    lb_strategy: Option<&str>,
+    is_admin: bool,
+) -> ApiResult<(Option<String>, String)> {
+    let strat = lb_strategy.unwrap_or("fifo");
+    if !matches!(strat, "fifo" | "round" | "rand" | "hash") {
+        return Err(ApiError::BadRequest(
+            "负载策略必须是 fifo | round | rand | hash".into(),
+        ));
+    }
+    if extra.len() > 32 {
+        return Err(ApiError::BadRequest("额外目标不能超过 32 个".into()));
+    }
+    for t in extra {
+        let host = t.host.trim();
+        if t.port == 0 {
+            return Err(ApiError::BadRequest("目标端口必须在 1-65535 之间".into()));
+        }
+        if !is_valid_target_host(host) {
+            return Err(ApiError::BadRequest(format!(
+                "额外目标主机不合法: {host}"
+            )));
+        }
+        if !is_admin && is_internal_target_ip(host) {
+            return Err(ApiError::BadRequest(
+                "额外目标不能是回环或内网地址".into(),
+            ));
+        }
+    }
+    let json = if extra.is_empty() {
+        None
+    } else {
+        // 落库前 trim host。
+        let norm: Vec<TargetDto> = extra
+            .iter()
+            .map(|t| TargetDto { host: t.host.trim().to_string(), port: t.port })
+            .collect();
+        Some(serde_json::to_string(&norm).unwrap_or_default())
+    };
+    Ok((json, strat.to_string()))
 }
 
 #[derive(Serialize, FromRow)]
@@ -327,6 +396,12 @@ pub async fn create(
             "目标地址不能是回环或内网地址".into(),
         ));
     }
+    // P2 多目标:隧道规则暂不支持;校验额外目标(同主目标规则)。
+    let extra = req.extra_targets.clone().unwrap_or_default();
+    if req.tunnel_id.is_some() && !extra.is_empty() {
+        return Err(ApiError::BadRequest("隧道规则暂不支持多目标".into()));
+    }
+    let (extra_json, lb_strat) = validate_targets(&extra, req.lb_strategy.as_deref(), auth.is_admin())?;
     let node = Node::find_by_id(&state.pool, req.node_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("节点不存在".into()))?;
@@ -413,6 +488,11 @@ pub async fn create(
     .await
     .map_err(map_sqlx_to_api)?;
 
+    // 多目标 / 策略非默认时落库(create 取 DB 默认 NULL/fifo)。
+    if extra_json.is_some() || lb_strat != "fifo" {
+        Rule::set_targets(&state.pool, new_id, extra_json.as_deref(), &lb_strat).await?;
+    }
+
     let rule = Rule::find_by_id(&state.pool, new_id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -456,7 +536,8 @@ pub async fn update(
     let redirecting = req.target_host.is_some()
         || req.target_port.is_some()
         || req.listen_ip.is_some()
-        || req.listen_port.is_some();
+        || req.listen_port.is_some()
+        || req.extra_targets.is_some();
     if redirecting && !auth.is_admin() {
         let still_granted = if let Some(tid) = existing.tunnel_id {
             grant::tunnel_granted(&state.pool, existing.user_id, tid).await?
@@ -547,6 +628,19 @@ pub async fn update(
     )
     .await?;
 
+    // P2 多目标:给定则校验并准备落库(写在 update_fields 后)。隧道规则不支持多目标。
+    let target_update = if req.extra_targets.is_some() || req.lb_strategy.is_some() {
+        let extra = req.extra_targets.clone().unwrap_or_default();
+        if existing.tunnel_id.is_some() && !extra.is_empty() {
+            return Err(ApiError::BadRequest("隧道规则暂不支持多目标".into()));
+        }
+        // lb_strategy 未给时沿用既有值(只改目标不改策略)。
+        let strat = req.lb_strategy.as_deref().unwrap_or(&existing.lb_strategy);
+        Some(validate_targets(&extra, Some(strat), auth.is_admin())?)
+    } else {
+        None
+    };
+
     let rows = Rule::update_fields(
         &state.pool,
         id,
@@ -562,6 +656,10 @@ pub async fn update(
     .map_err(map_sqlx_to_api)?;
     if rows == 0 {
         return Err(ApiError::NotFound);
+    }
+    // 多目标变更落库(在 find_by_id 前,使下发的 proto 含新目标)。
+    if let Some((extra_json, lb_strat)) = target_update {
+        Rule::set_targets(&state.pool, id, extra_json.as_deref(), &lb_strat).await?;
     }
     let rule = Rule::find_by_id(&state.pool, id)
         .await?

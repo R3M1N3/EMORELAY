@@ -44,9 +44,28 @@ pub async fn start(
     info!(rule_id = rule.id, %addr, "tcp relay listening");
 
     let counter = stats.ensure(rule.id);
-    let target_host = rule.target_host.clone();
-    let target_port: u16 = u16::try_from(rule.target_port)
-        .with_context(|| format!("target_port out of u16 range: {}", rule.target_port))?;
+    // 多目标池:主目标(target_host:target_port)在前,extra_targets 追加在后。
+    // 单目标(无 extra)→ 池长 1,选择恒返回主目标,行为与改造前一致。
+    let mut pool: Vec<(String, u16)> = Vec::with_capacity(1 + rule.extra_targets.len());
+    pool.push((
+        rule.target_host.clone(),
+        u16::try_from(rule.target_port)
+            .with_context(|| format!("target_port out of u16 range: {}", rule.target_port))?,
+    ));
+    for t in &rule.extra_targets {
+        match u16::try_from(t.port) {
+            Ok(p) => pool.push((t.host.clone(), p)),
+            Err(_) => warn!(rule_id = rule.id, port = t.port, "extra target port out of u16 range; skipped"),
+        }
+    }
+    let pool = Arc::new(pool);
+    let strategy = if rule.lb_strategy.is_empty() {
+        "fifo".to_string()
+    } else {
+        rule.lb_strategy.clone()
+    };
+    // per-rule 轮询计数器(round/rand 用),所有连接共享。
+    let rr = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let rule_id = rule.id;
     // P10a 并发连接上限:permit 跟随 bridge task 生命周期,断开自动释放。
     // 上限变更走 re-apply 重建 listener+全新 limiter,存量连接持旧 permit 至自然断开
@@ -77,7 +96,9 @@ pub async fn start(
                                 continue;
                             };
                             counter.connection_count.fetch_add(1, Ordering::Relaxed);
-                            let target_host = target_host.clone();
+                            let pool = pool.clone();
+                            let strategy = strategy.clone();
+                            let rr = rr.clone();
                             let counter = counter.clone();
                             // 限速变更走 re-apply 重建 listener+新桶,但存量连接持旧桶直到自然断开;新限速仅对新连接生效。
                             let bucket = bucket.clone();
@@ -88,7 +109,7 @@ pub async fn start(
                                     // stop 触发:丢弃 bridge future,client/server socket 随之 drop 关闭。
                                     // wait_for 的 Err(sender 已 drop)亦视为取消,fail-safe 不会漏断。
                                     _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
-                                    r = bridge(client, target_host, target_port, counter.clone(), bucket, blocked_protocols) => {
+                                    r = bridge(client, &pool, &strategy, &rr, counter.clone(), bucket, blocked_protocols) => {
                                         if let Err(e) = r {
                                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                                             warn!(rule_id, %peer, error = ?e, "tcp bridge error");
@@ -112,10 +133,12 @@ pub async fn start(
 
 /// `(host: &str, port: u16)` 实现 `ToSocketAddrs`，自然处理 IPv4 / IPv6 / hostname；
 /// 当 host 是裸 "::1" 时被识别为 IPv6 字面量，不走 DNS。
+/// 多目标:按策略选起点,沿轮转顺序逐个 connect,首个成功即用(故障转移)。
 async fn bridge(
     mut client: TcpStream,
-    target_host: String,
-    target_port: u16,
+    pool: &[(String, u16)],
+    strategy: &str,
+    rr: &std::sync::atomic::AtomicUsize,
     counter: Arc<RuleCounter>,
     bucket: Option<Arc<TokenBucket>>,
     blocked_protocols: u32,
@@ -133,14 +156,45 @@ async fn bridge(
         }
     }
 
-    let mut server = TcpStream::connect((target_host.as_str(), target_port))
-        .await
-        .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
-
-    // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
-    if let Ok(peer) = server.peer_addr() {
-        crate::relay::guard_resolved_target(&target_host, peer)?;
+    // 按策略 + 客户端 IP 决定尝试顺序,逐个 connect 直到成功(其余作故障转移备选)。
+    let client_ip = client
+        .peer_addr()
+        .map(|a| a.ip())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let order = crate::select::target_order(pool.len(), strategy, client_ip, rr);
+    let mut server: Option<TcpStream> = None;
+    let mut last_err: Option<anyhow::Error> = None;
+    // 多目标时给每次 connect 5s 上限,避免黑洞(DROP)的主目标拖到 OS TCP 超时才故障转移;
+    // 单目标(池长 1)同样受益(挂死目标快速失败)。
+    let connect_timeout = Duration::from_secs(5);
+    for idx in order {
+        let (host, port) = &pool[idx];
+        let connected = match tokio::time::timeout(connect_timeout, TcpStream::connect((host.as_str(), *port))).await {
+            Ok(r) => r,
+            Err(_) => {
+                last_err = Some(anyhow::anyhow!("connect upstream {host}:{port} timed out"));
+                continue;
+            }
+        };
+        match connected {
+            Ok(s) => {
+                // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
+                if let Ok(peer) = s.peer_addr() {
+                    if let Err(e) = crate::relay::guard_resolved_target(host, peer) {
+                        last_err = Some(e);
+                        continue;
+                    }
+                }
+                server = Some(s);
+                break;
+            }
+            Err(e) => {
+                last_err = Some(anyhow::Error::new(e).context(format!("connect upstream {host}:{port}")));
+            }
+        }
     }
+    let mut server = server
+        .ok_or_else(|| last_err.unwrap_or_else(|| anyhow::anyhow!("no target reachable")))?;
 
     // Linux 不限速:走 splice 零拷贝,数据不过用户态(消除 pump 的两次 memcpy)。
     // 限速或非 Linux 回退下方 pump(用户态拷贝才能插入令牌桶计量)。
@@ -244,6 +298,8 @@ mod tests {
             bandwidth_mbps: 0,
             max_connections: 0,
             blocked_protocols: 0,
+            extra_targets: Vec::new(),
+            lb_strategy: String::new(),
             tunnel: None,
         }
     }
@@ -416,6 +472,40 @@ mod tests {
             elapsed >= Duration::from_millis(180),
             "40Mbps 下 2MB 往返应明显被限速, got {elapsed:?}"
         );
+        handle.stop().await;
+    }
+
+    /// 多目标故障转移:主目标不可达时,fifo 策略回落到备目标,连接仍成功往返。
+    #[tokio::test]
+    async fn tcp_relay_failover_to_extra_target() {
+        use emorelay_common::control::v1::TargetEndpoint;
+        let echo_port = spawn_echo_server().await; // 健康备目标
+        // 主目标:绑后立即 drop 拿一个大概率拒绝连接的端口。
+        let dead_port = {
+            let l = StdTcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let mut rule = rule_for(listen_port, dead_port); // 主目标 = 死端口
+        rule.lb_strategy = "fifo".into();
+        rule.extra_targets = vec![TargetEndpoint {
+            host: "127.0.0.1".into(),
+            port: echo_port as u32,
+        }];
+        let handle = start(rule, stats.clone(), None).await.expect("relay start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut conn = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        conn.write_all(b"hi").await.unwrap();
+        let mut buf = [0u8; 2];
+        // 主目标 connect 失败 → 故障转移到备 echo,往返成功。
+        // 超时给宽:某些平台 connect 到 refused 端口非即时。
+        tokio::time::timeout(Duration::from_secs(8), conn.read_exact(&mut buf))
+            .await
+            .expect("failover 后应往返成功")
+            .expect("read echo");
+        assert_eq!(&buf, b"hi");
         handle.stop().await;
     }
 

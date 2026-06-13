@@ -5,6 +5,13 @@ use std::path::PathBuf;
 use tokio::fs;
 use tracing::info;
 
+/// P2 多目标:镜像 proto TargetEndpoint,随规则持久化。
+#[derive(Serialize, Deserialize, Clone)]
+struct TargetJson {
+    host: String,
+    port: u32,
+}
+
 /// P3b 数据面起 tunnel 上下文随规则持久化,断网重启恢复隧道角色。
 /// 镜像 proto TunnelContext(prost 类型未派生 Serialize)。
 #[derive(Serialize, Deserialize, Clone)]
@@ -42,6 +49,11 @@ struct RuleJson {
     /// P1 协议嗅探阻断掩码。缺字段 → 0 = 不阻断(重连后由 reconcile 重发刷新)。
     #[serde(default)]
     blocked_protocols: u32,
+    /// P2 多目标额外目标 + 负载策略。缺字段 → 单目标 fifo(行为不变)。
+    #[serde(default)]
+    extra_targets: Vec<TargetJson>,
+    #[serde(default)]
+    lb_strategy: String,
 }
 
 impl From<&Rule> for RuleJson {
@@ -57,6 +69,12 @@ impl From<&Rule> for RuleJson {
             bandwidth_mbps: r.bandwidth_mbps,
             max_connections: r.max_connections,
             blocked_protocols: r.blocked_protocols,
+            extra_targets: r
+                .extra_targets
+                .iter()
+                .map(|t| TargetJson { host: t.host.clone(), port: t.port })
+                .collect(),
+            lb_strategy: r.lb_strategy.clone(),
             tunnel: r.tunnel.as_ref().map(|t| TunnelJson {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -83,6 +101,12 @@ impl From<RuleJson> for Rule {
             bandwidth_mbps: r.bandwidth_mbps,
             max_connections: r.max_connections,
             blocked_protocols: r.blocked_protocols,
+            extra_targets: r
+                .extra_targets
+                .into_iter()
+                .map(|t| emorelay_common::control::v1::TargetEndpoint { host: t.host, port: t.port })
+                .collect(),
+            lb_strategy: r.lb_strategy,
             tunnel: r.tunnel.map(|t| emorelay_common::control::v1::TunnelContext {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -191,6 +215,8 @@ mod tests {
             bandwidth_mbps: 30,
             max_connections: 0,
             blocked_protocols: 0,
+            extra_targets: Vec::new(),
+            lb_strategy: String::new(),
             tunnel: Some(TunnelContext {
                 tunnel_id: 7,
                 role: TunnelRole::Mid as i32,

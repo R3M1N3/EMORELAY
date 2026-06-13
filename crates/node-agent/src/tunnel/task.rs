@@ -591,6 +591,8 @@ mod tests {
             bandwidth_mbps: 0,
             max_connections: 0,
             blocked_protocols: 0,
+            extra_targets: Vec::new(),
+            lb_strategy: String::new(),
             tunnel: Some(TunnelContext {
                 tunnel_id: 9,
                 role: role as i32,

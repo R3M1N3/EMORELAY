@@ -1,7 +1,31 @@
 use crate::models::rule::Rule as DbRule;
 use emorelay_common::control::v1::{
-    command::Body, ApplyRule, Command, RemoveRule, Rule as ProtoRule,
+    command::Body, ApplyRule, Command, RemoveRule, Rule as ProtoRule, TargetEndpoint,
 };
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct ExtraTarget {
+    host: String,
+    port: u32,
+}
+
+/// 解析 forward_rules.extra_targets(JSON 数组)为 proto TargetEndpoint 列表。
+/// 解析失败/空 → 空列表(降级为单目标,不致命)。
+fn parse_extra_targets(json: Option<&str>) -> Vec<TargetEndpoint> {
+    let Some(s) = json else { return Vec::new() };
+    match serde_json::from_str::<Vec<ExtraTarget>>(s) {
+        Ok(v) => v
+            .into_iter()
+            .map(|t| TargetEndpoint { host: t.host, port: t.port })
+            .collect(),
+        Err(e) => {
+            // 写入侧 validate_targets 保证格式;此处损坏属异常,降级单目标并告警(不致命)。
+            tracing::warn!(error = ?e, "corrupt extra_targets JSON; falling back to single target");
+            Vec::new()
+        }
+    }
+}
 
 /// DB Rule → 协议 Rule。bandwidth_mbps 派生列 None→0(无限速)。
 /// blocked_protocols 是节点级嗅探阻断位掩码(由调用方查节点设置传入,仅非隧道 TCP relay 用)。
@@ -18,6 +42,8 @@ pub fn rule_to_proto(rule: &DbRule, blocked_protocols: u32) -> ProtoRule {
         tunnel: None,
         max_connections: rule.max_connections.unwrap_or(0),
         blocked_protocols,
+        extra_targets: parse_extra_targets(rule.extra_targets.as_deref()),
+        lb_strategy: rule.lb_strategy.clone(),
     }
 }
 

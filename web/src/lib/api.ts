@@ -138,12 +138,22 @@ export interface RuleView {
   tunnel_id: number | null
   /** 并发连接上限(仅 TCP);null = 不限 */
   max_connections: number | null
+  /** P2 多目标额外目标 + 负载策略 */
+  extra_targets: TargetDto[]
+  lb_strategy: LbStrategy
   rx_bytes: number
   tx_bytes: number
   connection_count: number
   created_at: string
   updated_at: string
 }
+
+export interface TargetDto {
+  host: string
+  port: number
+}
+
+export type LbStrategy = 'fifo' | 'round' | 'rand' | 'hash'
 
 export interface RuleListResponse {
   items: RuleView[]
@@ -230,6 +240,9 @@ export interface CreateRuleRequest {
   user_id?: number
   /** 并发连接上限(仅 TCP,admin 管控);不传 = 不限 */
   max_connections?: number
+  /** P2 多目标额外目标(空数组 = 单目标)+ 负载策略 */
+  extra_targets?: TargetDto[]
+  lb_strategy?: LbStrategy
 }
 
 export interface UpdateRuleRequest {
@@ -242,6 +255,9 @@ export interface UpdateRuleRequest {
   bandwidth_profile_id?: number
   /** 0 = 清除上限(admin 管控) */
   max_connections?: number
+  /** 给定则全量替换额外目标(空 = 清空);不传 = 不改 */
+  extra_targets?: TargetDto[]
+  lb_strategy?: LbStrategy
 }
 
 export interface RuleStatsBucket {

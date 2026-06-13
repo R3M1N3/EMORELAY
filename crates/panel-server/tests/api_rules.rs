@@ -99,6 +99,48 @@ async fn rule_full_cycle() {
 }
 
 #[tokio::test]
+async fn create_rule_with_multi_target_and_strategy() {
+    let app = make_app().await.unwrap();
+    let t = &app.admin_token;
+    sqlx::query("INSERT INTO nodes (name, agent_token_hash, public_ip, port_pool_min, port_pool_max) VALUES ('mn','x','1.2.3.4',10000,65535)")
+        .execute(&app.state.pool).await.unwrap();
+    // 多目标 + round 策略。
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        t,
+        Some(json!({
+            "node_id": 1, "name": "mt", "protocol": "tcp", "listen_port": 20000,
+            "target_host": "1.1.1.1", "target_port": 80,
+            "extra_targets": [{"host": "2.2.2.2", "port": 80}, {"host": "3.3.3.3", "port": 8080}],
+            "lb_strategy": "round"
+        })),
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["lb_strategy"], "round");
+    let extra = body["extra_targets"].as_array().unwrap();
+    assert_eq!(extra.len(), 2);
+    assert_eq!(extra[0]["host"], "2.2.2.2");
+    assert_eq!(extra[1]["port"], 8080);
+
+    // 非法策略被拒。
+    let req = auth_req(
+        Method::POST,
+        "/api/rules",
+        t,
+        Some(json!({
+            "node_id": 1, "name": "mt2", "protocol": "tcp", "listen_port": 20001,
+            "target_host": "1.1.1.1", "target_port": 80, "lb_strategy": "bogus"
+        })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn create_rule_with_reserved_port_rejected() {
     let app = make_app().await.unwrap();
     // 端口池显式含 22:默认池已上调到 10000+,否则会先撞"超出端口池"而非"保留端口"。

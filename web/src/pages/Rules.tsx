@@ -13,9 +13,11 @@ import {
   type BandwidthProfileView,
   type CreateRuleRequest,
   type ImportReport,
+  type LbStrategy,
   type NodeView,
   type RuleExportItem,
   type RuleView,
+  type TargetDto,
   type TunnelView,
   type UpdateRuleRequest,
   type UserDetail,
@@ -797,6 +799,9 @@ interface RuleFormState {
   tunnel_id: string
   user_id: string
   max_connections: string
+  /** 额外目标,每行一个 host:port */
+  extra_targets: string
+  lb_strategy: LbStrategy
 }
 
 export function RuleForm({
@@ -836,6 +841,8 @@ export function RuleForm({
     tunnel_id: initial?.tunnel_id != null ? String(initial.tunnel_id) : '',
     user_id: initial != null ? String(initial.user_id) : '',
     max_connections: initial?.max_connections != null ? String(initial.max_connections) : '',
+    extra_targets: (initial?.extra_targets ?? []).map((t) => `${t.host}:${t.port}`).join('\n'),
+    lb_strategy: initial?.lb_strategy ?? 'fifo',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -886,6 +893,34 @@ export function RuleForm({
     return segOk && !/^\d+$/.test(segs[segs.length - 1])
   }
 
+  // 解析额外目标 textarea(每行 host:端口,IPv6 用 [::1]:端口)。返回错误字符串或目标数组。
+  function parseExtraTargets(text: string): TargetDto[] | string {
+    const out: TargetDto[] = []
+    for (const raw of text.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      let host: string
+      let portStr: string
+      if (line.startsWith('[')) {
+        const m = line.match(/^\[(.+)\]:(\d+)$/)
+        if (!m) return `额外目标格式应为 [IPv6]:端口 — "${line}"`
+        host = m[1]
+        portStr = m[2]
+      } else {
+        const idx = line.lastIndexOf(':')
+        if (idx <= 0) return `额外目标格式应为 host:端口 — "${line}"`
+        host = line.slice(0, idx)
+        portStr = line.slice(idx + 1)
+      }
+      const port = Number(portStr)
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        return `额外目标端口非法 — "${line}"`
+      if (!isValidTargetHostShape(host)) return `额外目标地址不合法 — "${host}"`
+      out.push({ host, port })
+    }
+    return out
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -900,6 +935,11 @@ export function RuleForm({
     if (typeof targetPort === 'string') return setError(targetPort)
     if (!isValidTargetHostShape(form.target_host.trim()))
       return setError('目标地址不是合法 IP 或域名')
+
+    const extraTargets = parseExtraTargets(form.extra_targets)
+    if (typeof extraTargets === 'string') return setError(extraTargets)
+    if (extraTargets.length > 0 && form.tunnel_id)
+      return setError('隧道规则暂不支持多目标')
 
     setSubmitting(true)
     try {
@@ -928,6 +968,10 @@ export function RuleForm({
           if (form.max_connections) payload.max_connections = Number(form.max_connections)
         }
         payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
+        if (extraTargets.length > 0) {
+          payload.extra_targets = extraTargets
+          payload.lb_strategy = form.lb_strategy
+        }
         await rules.create(payload)
       } else if (initial) {
         // 协议与所属节点不允许编辑（端口绑定语义会变），UI 上禁用了字段。
@@ -962,6 +1006,14 @@ export function RuleForm({
                 ? Number(form.max_connections)
                 : 0
               : undefined,
+        }
+        // 多目标/策略变更才发(空数组 = 清空回单目标)。
+        const initialExtraStr = (initial.extra_targets ?? [])
+          .map((t) => `${t.host}:${t.port}`)
+          .join('\n')
+        if (form.extra_targets.trim() !== initialExtraStr.trim() || form.lb_strategy !== initial.lb_strategy) {
+          payload.extra_targets = extraTargets
+          payload.lb_strategy = form.lb_strategy
         }
         await rules.update(initial.id, payload)
       }
@@ -1157,6 +1209,41 @@ export function RuleForm({
           />
         </div>
       </div>
+
+      {!form.tunnel_id && (
+        <div>
+          <label htmlFor="rule-extra-targets" className={fieldLabelCls}>
+            额外目标（可选，负载均衡）
+          </label>
+          <textarea
+            id="rule-extra-targets"
+            rows={3}
+            value={form.extra_targets}
+            onChange={(e) => set('extra_targets', e.target.value)}
+            className={`${fieldInputCls} font-mono`}
+            placeholder={'每行一个 host:端口\n2.2.2.2:443\nbackend2.example.com:8080'}
+          />
+          <p className="text-[11px] text-zinc-500 mt-1">
+            留空 = 单目标。主目标(上方) + 额外目标组成负载池;IPv6 用 [::1]:端口。
+          </p>
+          {form.extra_targets.trim() !== '' && (
+            <div className="mt-2">
+              <label htmlFor="rule-lb-strategy" className={fieldLabelCls}>负载策略</label>
+              <select
+                id="rule-lb-strategy"
+                value={form.lb_strategy}
+                onChange={(e) => set('lb_strategy', e.target.value as LbStrategy)}
+                className={fieldInputCls}
+              >
+                <option value="fifo">主备故障转移（fifo，主目标优先）</option>
+                <option value="round">轮询（round）</option>
+                <option value="rand">随机（rand）</option>
+                <option value="hash">客户端 IP 哈希（hash，会话粘性）</option>
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       {isAdmin && (
         <div className="grid grid-cols-2 gap-3">
