@@ -60,6 +60,15 @@ select optgroup {
    (曾导致 glass-card 的 position:relative 击败 fixed/sticky,小屏 drawer 布局损坏)。 */
 @layer components {
 
+/* ---------- 移动端刘海屏安全区(viewport-fit=cover 配合) ---------- */
+/* env() 在不支持的环境回退 0px,桌面无副作用;max() 保证至少原内边距。 */
+.safe-top { padding-top: env(safe-area-inset-top, 0px); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.safe-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
 /* ---------- 极光背景层（Backdrop 组件使用） ---------- */
 .aurora { position: fixed; inset: 0; z-index: 0; overflow: hidden; filter: blur(90px) saturate(1.4); pointer-events: none; }
 .aurora i { position: absolute; border-radius: 50%; mix-blend-mode: screen; opacity: 0.5; will-change: transform; }

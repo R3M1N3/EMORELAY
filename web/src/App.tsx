@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
 import ChangePassword from './pages/ChangePassword'
@@ -84,6 +84,12 @@ const NAV: { to: string; label: string; adminOnly?: boolean }[] = [
 function ProtectedShell() {
   const { user, loading, logout, mustChangePassword } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const mainRef = useRef<HTMLElement>(null)
+  const loc = useLocation()
+  // 路由切换后内容区滚回顶部(移动端尤其重要,否则停在上一页的滚动位置)。
+  useEffect(() => {
+    mainRef.current?.scrollTo(0, 0)
+  }, [loc.pathname])
   // 移动端 drawer 支持 Escape 关闭,与弹窗行为一致。
   useEffect(() => {
     if (!drawerOpen) return
@@ -104,11 +110,11 @@ function ProtectedShell() {
   if (mustChangePassword) return <Navigate to="/change-password" replace />
 
   return (
-    <div className="min-h-svh text-zinc-100 flex gap-5 p-3 md:p-5 relative">
+    <div className="min-h-svh text-zinc-100 flex gap-5 p-3 md:p-5 relative safe-x safe-bottom">
       <Backdrop />
       {/* Sidebar:大屏为悬浮玻璃板;小屏隐藏(translate-x),由汉堡触发覆盖 drawer。 */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-56 shrink-0 p-4 flex flex-col transition-transform duration-300 glass-card rounded-none md:rounded-3xl md:translate-x-0 md:sticky md:top-5 md:inset-y-auto md:h-[calc(100svh-2.5rem)] md:self-start ${
+        className={`fixed inset-y-0 left-0 z-30 w-56 shrink-0 p-4 safe-top flex flex-col transition-transform duration-300 glass-card rounded-none md:rounded-3xl md:translate-x-0 md:sticky md:top-5 md:inset-y-auto md:h-[calc(100svh-2.5rem)] md:self-start ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -171,7 +177,7 @@ function ProtectedShell() {
           </div>
         </header>
 
-        <main className="flex-1 min-w-0 py-6 md:py-8 overflow-auto">
+        <main ref={mainRef} className="flex-1 min-w-0 py-6 md:py-8 overflow-auto">
           <Outlet />
         </main>
       </div>
