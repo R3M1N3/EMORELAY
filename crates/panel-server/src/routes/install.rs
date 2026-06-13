@@ -176,9 +176,23 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+PrivateTmp=true
 # /usr/local/bin 可写是 P10b 一键升级的前提(Agent 原子替换自身二进制)。
 # 老版本装的节点缺这行,一键升级会 EROFS 失败,需手动补 + daemon-reload。
 ReadWritePaths=/var/lib/emorelay /usr/local/bin
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+# TCP/UDP relay + gRPC 控制面只需要这三类地址族;阻断 AF_PACKET / AF_NETLINK 等
+# 减少潜在 raw socket 利用面。
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

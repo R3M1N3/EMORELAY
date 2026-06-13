@@ -15,6 +15,13 @@
 emorelay.example.com {
     encode gzip zstd
 
+    # 安全响应头:HSTS 强制 HTTPS、禁 MIME 嗅探、禁被 iframe 嵌入(防点击劫持)。
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+    }
+
     # /api/* 走 panel-server REST(compose 中已绑 127.0.0.1:8080)。
     # 必须用 handle 而非 handle_path:panel-server 路由自带 /api 前缀,剥掉必 404。
     handle /api/* {
