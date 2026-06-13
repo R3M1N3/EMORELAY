@@ -29,6 +29,29 @@ CADDY_BAK="/etc/caddy/Caddyfile.bak-emorelay"
 # 测试逃生阀:容器冒烟环境无 systemd 时置 1,跳过所有 systemctl 调用。
 SKIP_SYSTEMCTL="${EMORELAY_SKIP_SYSTEMCTL:-0}"
 
+# GitHub 下载加速前缀(对标 flux ghfast.top)。中国大陆网络自动启用,显式设
+# EMORELAY_GH_PROXY=（空)可禁用,或设为自定义镜像(末尾带 /)。gh_url 包裹 GitHub URL。
+GH_PROXY="${EMORELAY_GH_PROXY-}"
+GH_PROXY_DETECTED=0
+# 自动探测:仅当用户未显式设置该 env 时,据 Cloudflare trace 的 loc 判断是否在 CN。
+detect_cn_proxy() {
+    [[ -n "${EMORELAY_GH_PROXY+x}" ]] && return  # 显式设置(含空)→ 尊重,不自动探测
+    local loc
+    loc="$(curl -fsS --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | sed -n 's/^loc=//p' | tr -d '\r')"
+    if [[ "$loc" == "CN" ]]; then
+        GH_PROXY="https://ghfast.top/"
+        GH_PROXY_DETECTED=1
+    fi
+}
+# 用加速前缀包裹一个 github.com / raw.githubusercontent.com URL。GH_PROXY 为空则原样返回。
+gh_url() {
+    if [[ -n "$GH_PROXY" ]]; then
+        echo "${GH_PROXY}$1"
+    else
+        echo "$1"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # 工具层
 # ---------------------------------------------------------------------------
@@ -217,7 +240,7 @@ ensure_repo() {
         info "源码已存在: $INSTALL_DIR"
     else
         info "clone 仓库到 $INSTALL_DIR ..."
-        git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+        git clone --depth 1 "$(gh_url "$REPO_URL")" "$INSTALL_DIR"
     fi
 }
 
@@ -323,6 +346,7 @@ firewall_hint() {
 # 跟随 /releases/latest 重定向解析最新 tag,无 release 时返回非零。
 resolve_release_tag() {
     local url
+    # tag 解析走直连 GitHub(重定向跟随,加速镜像未必透传 302);失败时调用方回落源码模式。
     url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$RELEASE_LATEST_URL" 2>/dev/null)" || return 1
     [[ "$url" == */tag/* ]] || return 1
     echo "${url##*/}"
@@ -339,7 +363,10 @@ fetch_release_assets() {
     fi
     info "最新 release: ${RELEASE_TAG}"
     RELEASE_TMP="$(mktemp -d)"
-    local base="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}"
+    # 二进制/前端是下载大头,走加速镜像(CN 自动启用);SHA256SUMS 仍校验,镜像被
+    # 投毒会校验失败而中止,安全性不降。
+    local base
+    base="$(gh_url "https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}")"
     local f
     for f in "panel-server-linux-${ARCH}" node-agent-linux-amd64 node-agent-linux-arm64 web-dist.tar.gz SHA256SUMS; do
         info "下载 ${f} ..."
@@ -936,6 +963,9 @@ main() {
     check_root
     check_os
     check_arch
+    detect_cn_proxy
+    [[ "$GH_PROXY_DETECTED" == "1" ]] && \
+        info "检测到中国大陆网络,GitHub 下载启用加速镜像 ${GH_PROXY}(EMORELAY_GH_PROXY= 可禁用)"
     detect_mode
     # 已安装时源码目录以标记安装位置为准(curl|bash 二次运行时 cwd 不在仓库内)。
     # release 通道无源码目录,升级走 release 资产,不需要仓库。
