@@ -39,7 +39,22 @@ pub async fn install_sh(
         .clone()
         .unwrap_or_else(|| "PANEL_PUBLIC_BASE_URL_NOT_SET".into());
 
-    let script = render_install_sh(node_id, &endpoint, &base);
+    // 安全(H1):endpoint / base 以 base64 下发,脚本内 base64 -d 解码为 shell 变量。
+    // base64 字母表仅 [A-Za-z0-9+/=],无 shell 元字符,从构造上消除命令注入。
+    use base64::Engine as _;
+    let endpoint_b64 = base64::engine::general_purpose::STANDARD.encode(endpoint.as_bytes());
+    let base_b64 = base64::engine::general_purpose::STANDARD.encode(base.as_bytes());
+
+    // 安全(H2):内联两架构二进制 sha256,脚本下载后校验;缺失则空串,脚本侧跳过并告警。
+    let dist_dir = format!("{}/agent-dist", state.config.panel_data_dir);
+    let sha_amd64 = sha256_of(&format!("{dist_dir}/node-agent-linux-amd64"))
+        .await
+        .unwrap_or_default();
+    let sha_arm64 = sha256_of(&format!("{dist_dir}/node-agent-linux-arm64"))
+        .await
+        .unwrap_or_default();
+
+    let script = render_install_sh(node_id, &endpoint_b64, &base_b64, &sha_amd64, &sha_arm64);
 
     let body = axum::body::Body::from(script);
     Response::builder()
@@ -50,7 +65,20 @@ pub async fn install_sh(
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("response build: {e}")))
 }
 
-fn render_install_sh(node_id: i64, control_endpoint: &str, base_url: &str) -> String {
+/// 计算文件 sha256(hex)。文件缺失/读失败返回 None。
+async fn sha256_of(path: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = tokio::fs::read(path).await.ok()?;
+    Some(hex::encode(Sha256::digest(&bytes)))
+}
+
+fn render_install_sh(
+    node_id: i64,
+    control_endpoint_b64: &str,
+    base_url_b64: &str,
+    sha_amd64: &str,
+    sha_arm64: &str,
+) -> String {
     format!(
         r##"#!/usr/bin/env bash
 # EMORELAY node-agent 一键安装脚本
@@ -74,16 +102,19 @@ if [[ -z "${{TOKEN:-}}" ]]; then
   exit 64
 fi
 
-BASE_URL="{base_url}"
+# 解码面板下发的端点(base64,杜绝 shell 注入:base64 字母表无 shell 元字符)。
+CONTROL_ENDPOINT="$(printf '%s' '{control_endpoint_b64}' | base64 -d)"
+BASE_URL="$(printf '%s' '{base_url_b64}' | base64 -d)"
 if [[ "$BASE_URL" == "PANEL_PUBLIC_BASE_URL_NOT_SET" ]]; then
   echo "panel-server is missing PANEL_PUBLIC_BASE_URL env; cannot bootstrap agent." >&2
   exit 78
 fi
 
 ARCH=""
+EXPECTED_SHA=""
 case "$(uname -m)" in
-  x86_64|amd64)  ARCH=amd64 ;;
-  aarch64|arm64) ARCH=arm64 ;;
+  x86_64|amd64)  ARCH=amd64; EXPECTED_SHA="{sha_amd64}" ;;
+  aarch64|arm64) ARCH=arm64; EXPECTED_SHA="{sha_arm64}" ;;
   *) echo "unsupported arch: $(uname -m)" >&2; exit 70 ;;
 esac
 
@@ -92,6 +123,12 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 echo "downloading agent binary (linux-$ARCH)..."
 curl -fsSL "${{BASE_URL}}/dist/node-agent-linux-${{ARCH}}" -o "$TMP/node-agent"
+if [[ -n "$EXPECTED_SHA" ]]; then
+  echo "${{EXPECTED_SHA}}  ${{TMP}}/node-agent" | sha256sum -c - \
+    || {{ echo "agent binary sha256 mismatch — aborting" >&2; exit 1; }}
+else
+  echo "warning: panel has no expected sha256 for $ARCH; skipping integrity check" >&2
+fi
 install -m 0755 "$TMP/node-agent" /usr/local/bin/emorelay-agent
 
 # 2. 写 env 文件
@@ -115,7 +152,7 @@ fi
 cat > /etc/emorelay/agent.env <<EOF
 AGENT_NODE_ID={node_id}
 AGENT_TOKEN=$TOKEN
-AGENT_CONTROL_ENDPOINT={control_endpoint}
+AGENT_CONTROL_ENDPOINT=$CONTROL_ENDPOINT
 AGENT_STATE_PATH=/var/lib/emorelay/agent-state.json
 AGENT_DATA_DIR=/var/lib/emorelay
 EOF
@@ -153,10 +190,12 @@ systemctl enable --now emorelay-agent
 sleep 1
 systemctl status emorelay-agent --no-pager || true
 echo
-echo "done. agent connecting to {control_endpoint} for node #{node_id}"
+echo "done. agent connecting to $CONTROL_ENDPOINT for node #{node_id}"
 "##,
-        base_url = base_url,
-        control_endpoint = control_endpoint,
+        control_endpoint_b64 = control_endpoint_b64,
+        base_url_b64 = base_url_b64,
+        sha_amd64 = sha_amd64,
+        sha_arm64 = sha_arm64,
         node_id = node_id,
     )
 }

@@ -119,10 +119,76 @@ async fn install_sh_uses_endpoint_from_settings() {
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
     let body = std::str::from_utf8(&bytes).unwrap();
+    // 端点以 base64 下发(H1 防注入),脚本内 base64 -d 解码为 $CONTROL_ENDPOINT。
+    // 断言:endpoint 的 base64 形式被嵌入解码行,且 env 块引用该 shell 变量。
+    let endpoint_b64 = "aHR0cHM6Ly9yZWxheS5leGFtcGxlLmNvbTo1MDA1MQ==";
     assert!(
-        body.contains("AGENT_CONTROL_ENDPOINT=https://relay.example.com:50051"),
-        "missing endpoint in env block"
+        body.contains(&format!("'{endpoint_b64}' | base64 -d")),
+        "missing base64-encoded endpoint decode line"
     );
+    assert!(
+        body.contains("AGENT_CONTROL_ENDPOINT=$CONTROL_ENDPOINT"),
+        "missing endpoint env var reference"
+    );
+}
+
+#[tokio::test]
+async fn install_sh_neutralizes_command_injection() {
+    let app = make_app().await.unwrap();
+    // admin 把含命令替换 $(...) 的 endpoint 写进设置;收紧后的校验应拒绝(400)。
+    let req = common::auth_req(
+        Method::PATCH,
+        "/api/system/settings",
+        &app.admin_token,
+        Some(serde_json::json!({
+            "settings": { "agent_control_endpoint": "https://x:50051/$(touch /tmp/pwn)" }
+        })),
+    )
+    .unwrap();
+    let (status, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "含命令替换字符的 endpoint 应被拒绝"
+    );
+}
+
+#[tokio::test]
+async fn install_sh_embeds_sha256_and_base64_endpoint() {
+    let app = make_app().await.unwrap();
+    // 放一个假的 dist 二进制,让 handler 能算 sha256(panel_data_dir 即测试 tempdir)。
+    let dist = format!("{}/agent-dist", app.state.config.panel_data_dir);
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(format!("{dist}/node-agent-linux-amd64"), b"FAKEBIN").unwrap();
+
+    // 设一个合法 endpoint。
+    let req = common::auth_req(
+        Method::PATCH,
+        "/api/system/settings",
+        &app.admin_token,
+        Some(serde_json::json!({
+            "settings": { "agent_control_endpoint": "https://relay.example.com:50051" }
+        })),
+    )
+    .unwrap();
+    common::send(app.app.clone(), req).await.unwrap();
+
+    // 拉 install.sh。
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/install.sh?node=1")
+        .header("x-forwarded-for", "127.0.0.1")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let body = std::str::from_utf8(&bytes).unwrap();
+    assert!(body.contains("base64 -d"), "应通过 base64 解码端点");
+    assert!(body.contains("sha256sum -c"), "应校验二进制 sha256");
+    // 来自 endpoint 的部分被 base64 化,注入串不得字面出现在脚本里。
+    assert!(!body.contains("$(touch"), "注入串不得出现在脚本中");
+    assert!(!body.contains("$(curl"), "注入串不得出现在脚本中");
 }
 
 #[tokio::test]

@@ -351,6 +351,28 @@ fn validate_setting(key: &str, value: &str) -> ApiResult<()> {
             if value.is_empty() {
                 return Ok(()); // 空 = 未配置
             }
+            // 安全:拒绝任何 shell 危险字符(URL host:port 不应含这些),与 base64 下发形成纵深。
+            if value.bytes().any(|b| {
+                matches!(
+                    b,
+                    b'$' | b'`'
+                        | b'('
+                        | b')'
+                        | b';'
+                        | b'|'
+                        | b'&'
+                        | b'<'
+                        | b'>'
+                        | b'\\'
+                        | b'\n'
+                        | b'\r'
+                        | b' '
+                )
+            }) {
+                return Err(ApiError::BadRequest(
+                    "agent_control_endpoint 含非法字符".into(),
+                ));
+            }
             let url = url::Url::parse(value).map_err(|e| {
                 ApiError::BadRequest(format!("agent_control_endpoint 必须是合法 URL: {e}"))
             })?;
