@@ -12,6 +12,8 @@ pub struct User {
     pub period_used_calculated_at: Option<String>,
     /// 首登强制改密标志:1 = 下次登录前必须改密(admin 新建/重置时置位)。
     pub must_change_password: i64,
+    /// 月度重置日(1-31);NULL = 滚动 30 天窗口。
+    pub quota_reset_day: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -22,7 +24,7 @@ impl User {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
                  period_used_bytes_cached, period_used_calculated_at, must_change_password, \
-                 created_at, updated_at, deleted_at \
+                 quota_reset_day, created_at, updated_at, deleted_at \
              FROM users WHERE username = ? AND deleted_at IS NULL",
         )
         .bind(username)
@@ -34,7 +36,7 @@ impl User {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
                  period_used_bytes_cached, period_used_calculated_at, must_change_password, \
-                 created_at, updated_at, deleted_at \
+                 quota_reset_day, created_at, updated_at, deleted_at \
              FROM users WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(id)
@@ -102,7 +104,7 @@ impl User {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
                  period_used_bytes_cached, period_used_calculated_at, must_change_password, \
-                 created_at, updated_at, deleted_at \
+                 quota_reset_day, created_at, updated_at, deleted_at \
              FROM users WHERE deleted_at IS NULL \
              ORDER BY id DESC LIMIT ? OFFSET ?",
         )
@@ -144,6 +146,23 @@ impl User {
         .bind(role)
         .bind(expires_at)
         .bind(traffic_limit_bytes_30d)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// 设置/清除月度重置日。day=Some(1..=31) 启用月度模式;day=None 回滚动 30 天。
+    pub async fn set_quota_reset_day(
+        pool: &SqlitePool,
+        id: i64,
+        day: Option<i64>,
+    ) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE users SET quota_reset_day = ?, updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(day)
         .bind(id)
         .execute(pool)
         .await?;

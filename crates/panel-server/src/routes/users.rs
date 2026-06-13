@@ -33,6 +33,8 @@ pub struct UserView {
     pub period_used_calculated_at: Option<String>,
     /// 计算字段:max(0, limit - used);limit 为 NULL 时为 None。
     pub period_remaining_bytes: Option<i64>,
+    /// 月度重置日(1-31);None = 滚动 30 天窗口。
+    pub quota_reset_day: Option<i64>,
 }
 
 fn remaining(limit: Option<i64>, used: i64) -> Option<i64> {
@@ -56,6 +58,7 @@ impl From<User> for UserView {
             period_used_bytes_cached: u.period_used_bytes_cached,
             period_used_calculated_at: u.period_used_calculated_at,
             period_remaining_bytes,
+            quota_reset_day: u.quota_reset_day,
         }
     }
 }
@@ -74,6 +77,7 @@ struct UserListRow {
     traffic_limit_bytes_30d: Option<i64>,
     period_used_bytes_cached: i64,
     period_used_calculated_at: Option<String>,
+    quota_reset_day: Option<i64>,
 }
 
 impl From<UserListRow> for UserView {
@@ -93,6 +97,7 @@ impl From<UserListRow> for UserView {
             period_used_bytes_cached: r.period_used_bytes_cached,
             period_used_calculated_at: r.period_used_calculated_at,
             period_remaining_bytes,
+            quota_reset_day: r.quota_reset_day,
         }
     }
 }
@@ -119,6 +124,8 @@ pub struct CreateUserRequest {
     pub role: String,
     pub expires_at: Option<String>,
     pub traffic_limit_bytes_30d: Option<i64>,
+    /// 月度重置日 1-31;0/None = 滚动 30 天(默认)。
+    pub quota_reset_day: Option<i64>,
     /// 授权可用的节点/隧道 id(默认拒绝;未传/None 表示不授权任何)。
     pub granted_node_ids: Option<Vec<i64>>,
     pub granted_tunnel_ids: Option<Vec<i64>>,
@@ -132,9 +139,23 @@ pub struct UpdateUserRequest {
     pub expires_at: Option<String>,
     /// 0 = 清除
     pub traffic_limit_bytes_30d: Option<i64>,
+    /// None = 不改;0 = 清除(回滚动 30 天);1-31 = 月度重置日。
+    pub quota_reset_day: Option<i64>,
     /// 给定则全量替换该用户的授权;None 表示不改动授权。
     pub granted_node_ids: Option<Vec<i64>>,
     pub granted_tunnel_ids: Option<Vec<i64>>,
+}
+
+/// 校验月度重置日:允许 0(清除/滚动)或 1-31。
+fn validate_quota_reset_day(day: Option<i64>) -> ApiResult<()> {
+    if let Some(d) = day {
+        if d != 0 && !(1..=31).contains(&d) {
+            return Err(ApiError::BadRequest(
+                "月度重置日必须是 1-31,或 0 表示按滚动 30 天".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub async fn list(
@@ -161,7 +182,7 @@ pub async fn list(
                 COALESCE(r.cnt, 0) AS rule_count, \
                 COALESCE(r.tot, 0) AS total_traffic_bytes, \
                 u.expires_at, u.traffic_limit_bytes_30d, \
-                u.period_used_bytes_cached, u.period_used_calculated_at \
+                u.period_used_bytes_cached, u.period_used_calculated_at, u.quota_reset_day \
          FROM users u \
          LEFT JOIN ( \
              SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
@@ -254,6 +275,7 @@ pub async fn create(
     validate_username(username)?;
     validate_password(&req.password)?;
     validate_role(&req.role)?;
+    validate_quota_reset_day(req.quota_reset_day)?;
     let normalized_expires = match req.expires_at.as_deref() {
         None | Some("") => None,
         Some(s) => Some(crate::util::normalize_datetime(s).ok_or_else(|| {
@@ -281,6 +303,10 @@ pub async fn create(
     )
     .await
     .map_err(map_sqlx_to_api)?;
+    // 月度重置日:1-31 启用月度模式(0/None 保持滚动 30 天默认)。
+    if let Some(d) = req.quota_reset_day.filter(|d| (1..=31).contains(d)) {
+        User::set_quota_reset_day(&state.pool, new_id, Some(d)).await?;
+    }
     let user = User::find_by_id(&state.pool, new_id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -359,6 +385,7 @@ pub async fn update(
             "30 天流量上限不能为负数".into(),
         ));
     }
+    validate_quota_reset_day(req.quota_reset_day)?;
 
     let new_hash = match req.password.as_deref() {
         Some(p) => Some(hash_password(p).map_err(ApiError::Internal)?),
@@ -375,6 +402,11 @@ pub async fn update(
     .await?;
     if rows == 0 {
         return Err(ApiError::NotFound);
+    }
+    // 月度重置日:None 不改;0 清除(回滚动);1-31 设月度。与 User::update 解耦,单独 setter。
+    if let Some(d) = req.quota_reset_day {
+        let val = if d == 0 { None } else { Some(d) };
+        User::set_quota_reset_day(&state.pool, id, val).await?;
     }
     let user = User::find_by_id(&state.pool, id)
         .await?

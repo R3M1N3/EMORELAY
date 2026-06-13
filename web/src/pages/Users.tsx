@@ -388,6 +388,8 @@ interface UserFormState {
   role: 'admin' | 'user'
   expires_at: string
   traffic_limit_gb: string
+  /** '' = 滚动 30 天;'1'..'31' = 月度重置日 */
+  quota_reset_day: string
 }
 
 function UserForm({
@@ -408,6 +410,7 @@ function UserForm({
     // 回填:后端 UTC → 本地时区输入值。
     expires_at: initial?.expires_at ? utcToLocalInput(initial.expires_at) : '',
     traffic_limit_gb: bytesToGbString(initial?.traffic_limit_bytes_30d ?? null),
+    quota_reset_day: initial?.quota_reset_day != null ? String(initial.quota_reset_day) : '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -469,6 +472,17 @@ function UserForm({
         setSubmitting(false)
         return
       }
+      // 月度重置日:'' = 滚动;否则必须 1-31。
+      let resetDay: number | undefined
+      if (form.quota_reset_day.trim() !== '') {
+        const d = Number(form.quota_reset_day)
+        if (!Number.isInteger(d) || d < 1 || d > 31) {
+          setError('月度重置日必须是 1-31，或留空表示滚动 30 天')
+          setSubmitting(false)
+          return
+        }
+        resetDay = d
+      }
       if (mode === 'create') {
         if (form.username.trim().length < 3) {
           setError('用户名长度需 3-32')
@@ -487,6 +501,7 @@ function UserForm({
           expires_at: form.expires_at ? localInputToUtc(form.expires_at) : null,
           traffic_limit_bytes_30d: limitBytes,
         }
+        if (resetDay !== undefined) payload.quota_reset_day = resetDay
         // 默认拒绝:不勾选即不发送(admin 角色不受授权限制,不发送)。
         if (form.role === 'user') {
           if (grantedNodes.size > 0) payload.granted_node_ids = [...grantedNodes]
@@ -515,6 +530,10 @@ function UserForm({
         const initialLimit = initial.traffic_limit_bytes_30d
         if ((limitBytes ?? 0) !== (initialLimit ?? 0)) {
           payload.traffic_limit_bytes_30d = limitBytes ?? 0 // 0 = 清除
+        }
+        // 月度重置日变更:0 清除(回滚动),1-31 设置。
+        if ((resetDay ?? 0) !== (initial.quota_reset_day ?? 0)) {
+          payload.quota_reset_day = resetDay ?? 0
         }
         // 授权变更检测:回显成功(initialGrants 非 null)且勾选有变化才发送全量替换。
         if (initialGrants && form.role === 'user') {
@@ -611,7 +630,25 @@ function UserForm({
             className={fieldInputCls}
             placeholder="留空 = 不限"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">滚动 30 天窗口;超限后该用户全部规则自动停用。</p>
+          <p className="text-[11px] text-zinc-500 mt-1">超限后该用户全部规则自动停用。重置方式见下。</p>
+        </div>
+        <div>
+          <label className={fieldLabelCls}>用量重置方式</label>
+          <select
+            value={form.quota_reset_day}
+            onChange={(e) => setForm((f) => ({ ...f, quota_reset_day: e.target.value }))}
+            className={fieldInputCls}
+          >
+            <option value="">滚动 30 天窗口</option>
+            {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+              <option key={d} value={String(d)}>
+                每月 {d} 日重置
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-zinc-500 mt-1">
+            滚动窗口按最近 30 天统计；月度则每月固定日 0 点清零（月末容错）。
+          </p>
         </div>
       </div>
 

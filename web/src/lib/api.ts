@@ -288,6 +288,8 @@ export interface UserDetail {
   period_used_bytes_cached: number
   period_used_calculated_at: string | null
   period_remaining_bytes: number | null
+  /** 月度重置日 1-31;null = 滚动 30 天 */
+  quota_reset_day: number | null
 }
 
 export interface UserListResponse {
@@ -303,6 +305,8 @@ export interface CreateUserRequest {
   role: 'admin' | 'user'
   expires_at?: string | null
   traffic_limit_bytes_30d?: number | null
+  /** 月度重置日 1-31;0/不传 = 滚动 30 天 */
+  quota_reset_day?: number | null
   /** P7 授权(默认拒绝):未传 = 不授权任何节点/隧道 */
   granted_node_ids?: number[]
   granted_tunnel_ids?: number[]
@@ -315,6 +319,8 @@ export interface UpdateUserRequest {
   expires_at?: string
   /** 0 = 清除限额 */
   traffic_limit_bytes_30d?: number
+  /** None=不改;0=清除(回滚动);1-31=月度重置日 */
+  quota_reset_day?: number
   /** 给定则全量替换该用户授权;不传 = 不改动 */
   granted_node_ids?: number[]
   granted_tunnel_ids?: number[]

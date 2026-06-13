@@ -230,3 +230,41 @@ async fn quota_billing_non_tunnel_rule_unchanged() {
     quota_tick_once(&app.state).await.unwrap();
     assert_eq!(cached_usage(&app, uid).await, 150);
 }
+
+#[tokio::test]
+async fn quota_monthly_reset_only_counts_after_period_start() {
+    // 月度模式:重置日固定取 1 号,则本期起点恒 = 本月 1 号 0 点(与运行当天日号无关,
+    // 避免月份边界脆弱)。本月之前的流量不计,本月内的流量计入。
+    let app = common::make_app().await.unwrap();
+    let (uid, _) = common::make_user_token(&app, "monthu", "password123").await.unwrap();
+    let (r1, _) = seed_rules(&app, uid).await;
+
+    sqlx::query("UPDATE users SET quota_reset_day = 1 WHERE id = ?")
+        .bind(uid)
+        .execute(&app.state.pool)
+        .await
+        .unwrap();
+
+    // 上月最后一天(本期起点之前):不应计入。
+    sqlx::query(
+        "INSERT INTO rule_stats (rule_id, bucket_at, rx_bytes, tx_bytes) \
+         VALUES (?, datetime('now','start of month','-1 day'), 1000, 1000)",
+    )
+    .bind(r1)
+    .execute(&app.state.pool)
+    .await
+    .unwrap();
+    // 本月内(现在,恒 >= 本月 1 号):应计入。
+    sqlx::query(
+        "INSERT INTO rule_stats (rule_id, bucket_at, rx_bytes, tx_bytes) \
+         VALUES (?, datetime('now'), 40, 20)",
+    )
+    .bind(r1)
+    .execute(&app.state.pool)
+    .await
+    .unwrap();
+
+    quota_tick_once(&app.state).await.unwrap();
+    // 仅本月内 rx+tx = 60;上月最后一天的 2000 不计。
+    assert_eq!(cached_usage(&app, uid).await, 60, "月度模式只计本期起点之后的流量");
+}
