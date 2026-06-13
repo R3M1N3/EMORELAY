@@ -1,0 +1,47 @@
+# CI:在 push / PR 上跑完整测试套件(Rust workspace + 前端 vitest/eslint/build)。
+# 与本地 `cargo test --workspace` + `cd web && npm run lint/test/build` 一致。
+# 发版构建在 release.yml(打 v* tag 触发),与本 CI 分工:CI 验证正确性,release 出产物。
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# 同分支新 push 取消进行中的旧 run,省 CI 资源。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 缓存 cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
