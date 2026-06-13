@@ -5,6 +5,7 @@ pub mod install;
 pub mod nodes;
 pub mod rules;
 pub mod rules_io;
+pub mod subscription;
 pub mod system;
 pub mod tunnels;
 pub mod users;
@@ -81,6 +82,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/change-password", post(auth::change_password))
+        .route("/api/subscription/usage", get(subscription::usage))
         .route("/api/nodes", get(nodes::list).post(nodes::create))
         .route(
             "/api/nodes/{id}",

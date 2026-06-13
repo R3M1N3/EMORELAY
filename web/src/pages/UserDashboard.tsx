@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   auth,
   formatBytes,
+  getToken,
   rules,
   shortTime,
   type MeView,
@@ -10,6 +11,7 @@ import {
 } from '../lib/api'
 import { Stat } from './Dashboard'
 import { StatusDot } from '../lib/ui'
+import { CopyButton } from '../components/CopyButton'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 import { useToast } from '../lib/use-toast'
 import { expiryWarning, expiryWarningKey } from '../lib/expiry-warning'
@@ -111,6 +113,22 @@ export default function UserDashboard() {
           </div>
         </div>
       )}
+
+      <section className="glass-card rise p-5">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <h3 className="text-sm font-medium text-zinc-200">订阅用量链接</h3>
+          <CopyButton
+            value={`${window.location.origin}/api/subscription/usage?token=${getToken() ?? ''}`}
+            label="复制订阅链接"
+          />
+        </div>
+        <p className="text-[12px] text-zinc-400 break-all font-mono">
+          {`${window.location.origin}/api/subscription/usage?token=…`}
+        </p>
+        <p className="text-[11px] text-zinc-500 mt-1.5">
+          在 Clash 等客户端里添加此链接，可直接查看套餐余量与到期。链接含登录凭据，请勿外传；登录过期后需重新复制。
+        </p>
+      </section>
 
       <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">我的规则</h3>

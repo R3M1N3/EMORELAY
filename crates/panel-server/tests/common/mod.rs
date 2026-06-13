@@ -148,6 +148,25 @@ pub async fn send(app: Router, req: Request<Body>) -> Result<(StatusCode, Value)
     Ok((status, value))
 }
 
+/// 同 send,但额外返回响应头(测试需要校验自定义 header 时用)。
+#[allow(dead_code)]
+pub async fn send_with_headers(
+    app: Router,
+    req: Request<Body>,
+) -> Result<(StatusCode, axum::http::HeaderMap, Value)> {
+    let resp: Response<Body> = app.oneshot(req).await?;
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let bytes = to_bytes(resp.into_body(), 1024 * 1024).await?;
+    let value: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+    };
+    Ok((status, headers, value))
+}
+
 pub fn auth_req(
     method: Method,
     path: &str,
