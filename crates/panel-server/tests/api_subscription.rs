@@ -66,3 +66,34 @@ async fn subscription_usage_rejects_missing_auth() {
     let (status, _b) = send(app.app.clone(), req).await.unwrap();
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn subscription_usage_rejects_mcp_token() {
+    // 订阅端点绕过 AuthUser、自行 decode_jwt(resolve_user_id),故须独立拦 mcp token
+    // (I1 补漏回归守护:与 SSE 旁路同源,bearer 与 ?token= 两条路径都应 403)。
+    // admin 新建用户 → must_change_password=true,登录所得为 mcp token。
+    let app = make_app().await.unwrap();
+    let req = auth_req(
+        Method::POST,
+        "/api/users",
+        &app.admin_token,
+        Some(json!({ "username": "submcp", "password": "temp-pass-123", "role": "user" })),
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    let token = login_token(&app.app, "submcp", "temp-pass-123").await;
+
+    // bearer 路径 → 403。
+    let req = auth_req(Method::GET, "/api/subscription/usage", &token, None).unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "bearer mcp token 应被订阅端点拒绝");
+
+    // ?token= 路径 → 403(resolve_user_id 单一 chokepoint 同时拦两条路径)。
+    let req = Request::get(format!("/api/subscription/usage?token={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "query mcp token 应被订阅端点拒绝");
+}
