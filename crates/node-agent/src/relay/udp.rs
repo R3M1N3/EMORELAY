@@ -151,6 +151,14 @@ async fn forward(
         }
     }
     let mut map = sessions.lock().await;
+    // I3:反向 task 已死(client 不可达等)的既有 session 先移除,落到下方重建逻辑恢复回程,
+    // 否则 last_seen 被持续刷新导致永不超时、回程永久中断。
+    if map
+        .get(&client_addr)
+        .is_some_and(|s| s.upstream_task.is_finished())
+    {
+        map.remove(&client_addr);
+    }
     if let Some(s) = map.get_mut(&client_addr) {
         s.last_seen = Instant::now();
         s.upstream
@@ -404,5 +412,82 @@ mod tests {
             s.connection_count, 2,
             "session 过期后第二次发包应建新 session, 计数 +1"
         );
+    }
+
+    /// I3:反向 task 已死的既有 session,下次 forward 应被移除并重建(恢复回程),
+    /// 而非仅刷新 last_seen。手动构造一个 upstream_task 已 finished 的占位 session,
+    /// 调一次 forward 后断言 session 被换成 task 仍存活的新实例,connection_count +1。
+    #[tokio::test]
+    async fn udp_dead_reverse_task_session_rebuilt() {
+        let echo_port = spawn_udp_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let counter = stats.ensure(7);
+
+        let listener = Arc::new(UdpSocket::bind(("127.0.0.1", listen_port)).await.unwrap());
+        let sessions: Arc<Mutex<HashMap<SocketAddr, Session>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let client_addr: SocketAddr = "127.0.0.1:55555".parse().unwrap();
+
+        // 构造一个反向 task 已死的占位 session:spawn 空 task 后自旋让出,
+        // 直到 is_finished() 为 true(空 task 必然完成,自旋必然终止,确定性无 flaky)。
+        // 不消费 handle,以便放进 Session。
+        let dead_task = tokio::spawn(async {});
+        while !dead_task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        let stale_upstream = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let stale_local = stale_upstream.local_addr().unwrap();
+        {
+            let mut map = sessions.lock().await;
+            map.insert(
+                client_addr,
+                Session {
+                    upstream: stale_upstream,
+                    // last_seen 设为很久以前,验证「重建」而非「靠 sweep」:即便没超时也应换掉。
+                    last_seen: Instant::now(),
+                    upstream_task: dead_task,
+                },
+            );
+        }
+
+        forward(
+            7,
+            &listener,
+            client_addr,
+            b"hello",
+            &sessions,
+            "127.0.0.1",
+            echo_port,
+            &counter,
+            &None,
+        )
+        .await
+        .expect("forward");
+
+        let map = sessions.lock().await;
+        let s = map.get(&client_addr).expect("session 应仍存在(被重建)");
+        assert!(
+            !s.upstream_task.is_finished(),
+            "重建后的反向 task 应存活"
+        );
+        assert_ne!(
+            s.upstream.local_addr().unwrap(),
+            stale_local,
+            "upstream socket 应被换成新建的"
+        );
+        // 重建走新 session 分支,connection_count 从 0 递增到 1。
+        assert_eq!(
+            counter.connection_count.load(Ordering::Relaxed),
+            1,
+            "重建应计一次新连接"
+        );
+
+        // 收尾:abort 新 task 释放 socket。先释放 map 的不可变借用再操作。
+        drop(map);
+        let removed = sessions.lock().await.remove(&client_addr);
+        if let Some(session) = removed {
+            session.upstream_task.abort();
+        }
     }
 }
