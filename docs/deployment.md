@@ -147,15 +147,11 @@ volumes:
 
 ### 4.3 gRPC TLS（P3a 起弃用）
 
-> **⚠️ P3a 起本节流程已弃用。** gRPC 控制面默认走内置 CA 强制 mTLS(见 §4.5),`PANEL_GRPC_TLS_CERT` / `PANEL_GRPC_TLS_KEY` / `PANEL_GRPC_TLS_CLIENT_CA` 与 `scripts/gen-dev-tls.sh` 不再生效,以下内容仅作历史参考。
+> **⚠️ P3a 起本节流程已弃用。** gRPC 控制面默认走内置 CA 强制 mTLS(见 §4.5),`PANEL_GRPC_TLS_CERT` / `PANEL_GRPC_TLS_KEY` / `PANEL_GRPC_TLS_CLIENT_CA` 不再生效,以下内容仅作历史参考。
 
 panel-server 支持 gRPC 通道 TLS。两步:
 
-1. 生成自签 CA + server cert(开发):
-   ```sh
-   sh scripts/gen-dev-tls.sh ./tls
-   ```
-   Windows 用 git bash / WSL,或 `docker run --rm -v "%cd%:/work" -w /work alpine/openssl sh scripts/gen-dev-tls.sh`。
+1. 生成自签 CA + server cert(开发):原 dev 脚本 `scripts/gen-dev-tls.sh` 已随仓库清理移除,需用 openssl 手动签发自签 CA/server 证书,或直接用 §4.5 的内置 CA(推荐)。
    生产请用 Let's Encrypt / 公司 CA 签发真实证书,跳过本步。
 
 2. 配置 panel-server `.env`:
@@ -177,11 +173,7 @@ panel-server 启动时会日志确认 `grpc control plane listening (server TLS 
 
 单向 TLS(4.3)只让 Agent 验证 server 身份;mTLS 在此基础上让 server 也验证 Agent 的客户端证书,真正"双向认证"。开启步骤(在 4.3 已配置 server TLS 的基础上):
 
-1. 用同一份 CA 给 Agent 签客户端证书(脚本已支持):
-   ```sh
-   sh scripts/gen-dev-tls.sh ./tls
-   # 产物含 ca.crt / server.crt / server.key / agent.crt / agent.key
-   ```
+1. 用同一份 CA 给 Agent 签客户端证书:原 dev 脚本 `scripts/gen-dev-tls.sh` 已随仓库清理移除,需用 openssl 手动签发(产物:ca.crt / server.crt / server.key / agent.crt / agent.key),或改用 §4.5 内置 CA(推荐)。
 
 2. panel-server `.env` 增加:
    ```sh
@@ -203,12 +195,12 @@ panel-server 启动时会日志确认 `grpc control plane listening (server TLS 
 故障排查:mTLS 握手失败时 Agent 拿到的是 TLS 层错误(传输 transport error),而不是 gRPC `PermissionDenied`。常见原因:
 - Agent 未配 `AGENT_GRPC_CLIENT_CERT/KEY`,或路径不可读
 - Agent 证书不是同一 CA 签发的(指纹对不上)
-- Agent 证书缺少 `extendedKeyUsage = clientAuth`(`scripts/gen-dev-tls.sh` 已加,自己签的需手动加)
+- Agent 证书缺少 `extendedKeyUsage = clientAuth`(openssl 自签需手动加)
 - Agent 端 `AGENT_CONTROL_ENDPOINT` 是 `http://` 而非 `https://`(此时 client cert 被忽略,Agent 日志会 warn 但实际仍裸跑)
 
 ### 4.5 升级到 P3a（启用 mTLS，当前默认）
 
-P3a 起 gRPC 控制面默认走 panel-server **内置 CA 的强制 mTLS**:首次启动自动在 `${PANEL_DATA_DIR}/tls/` 生成 CA + server 证书,创建节点时一次性下发四件套凭据(token + CA + client cert + client key),无需再用 `scripts/gen-dev-tls.sh` 或外部 CA。详细 API 语义见 [`docs/api.md` §"mTLS 与节点凭据"](./api.md)。
+P3a 起 gRPC 控制面默认走 panel-server **内置 CA 的强制 mTLS**:首次启动自动在 `${PANEL_DATA_DIR}/tls/` 生成 CA + server 证书,创建节点时一次性下发四件套凭据(token + CA + client cert + client key),无需再用外部脚本或 CA。详细 API 语义见 [`docs/api.md` §"mTLS 与节点凭据"](./api.md)。
 
 升级步骤:
 

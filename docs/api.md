@@ -357,7 +357,7 @@ Rate limit：60 req/分钟/IP（看 §"Rate limit 与反代 header"）。
 
 ## 十、mTLS 与节点凭据
 
-P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自动管理,不再依赖 `scripts/gen-dev-tls.sh` 或外部 CA。
+P3a 起 gRPC 控制面默认**强制 mTLS**,证书由 panel-server 内置 CA 自动管理,不再依赖外部脚本或 CA。
 
 ### 内置 CA
 
