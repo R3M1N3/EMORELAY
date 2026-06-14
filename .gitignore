@@ -39,3 +39,8 @@ agent-state.json
 # Local review/test artifacts (playwright snapshots, throwaway test instance with self-signed TLS)
 /.playwright-cli/
 /data-uxtest/
+
+# Claude Code 本地配置 + 项目内部指令/文档(不进公开仓库,本地保留)
+/.claude/
+/CLAUDE.md
+/docs/
