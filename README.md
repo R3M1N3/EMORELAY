@@ -32,8 +32,6 @@ curl -fsSL https://raw.githubusercontent.com/Remine1337/EMORELAY/master/deploy.s
 
 再次运行同一脚本可进入 **升级 / 状态 / 备份 / 卸载** 菜单。脚本也提供 Docker Compose 与源码编译两种安装方式。
 
-详细部署、反向代理与 HTTPS 配置见 [`docs/deployment.md`](./docs/deployment.md)。
-
 ## 其它运行方式
 
 ```sh
@@ -42,13 +40,6 @@ cp .env.example .env   # 设置 PANEL_JWT_SECRET 与管理员密码
 docker compose up -d --build
 # 打开 http://localhost
 ```
-
-开发模式（cargo run + vite dev）与 Agent 本地调试见 [`docs/deployment.md`](./docs/deployment.md)。
-
-## 文档
-
-- [`docs/deployment.md`](./docs/deployment.md) — 部署与运维手册
-- [`docs/api.md`](./docs/api.md) — REST + gRPC API 参考
 
 ## License
 
