@@ -1,5 +1,5 @@
 //! 订阅用量披露(对标 flux open_api/sub_store)。**只读披露配额用量,绝不分发
-//! 节点/代理配置**——守住 CLAUDE.md「范围外:订阅」红线(不做订阅分发,只回用量)。
+//! 节点/代理配置**——守住「订阅范围外」红线(不做订阅分发,只回用量)。
 //! 返回 Clash 风格 `Subscription-Userinfo` 头,让用户在客户端直接看到套餐余量。
 //! 鉴权:Authorization: Bearer <jwt>(同站)或 ?token=<jwt>(订阅客户端取不了 header)。
 use crate::{

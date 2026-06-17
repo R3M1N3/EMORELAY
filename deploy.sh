@@ -252,7 +252,7 @@ detect_public_ip() {
 }
 
 # 参数: 部署模式(docker/systemd)。docker 模式不提供 HTTPS 选项(web 容器只有
-# HTTP :80,自动 HTTPS 需手动配 host Caddy,见 docs/deployment.md 第四节)。
+# HTTP :80,自动 HTTPS 需手动配 host Caddy,参考 docker/Caddyfile.example)。
 collect_config() {
     local mode="$1"
     echo
@@ -261,7 +261,7 @@ collect_config() {
     USE_HTTPS=0
     if [[ -n "$PANEL_HOST" ]]; then
         if [[ "$mode" == "docker" ]]; then
-            warn "docker 模式默认 HTTP(web 容器占 host:80)。要上 HTTPS 请装好后参考 docs/deployment.md 第四节 + docker/Caddyfile.example。"
+            warn "docker 模式默认 HTTP(web 容器占 host:80)。要上 HTTPS 请装好后参考 docker/Caddyfile.example。"
         elif confirm "是否启用 Caddy 自动 HTTPS(需域名 A 记录已指向本机)?"; then
             USE_HTTPS=1
         fi

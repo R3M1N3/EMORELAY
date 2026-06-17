@@ -31,7 +31,7 @@ WORKDIR /build
 
 # 全量拷源(.dockerignore 已剔除 target/、node_modules、文档、本地 db 等)。
 # 不做依赖缓存层是因为 cargo 的 workspace 依赖图与 src 高度耦合,精细缓存增益有限。
-# 构建慢可通过 BuildKit cache mount 优化(见 docs/deployment.md)。
+# 构建慢可通过 BuildKit cache mount 优化。
 COPY . .
 
 RUN cargo build --release -p panel-server

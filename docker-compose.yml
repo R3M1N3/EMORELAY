@@ -13,7 +13,7 @@
 #
 # 反代 / TLS:
 #   生产可选 docker/Caddyfile.example 在 host 上拉起 Caddy,反代到本编排暴露的端口。
-#   也可在 compose 中追加 caddy 服务(见 docs/deployment.md)。
+#   也可在 compose 中追加 caddy 服务。
 #
 # plan 第十三节验收第 1 条:`docker compose up -d 启动 panel-server、web、sqlite volume` ── 由本文件实现。
 

@@ -1,7 +1,7 @@
 # EMORELAY Caddy 反代示例(放在 host 上,不在 docker compose 内)。
 #
 # **前置条件:** Host 上的 Caddy 要监听 :80/:443,所以 docker-compose 中的 web
-# 不能再占用 host:80。使用本 Caddyfile 前请按 docs/deployment.md §4.1 修改 web 端口:
+# 不能再占用 host:80。使用本 Caddyfile 前请按下方示例修改 docker-compose 的 web 端口:
 #
 #   web:
 #     ports:
