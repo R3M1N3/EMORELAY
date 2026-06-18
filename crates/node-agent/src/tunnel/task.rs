@@ -24,7 +24,7 @@ use tracing::{info, warn};
 use crate::limit::TokenBucket;
 use crate::stats::{RuleCounter, StatsCollector};
 use crate::tunnel::frame::{read_frame, write_frame, STREAM_TCP, STREAM_UDP};
-use crate::tunnel::transport::{TunnelConn, TunnelTransport};
+use crate::tunnel::transport::{HANDSHAKE_TIMEOUT, TunnelConn, TunnelTransport};
 
 /// UDP session 闲置回收阈值/扫描周期,与 relay/udp.rs 对齐。
 const UDP_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
@@ -32,7 +32,8 @@ const UDP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_UDP_PACKET: usize = 65535;
 /// 隧道 entry UDP NAT 表上限:每 session 占一条隧道连接(fd)+ writer/reader 两个 task。
 /// 源地址可伪造,无上限会被海量伪造源耗尽 fd/内存;达上限丢新包(既有 session 不受影响)。
-const MAX_UDP_SESSIONS: usize = 8192;
+/// 4096 与直连 relay/udp.rs 对齐,把满载 fd/内存上限收敛到原 8192 的一半。
+const MAX_UDP_SESSIONS: usize = 4096;
 /// mid/exit hop 同时在握手中的连接上限。握手已移出 accept loop(防队头阻塞),但需防
 /// 半开连接洪泛无限 spawn 握手 task 耗 fd/task:超过即立即丢弃新连接。握手完成(成功/
 /// 失败)即释放名额,已建立的转发连接不占用,故不限制正常并发转发吞吐。
@@ -210,8 +211,8 @@ async fn entry_tcp_conn(
     Ok(())
 }
 
-/// 8KB chunk 复制 + 计数 + 可选限速。与 relay/tcp.rs::copy_limited 同构,多了
-/// bucket 可选分支;未合并以不动既有 relay hot path。EOF 时半关写端。
+/// 自适应缓冲(不限速 256KB / 限速 64KB)复制 + 计数 + 可选限速。与 relay/tcp.rs::pump 同构,
+/// 多了 bucket 可选分支;未合并以不动既有 relay hot path。EOF 时半关写端。
 async fn copy_counted<R, W>(
     r: &mut R,
     w: &mut W,
@@ -222,7 +223,11 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let mut buf = [0u8; 8192];
+    // 与 relay/tcp.rs::pump 对齐:不限速用 256KB 大缓冲把高吞吐下的 read/write syscall 压到最低
+    // (隧道不可能走 splice,copy_counted 是 entry TCP 唯一数据通道,缓冲大小直接决定 syscall 频率);
+    // 限速路径用 64KB(吞吐本受令牌桶约束,过大无益)。
+    let buf_size = if bucket.is_some() { 64 * 1024 } else { 256 * 1024 };
+    let mut buf = vec![0u8; buf_size];
     let mut total = 0u64;
     loop {
         let n = r.read(&mut buf).await?;
@@ -343,6 +348,9 @@ async fn entry_udp_loop(
                 Err(e) => {
                     counter.error_count.fetch_add(1, Ordering::Relaxed);
                     warn!(rule_id, error = ?e, "tunnel entry udp recv error");
+                    // 持续性 recv 错误(内核 ENOBUFS/ENOMEM)下立即重试会忙循环烧满单核;复用 accept
+                    // 退避:仅资源耗尽类 errno sleep 一拍,瞬时错误不退避(与直连 relay/udp.rs 一致)。
+                    crate::relay::accept_backoff(&e).await;
                 }
             },
             _ = sweep.tick() => {
@@ -498,12 +506,23 @@ async fn handle_hop_conn(
         HopMode::Exit { target_host, target_port } => {
             let mut conn = conn;
             let mut preamble = [0u8; 1];
-            conn.read_exact(&mut preamble).await.context("read stream preamble")?;
+            // 读 preamble 套超时:连入后(尤其裸 TCP transport 无握手认证)迟迟不发 preamble 字节的
+            // 连接否则会永久挂在 read_exact 上,占住该 conn 及其 fd。
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.read_exact(&mut preamble))
+                .await
+                .context("read stream preamble timed out")?
+                .context("read stream preamble")?;
             match preamble[0] {
                 STREAM_TCP => {
-                    let upstream = TcpStream::connect((target_host.as_str(), target_port))
-                        .await
-                        .with_context(|| format!("connect target {target_host}:{target_port}"))?;
+                    // connect 套 5s 超时(与 relay/tcp.rs 一致):黑洞(DROP)目标否则会拖到 OS TCP
+                    // 超时(数十秒~数分钟)才失败,期间占住入站隧道连接与 fd。
+                    let upstream = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        TcpStream::connect((target_host.as_str(), target_port)),
+                    )
+                    .await
+                    .with_context(|| format!("connect target {target_host}:{target_port} timed out"))?
+                    .with_context(|| format!("connect target {target_host}:{target_port}"))?;
                     // SSRF 二次防御:与 relay/tcp.rs 一致,校验解析结果非内网(堵域名 DNS rebinding)。
                     // panel 只能校验字面 IP,域名解析在出口节点本地发生;字面内网 IP 已被 panel 拦,
                     // 字面公网 IP 在此自动放行。隧道出口此前缺这道补偿控制(SSRF 可达出口内网/云元数据)。
