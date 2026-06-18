@@ -15,13 +15,25 @@ use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{accept_async, client_async, WebSocketStream};
+use tokio_tungstenite::{accept_async_with_config, client_async_with_config, WebSocketStream};
 
 use crate::tunnel::tls_transport::TlsTransport;
 use crate::tunnel::transport::{
     PendingHop, TunnelConn, TunnelListener, TunnelTransport, HANDSHAKE_TIMEOUT,
 };
+
+/// 隧道 WSS 单消息/单帧上限。隧道实际负载是裸字节流(copy_counted 单块 ≤256KB)与 ≤64KB UDP 帧,
+/// 用不到 tungstenite 默认的 64MB/16MB;收窄到 1MB,防被授权但被滥用的相邻 hop 用超大单帧/消息
+/// 迫使每连接分配大块内存(WsByteStream::poll_read 会把整条消息缓冲进 read_buf)。
+fn ws_config() -> WebSocketConfig {
+    WebSocketConfig {
+        max_message_size: Some(1024 * 1024),
+        max_frame_size: Some(1024 * 1024),
+        ..Default::default()
+    }
+}
 
 pub struct WssTransport {
     tls: TlsTransport,
@@ -57,7 +69,10 @@ impl TunnelTransport for WssTransport {
         .context("tunnel wss tls handshake timed out")?
         .context("tunnel wss tls handshake")?;
         let (ws, _resp) =
-            tokio::time::timeout(HANDSHAKE_TIMEOUT, client_async(self.dial_url.as_str(), tls))
+            tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                client_async_with_config(self.dial_url.as_str(), tls, Some(ws_config())),
+            )
                 .await
                 .context("tunnel ws client handshake timed out")?
                 .context("tunnel ws client handshake")?;
@@ -119,7 +134,7 @@ impl PendingHop for WssPendingHop {
             .context("tunnel wss tls handshake timed out")?
             .context("tunnel wss tls handshake")?;
         crate::tunnel::tls_transport::verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
-        let ws = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept_async(tls))
+        let ws = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept_async_with_config(tls, Some(ws_config())))
             .await
             .context("tunnel ws server handshake timed out")?
             .context("tunnel ws server handshake")?;
@@ -186,6 +201,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for WsByteStream<S> {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(e)) => Poll::Ready(Err(to_io(e))),
             Poll::Ready(Ok(())) => {
+                // 注:tungstenite 0.24 的 Message::Binary 持有 Vec<u8>(0.26+ 才是 Bytes),每条消息
+                // 必然拥有自己的分配,无法用复用缓冲消除——per-write 分配是该版本 API 的固有成本。
                 Pin::new(&mut self.inner)
                     .start_send(Message::Binary(data.to_vec().into()))
                     .map_err(to_io)?;
@@ -324,7 +341,7 @@ mod tests {
     }
 
     /// 大 payload(单次 write_all → 单条大 Binary 消息)完整往返;
-    /// tungstenite 默认 max_message_size(64MB)远大于 256KB。
+    /// ws_config 的 max_message_size(1MB)远大于 256KB,正常负载不受影响。
     #[tokio::test]
     async fn wss_transport_large_payload() {
         let dir = tempfile::TempDir::new().unwrap();
