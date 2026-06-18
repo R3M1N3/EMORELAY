@@ -14,6 +14,13 @@ pub(crate) fn force_pump() -> bool {
         .unwrap_or(false)
 }
 
+/// 转发/隧道路径统一关闭 Nagle 算法。中转大量交互式小包(SSH/游戏/RPC)时 Nagle 的
+/// "攒包"会叠加最高 ~40ms 延迟;转发器不应替业务做这个吞吐换延迟的权衡(realm 等默认关)。
+/// 设置失败极罕见(通常 socket 已关),无害,忽略。
+pub(crate) fn set_nodelay(stream: &tokio::net::TcpStream) {
+    let _ = stream.set_nodelay(true);
+}
+
 /// 对端地址是否为回环/内网/链路本地等不可对外路由的地址。
 /// SSRF 二次防御用:panel 端只能校验字面 IP,域名解析发生在 Agent,需在此堵 DNS rebinding。
 pub(crate) fn is_internal_addr(ip: &IpAddr) -> bool {
@@ -55,6 +62,32 @@ pub(crate) fn guard_resolved_target(target_host: &str, peer: std::net::SocketAdd
         );
     }
     Ok(())
+}
+
+/// `accept()` 出错后的退避。fd 耗尽(EMFILE/ENFILE)或内核缓冲/内存不足
+/// (ENOBUFS/ENOMEM)这类"资源暂时不足"错误若立即重试,会陷入 100% CPU 忙循环,
+/// 且忙循环本身拖住系统、阻碍 fd 释放形成活锁——必须 sleep 一拍让系统喘息。
+/// 其余错误(如 ECONNABORTED:对端在 accept 前已断)无需退避,立即接受下一个连接。
+/// (参考 realm / 生产级 server 的 accept 错误处理思路,自研实现。)
+pub(crate) async fn accept_backoff(err: &std::io::Error) {
+    if is_resource_exhausted(err) {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_resource_exhausted(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_resource_exhausted(err: &std::io::Error) -> bool {
+    // 非 linux(本地开发/测试;生产是 linux musl 静态二进制)无 libc errno 依赖。
+    // EMFILE/ENFILE 在 std 暂无稳定 ErrorKind 映射,这里保守覆盖 OOM 即可。
+    matches!(err.kind(), std::io::ErrorKind::OutOfMemory)
 }
 
 #[cfg(test)]
@@ -117,5 +150,30 @@ mod ssrf_tests {
     fn domain_resolving_public_is_allowed() {
         let peer: SocketAddr = "1.1.1.1:443".parse().unwrap();
         assert!(guard_resolved_target("cloudflare.com", peer).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod backoff_tests {
+    use super::is_resource_exhausted;
+    use std::io::{Error, ErrorKind};
+
+    /// linux:仅 fd/缓冲/内存耗尽类 errno 触发退避;ECONNABORTED 等正常错误不退避。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_flags_only_resource_exhaustion() {
+        assert!(is_resource_exhausted(&Error::from_raw_os_error(libc::EMFILE)));
+        assert!(is_resource_exhausted(&Error::from_raw_os_error(libc::ENFILE)));
+        assert!(is_resource_exhausted(&Error::from_raw_os_error(libc::ENOBUFS)));
+        assert!(!is_resource_exhausted(&Error::from_raw_os_error(libc::ECONNABORTED)));
+        assert!(!is_resource_exhausted(&Error::from(ErrorKind::Other)));
+    }
+
+    /// 非 linux:无 libc errno,仅 OOM 兜底触发,其它不退避。
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn non_linux_oom_fallback_only() {
+        assert!(is_resource_exhausted(&Error::from(ErrorKind::OutOfMemory)));
+        assert!(!is_resource_exhausted(&Error::from(ErrorKind::ConnectionAborted)));
     }
 }

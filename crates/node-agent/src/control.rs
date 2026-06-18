@@ -3,6 +3,7 @@ use emorelay_common::control::v1::{
     control_plane_client::ControlPlaneClient, Command, HeartbeatRequest, NodeStatsBatch, ProbeResult,
     RegisterRequest, RuleStatsBatch, SubscribeRequest,
 };
+use std::time::Duration;
 use tokio_stream::Stream;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
@@ -72,6 +73,16 @@ impl ControlClient {
             }
             info!(endpoint = %endpoint, "agent control plane: plaintext");
         }
+        // 控制连接存活/超时:Agent 直连公网且面向 NAT 节点,底层连接可能被防火墙黑洞
+        // 或 NAT 空闲表项回收而静默死亡。无 keepalive 时主循环的 command_stream.message()
+        // 与 heartbeat() 会永不返回,run_session 既不 Ok 也不 Err,旁路掉 RETRY_BACKOFF 重连。
+        // HTTP/2 PING 探活(含空闲)+ connect 超时让死连接尽快报错,触发既有重连。
+        ep = ep
+            .connect_timeout(Duration::from_secs(10))
+            .tcp_keepalive(Some(Duration::from_secs(30)))
+            .http2_keep_alive_interval(Duration::from_secs(20))
+            .keep_alive_timeout(Duration::from_secs(10))
+            .keep_alive_while_idle(true);
         let channel = ep.connect().await.context("connect to control plane")?;
         Ok(Self {
             client: ControlPlaneClient::new(channel),

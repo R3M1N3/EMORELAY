@@ -20,6 +20,9 @@ const SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// 最大单包 UDP 字节（IPv4 64KB - header）。
 const MAX_PACKET: usize = 65535;
+/// UDP NAT 表上限:每 session 占一个 upstream socket(fd + ephemeral 端口)与一个反向 task。
+/// 源地址可伪造,无上限会被海量伪造源耗尽 fd/端口/内存;达上限丢新包(既有 session 不受影响)。
+const MAX_UDP_SESSIONS: usize = 8192;
 
 pub struct UdpRelayHandle {
     stop_tx: oneshot::Sender<()>,
@@ -44,7 +47,7 @@ pub async fn start(
     stats: Arc<StatsCollector>,
     bucket: Option<Arc<TokenBucket>>,
 ) -> Result<UdpRelayHandle> {
-    start_inner(rule, stats, SESSION_TIMEOUT, SWEEP_INTERVAL, bucket).await
+    start_inner(rule, stats, SESSION_TIMEOUT, SWEEP_INTERVAL, MAX_UDP_SESSIONS, bucket).await
 }
 
 async fn start_inner(
@@ -52,6 +55,7 @@ async fn start_inner(
     stats: Arc<StatsCollector>,
     session_timeout: Duration,
     sweep_interval: Duration,
+    max_sessions: usize,
     bucket: Option<Arc<TokenBucket>>,
 ) -> Result<UdpRelayHandle> {
     let listen_ip: IpAddr = rule
@@ -100,6 +104,7 @@ async fn start_inner(
                                 client_addr,
                                 &buf[..n],
                                 &sessions,
+                                max_sessions,
                                 &target_host,
                                 target_port,
                                 &counter,
@@ -138,6 +143,7 @@ async fn forward(
     client_addr: SocketAddr,
     data: &[u8],
     sessions: &Arc<Mutex<HashMap<SocketAddr, Session>>>,
+    max_sessions: usize,
     target_host: &str,
     target_port: u16,
     counter: &Arc<RuleCounter>,
@@ -168,20 +174,41 @@ async fn forward(
         return Ok(());
     }
 
-    // 新 session：用临时端口的 upstream socket + connect 默认 peer。
-    let upstream = Arc::new(
-        UdpSocket::bind("0.0.0.0:0")
-            .await
-            .context("bind upstream udp socket")?,
-    );
-    upstream
-        .connect((target_host, target_port))
-        .await
-        .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
-    // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
-    if let Ok(peer) = upstream.peer_addr() {
-        crate::relay::guard_resolved_target(target_host, peer)?;
+    // NAT 表上限:达上限丢弃新源的包,防伪造源耗尽 fd/端口/内存(既有 session 上面已返回)。
+    if map.len() >= max_sessions {
+        counter.error_count.fetch_add(1, Ordering::Relaxed);
+        warn!(rule_id, %client_addr, max = max_sessions, "udp sessions at cap; dropping new-session packet");
+        return Ok(());
     }
+
+    // 新 session：用临时端口的 upstream socket + connect 默认 peer。
+    // 域名目标的 connect 走阻塞 getaddrinfo,无上限时慢/不可达 DNS 会把本规则唯一的
+    // recv 循环连同 sweep 一起停摆(本段在主循环内 inline await)。与隧道 UDP 路径
+    // (tunnel/task.rs)一致套 5s 超时;超时按错误丢包(UDP 语义,不阻塞循环)。
+    let upstream = match tokio::time::timeout(Duration::from_secs(5), async {
+        let sock = Arc::new(
+            UdpSocket::bind("0.0.0.0:0")
+                .await
+                .context("bind upstream udp socket")?,
+        );
+        sock.connect((target_host, target_port))
+            .await
+            .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
+        // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
+        if let Ok(peer) = sock.peer_addr() {
+            crate::relay::guard_resolved_target(target_host, peer)?;
+        }
+        anyhow::Ok(sock)
+    })
+    .await
+    {
+        Ok(inner) => inner?,
+        Err(_) => {
+            counter.error_count.fetch_add(1, Ordering::Relaxed);
+            warn!(rule_id, %client_addr, "udp upstream connect/DNS timed out; dropping new-session packet");
+            return Ok(());
+        }
+    };
     counter.connection_count.fetch_add(1, Ordering::Relaxed);
 
     // 反向 task：从 upstream 收响应写回原 client_addr。
@@ -264,9 +291,10 @@ async fn start_with(
     stats: Arc<StatsCollector>,
     session_timeout: Duration,
     sweep_interval: Duration,
+    max_sessions: usize,
     bucket: Option<Arc<TokenBucket>>,
 ) -> Result<UdpRelayHandle> {
-    start_inner(rule, stats, session_timeout, sweep_interval, bucket).await
+    start_inner(rule, stats, session_timeout, sweep_interval, max_sessions, bucket).await
 }
 
 #[cfg(test)]
@@ -372,6 +400,7 @@ mod tests {
             stats.clone(),
             Duration::from_millis(200), // session_timeout
             Duration::from_millis(50),  // sweep_interval
+            MAX_UDP_SESSIONS,
             None,
         )
         .await
@@ -457,6 +486,7 @@ mod tests {
             client_addr,
             b"hello",
             &sessions,
+            MAX_UDP_SESSIONS,
             "127.0.0.1",
             echo_port,
             &counter,
@@ -489,5 +519,42 @@ mod tests {
         if let Some(session) = removed {
             session.upstream_task.abort();
         }
+    }
+
+    /// NAT 表上限:max_sessions=2 时,第 3 个不同源的新 session 被拒(丢包计 error),
+    /// connection_count 封顶在 2。既有 session 不受影响由其它测试覆盖。
+    #[tokio::test]
+    async fn udp_relay_caps_new_sessions_at_max() {
+        let echo_port = spawn_udp_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        // 注入上限 2;长 timeout/interval 确保测试期间不过期/不 sweep。
+        let handle = start_with(
+            rule_for(listen_port, echo_port),
+            stats.clone(),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            2,
+            None,
+        )
+        .await
+        .expect("relay start");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // 3 个不同源(各自独立 client socket = 不同源端口)各发一包。
+        let mut clients = Vec::new();
+        for _ in 0..3 {
+            let c = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            c.send_to(b"x", ("127.0.0.1", listen_port)).await.unwrap();
+            clients.push(c);
+        }
+        // 给主循环时间逐个处理三包。
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        handle.stop().await;
+
+        let snap = stats.drain_snapshot();
+        let s = snap.iter().find(|s| s.rule_id == 7).expect("stats");
+        assert_eq!(s.connection_count, 2, "session 数应封顶在 max_sessions=2");
+        assert!(s.error_count >= 1, "第 3 个新 session 被拒应计 error");
     }
 }

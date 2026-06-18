@@ -121,6 +121,8 @@ pub async fn start(
                         Err(e) => {
                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                             error!(rule_id, error = ?e, "tcp accept error");
+                            // fd/内存耗尽时退避,防 100% CPU 忙循环阻碍恢复。
+                            crate::relay::accept_backoff(&e).await;
                         }
                     }
                 }
@@ -195,6 +197,10 @@ async fn bridge(
     }
     let mut server = server
         .ok_or_else(|| last_err.unwrap_or_else(|| anyhow::anyhow!("no target reachable")))?;
+
+    // 转发两端关闭 Nagle:降低交互式小包延迟(client 与上游 target 均设)。
+    crate::relay::set_nodelay(&client);
+    crate::relay::set_nodelay(&server);
 
     // Linux 不限速:走 splice 零拷贝,数据不过用户态(消除 pump 的两次 memcpy)。
     // 限速或非 Linux 回退下方 pump(用户态拷贝才能插入令牌桶计量)。

@@ -19,7 +19,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_async, client_async, WebSocketStream};
 
 use crate::tunnel::tls_transport::TlsTransport;
-use crate::tunnel::transport::{TunnelConn, TunnelListener, TunnelTransport};
+use crate::tunnel::transport::{
+    PendingHop, TunnelConn, TunnelListener, TunnelTransport, HANDSHAKE_TIMEOUT,
+};
 
 pub struct WssTransport {
     tls: TlsTransport,
@@ -42,18 +44,23 @@ impl WssTransport {
 #[tonic::async_trait]
 impl TunnelTransport for WssTransport {
     async fn dial(&self, addr: &str) -> Result<TunnelConn> {
-        let tcp = TcpStream::connect(addr)
+        let tcp = tokio::time::timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
             .await
+            .with_context(|| format!("tunnel wss tcp connect {addr} timed out"))?
             .with_context(|| format!("tunnel wss tcp connect {addr}"))?;
-        let tls = self
-            .tls
-            .connector
-            .connect(self.tls.dial_sni.clone(), tcp)
-            .await
-            .context("tunnel wss tls handshake")?;
-        let (ws, _resp) = client_async(self.dial_url.as_str(), tls)
-            .await
-            .context("tunnel ws client handshake")?;
+        crate::relay::set_nodelay(&tcp);
+        let tls = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            self.tls.connector.connect(self.tls.dial_sni.clone(), tcp),
+        )
+        .await
+        .context("tunnel wss tls handshake timed out")?
+        .context("tunnel wss tls handshake")?;
+        let (ws, _resp) =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, client_async(self.dial_url.as_str(), tls))
+                .await
+                .context("tunnel ws client handshake timed out")?
+                .context("tunnel ws client handshake")?;
         Ok(Box::new(WsByteStream::new(ws)))
     }
 
@@ -82,20 +89,41 @@ struct WssTunnelListener {
 
 #[tonic::async_trait]
 impl TunnelListener for WssTunnelListener {
-    async fn accept(&mut self) -> Result<TunnelConn> {
+    async fn accept_pending(&mut self) -> Result<Box<dyn PendingHop>> {
         let (tcp, _) = self.inner.accept().await.context("tunnel wss tcp accept")?;
-        let tls = self
-            .acceptor
-            .accept(tcp)
-            .await
-            .context("tunnel wss tls handshake")?;
-        crate::tunnel::tls_transport::verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
-        let ws = accept_async(tls).await.context("tunnel ws server handshake")?;
-        Ok(Box::new(WsByteStream::new(ws)))
+        crate::relay::set_nodelay(&tcp);
+        Ok(Box::new(WssPendingHop {
+            tcp,
+            acceptor: self.acceptor.clone(),
+            expect_client_san: self.expect_client_san.clone(),
+        }))
     }
 
     fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr()?)
+    }
+}
+
+struct WssPendingHop {
+    tcp: TcpStream,
+    acceptor: tokio_rustls::TlsAcceptor,
+    expect_client_san: String,
+}
+
+#[tonic::async_trait]
+impl PendingHop for WssPendingHop {
+    async fn handshake(self: Box<Self>) -> Result<TunnelConn> {
+        // 握手超时:半开连接否则会永久挂住本握手 task(TLS + ws 升级两段各设上限)。
+        let tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, self.acceptor.accept(self.tcp))
+            .await
+            .context("tunnel wss tls handshake timed out")?
+            .context("tunnel wss tls handshake")?;
+        crate::tunnel::tls_transport::verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
+        let ws = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept_async(tls))
+            .await
+            .context("tunnel ws server handshake timed out")?
+            .context("tunnel ws server handshake")?;
+        Ok(Box::new(WsByteStream::new(ws)))
     }
 }
 

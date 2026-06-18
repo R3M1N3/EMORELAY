@@ -30,6 +30,13 @@ use crate::tunnel::transport::{TunnelConn, TunnelTransport};
 const UDP_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 const UDP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_UDP_PACKET: usize = 65535;
+/// 隧道 entry UDP NAT 表上限:每 session 占一条隧道连接(fd)+ writer/reader 两个 task。
+/// 源地址可伪造,无上限会被海量伪造源耗尽 fd/内存;达上限丢新包(既有 session 不受影响)。
+const MAX_UDP_SESSIONS: usize = 8192;
+/// mid/exit hop 同时在握手中的连接上限。握手已移出 accept loop(防队头阻塞),但需防
+/// 半开连接洪泛无限 spawn 握手 task 耗 fd/task:超过即立即丢弃新连接。握手完成(成功/
+/// 失败)即释放名额,已建立的转发连接不占用,故不限制正常并发转发吞吐。
+const HOP_HANDSHAKE_CONCURRENCY: usize = 256;
 
 pub struct TunnelTaskHandle {
     stop_tx: oneshot::Sender<()>,
@@ -176,6 +183,8 @@ async fn entry_tcp_loop(
             Err(e) => {
                 counter.error_count.fetch_add(1, Ordering::Relaxed);
                 warn!(rule_id, error = ?e, "tunnel entry accept error");
+                // fd/内存耗尽时退避,防 100% CPU 忙循环阻碍恢复。
+                crate::relay::accept_backoff(&e).await;
             }
         }
     }
@@ -188,6 +197,7 @@ async fn entry_tcp_conn(
     counter: &Arc<RuleCounter>,
     bucket: Option<Arc<TokenBucket>>,
 ) -> Result<()> {
+    crate::relay::set_nodelay(&client);
     let mut tunnel = transport.dial(next_hop).await?;
     tunnel.write_all(&[STREAM_TCP]).await.context("write stream preamble")?;
     tunnel.flush().await.context("flush stream preamble")?;
@@ -294,6 +304,12 @@ async fn entry_udp_loop(
                                 sessions.remove(&client_addr);
                             }
                         }
+                        continue;
+                    }
+                    // NAT 表上限:达上限丢弃新源的包,防伪造源耗尽 fd/内存(既有 session 上面已 continue)。
+                    if sessions.len() >= MAX_UDP_SESSIONS {
+                        counter.error_count.fetch_add(1, Ordering::Relaxed);
+                        warn!(rule_id, %client_addr, max = MAX_UDP_SESSIONS, "tunnel udp sessions at cap; dropping new-session packet");
                         continue;
                     }
                     // dial 限时:下一跳不可达时 TCP connect 可挂数十秒,而本 await 在主
@@ -413,6 +429,8 @@ async fn start_relay_hop(
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     // 取消闩:stop 时主动断存量 hop 连接(mid/exit 不计费,但悬挂连接会占端口/上游)。
     let (cancel_tx, cancel_rx) = watch::channel(false);
+    // 握手并发闸,见 HOP_HANDSHAKE_CONCURRENCY。
+    let handshake_sem = Arc::new(tokio::sync::Semaphore::new(HOP_HANDSHAKE_CONCURRENCY));
     let join = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -421,8 +439,15 @@ async fn start_relay_hop(
                     let _ = cancel_tx.send(true);
                     break;
                 }
-                res = listener.accept() => match res {
-                    Ok(conn) => {
+                // accept_pending 只接 TCP、不握手:握手移到下方 per-conn task,避免慢/半开
+                // 握手在 accept loop 内串行造成接入队头阻塞 DoS。
+                res = listener.accept_pending() => match res {
+                    Ok(pending) => {
+                        // 握手名额:满则立即丢弃(pending 随 drop 关闭 TCP),防半开洪泛耗 fd/task。
+                        let Ok(permit) = handshake_sem.clone().try_acquire_owned() else {
+                            warn!(rule_id, "tunnel hop handshake slots full; dropping connection");
+                            continue;
+                        };
                         let transport = transport.clone();
                         let next_hop = next_hop.clone();
                         let mode = mode.clone();
@@ -430,7 +455,12 @@ async fn start_relay_hop(
                         tokio::spawn(async move {
                             tokio::select! {
                                 _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
-                                r = handle_hop_conn(conn, transport, &next_hop, mode) => {
+                                r = async move {
+                                    let conn = pending.handshake().await;
+                                    // 握手结束(成功/失败)即释放名额,后续 bridge 不占握手并发。
+                                    drop(permit);
+                                    handle_hop_conn(conn?, transport, &next_hop, mode).await
+                                } => {
                                     if let Err(e) = r {
                                         warn!(rule_id, error = ?e, "tunnel hop conn error");
                                     }
@@ -438,8 +468,14 @@ async fn start_relay_hop(
                             }
                         });
                     }
-                    // TLS 握手失败也走这里:计 warn 继续 accept,不退出 loop。
-                    Err(e) => warn!(rule_id, error = ?e, "tunnel hop accept error"),
+                    // accept_pending 现在只因底层 TCP accept 失败而出错(握手错误已移入 per-conn task)。
+                    // 仅对 fd/内存耗尽类 io 错误退避,防 100% CPU 忙循环;其余立即继续。
+                    Err(e) => {
+                        warn!(rule_id, error = ?e, "tunnel hop accept error");
+                        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                            crate::relay::accept_backoff(io_err).await;
+                        }
+                    }
                 }
             }
         }
@@ -468,6 +504,13 @@ async fn handle_hop_conn(
                     let upstream = TcpStream::connect((target_host.as_str(), target_port))
                         .await
                         .with_context(|| format!("connect target {target_host}:{target_port}"))?;
+                    // SSRF 二次防御:与 relay/tcp.rs 一致,校验解析结果非内网(堵域名 DNS rebinding)。
+                    // panel 只能校验字面 IP,域名解析在出口节点本地发生;字面内网 IP 已被 panel 拦,
+                    // 字面公网 IP 在此自动放行。隧道出口此前缺这道补偿控制(SSRF 可达出口内网/云元数据)。
+                    if let Ok(peer) = upstream.peer_addr() {
+                        crate::relay::guard_resolved_target(&target_host, peer)?;
+                    }
+                    crate::relay::set_nodelay(&upstream);
                     bridge_raw(conn, Box::new(upstream)).await
                 }
                 STREAM_UDP => exit_udp_conn(conn, &target_host, target_port).await,
@@ -502,6 +545,10 @@ async fn exit_udp_conn(conn: TunnelConn, target_host: &str, target_port: u16) ->
     udp.connect((target_host, target_port))
         .await
         .with_context(|| format!("connect udp target {target_host}:{target_port}"))?;
+    // SSRF 二次防御:与 relay/udp.rs 一致,校验解析结果非内网(堵域名 DNS rebinding)。
+    if let Ok(peer) = udp.peer_addr() {
+        crate::relay::guard_resolved_target(target_host, peer)?;
+    }
     let (mut t_r, mut t_w) = tokio::io::split(conn);
 
     let inbound = async {

@@ -3,16 +3,20 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::tunnel::transport::{TunnelConn, TunnelListener, TunnelTransport};
+use crate::tunnel::transport::{
+    PendingHop, TunnelConn, TunnelListener, TunnelTransport, HANDSHAKE_TIMEOUT,
+};
 
 pub struct TcpTransport;
 
 #[tonic::async_trait]
 impl TunnelTransport for TcpTransport {
     async fn dial(&self, addr: &str) -> Result<TunnelConn> {
-        let s = TcpStream::connect(addr)
+        let s = tokio::time::timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
             .await
+            .with_context(|| format!("tunnel tcp dial {addr} timed out"))?
             .with_context(|| format!("tunnel tcp dial {addr}"))?;
+        crate::relay::set_nodelay(&s);
         Ok(Box::new(s))
     }
 
@@ -30,13 +34,26 @@ struct TcpTunnelListener {
 
 #[tonic::async_trait]
 impl TunnelListener for TcpTunnelListener {
-    async fn accept(&mut self) -> Result<TunnelConn> {
+    async fn accept_pending(&mut self) -> Result<Box<dyn PendingHop>> {
         let (s, _) = self.inner.accept().await.context("tunnel tcp accept")?;
-        Ok(Box::new(s))
+        crate::relay::set_nodelay(&s);
+        Ok(Box::new(TcpPendingHop { stream: s }))
     }
 
     fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr()?)
+    }
+}
+
+/// 裸 TCP 无握手:handshake 直接交回连接。
+struct TcpPendingHop {
+    stream: TcpStream,
+}
+
+#[tonic::async_trait]
+impl PendingHop for TcpPendingHop {
+    async fn handshake(self: Box<Self>) -> Result<TunnelConn> {
+        Ok(Box::new(self.stream))
     }
 }
 

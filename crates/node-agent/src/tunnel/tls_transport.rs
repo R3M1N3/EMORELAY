@@ -2,8 +2,8 @@
 //! Command.tunnel_credentials 下发落盘(creds.rs)。dial 方强制 SNI =
 //! tunnel-<id>-hop-<self_ordinal+1>.emorelay.internal——身份验证用 SNI/SAN,
 //! next_hop_addr 只用于路由。server 端 WebPkiClientVerifier 强制 client cert
-//! 链到同 CA。TLS 握手在 accept() 内串行完成:hop 仅被上一跳(信任域内)连入,
-//! 恶意半开连接风险低,MVP 接受。
+//! 链到同 CA。TLS 握手在 accept() 内串行完成(hop 仅被上一跳/信任域内连入);
+//! 半开/慢握手连接由 HANDSHAKE_TIMEOUT(transport.rs)超时断开,防永久挂死 accept loop。
 //!
 //! P3c 补充:accept 后校验 client cert SAN = 上一跳(防同 CA 凭据横向连入)。
 use anyhow::{Context, Result};
@@ -18,7 +18,9 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 use crate::tunnel::creds::hop_dir;
-use crate::tunnel::transport::{TunnelConn, TunnelListener, TunnelTransport};
+use crate::tunnel::transport::{
+    PendingHop, TunnelConn, TunnelListener, TunnelTransport, HANDSHAKE_TIMEOUT,
+};
 
 pub struct TlsTransport {
     pub(crate) connector: TlsConnector,
@@ -120,14 +122,18 @@ fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
 #[tonic::async_trait]
 impl TunnelTransport for TlsTransport {
     async fn dial(&self, addr: &str) -> Result<TunnelConn> {
-        let tcp = TcpStream::connect(addr)
+        let tcp = tokio::time::timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
             .await
+            .with_context(|| format!("tunnel tls tcp connect {addr} timed out"))?
             .with_context(|| format!("tunnel tls tcp connect {addr}"))?;
-        let tls = self
-            .connector
-            .connect(self.dial_sni.clone(), tcp)
-            .await
-            .context("tunnel tls client handshake")?;
+        crate::relay::set_nodelay(&tcp);
+        let tls = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            self.connector.connect(self.dial_sni.clone(), tcp),
+        )
+        .await
+        .context("tunnel tls client handshake timed out")?
+        .context("tunnel tls client handshake")?;
         Ok(Box::new(tls))
     }
 
@@ -155,19 +161,37 @@ struct TlsTunnelListener {
 
 #[tonic::async_trait]
 impl TunnelListener for TlsTunnelListener {
-    async fn accept(&mut self) -> Result<TunnelConn> {
+    async fn accept_pending(&mut self) -> Result<Box<dyn PendingHop>> {
         let (tcp, _) = self.inner.accept().await.context("tunnel tls tcp accept")?;
-        let tls = self
-            .acceptor
-            .accept(tcp)
-            .await
-            .context("tunnel tls server handshake")?;
-        verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
-        Ok(Box::new(tls))
+        crate::relay::set_nodelay(&tcp);
+        Ok(Box::new(TlsPendingHop {
+            tcp,
+            acceptor: self.acceptor.clone(),
+            expect_client_san: self.expect_client_san.clone(),
+        }))
     }
 
     fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr()?)
+    }
+}
+
+struct TlsPendingHop {
+    tcp: TcpStream,
+    acceptor: TlsAcceptor,
+    expect_client_san: String,
+}
+
+#[tonic::async_trait]
+impl PendingHop for TlsPendingHop {
+    async fn handshake(self: Box<Self>) -> Result<TunnelConn> {
+        // 握手超时:半开连接(连 TCP 不发 TLS 数据)否则会永久挂住本握手 task(已移出 accept loop)。
+        let tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, self.acceptor.accept(self.tcp))
+            .await
+            .context("tunnel tls server handshake timed out")?
+            .context("tunnel tls server handshake")?;
+        verify_client_san(tls.get_ref().1, &self.expect_client_san)?;
+        Ok(Box::new(tls))
     }
 }
 
@@ -271,5 +295,28 @@ mod tests {
         });
         assert!(listener.accept().await.is_err(), "无 TLS/无 client cert 必须被拒");
         let _ = client.await;
+    }
+
+    /// 半开连接(连 TCP 后永不发 TLS 握手数据)必须被握手超时断开,不能永久挂死
+    /// 整个 hop 的 accept loop。虚拟时钟在 runtime idle 时自动推进过 HANDSHAKE_TIMEOUT,
+    /// accept 应返回 Err(超时)而非永久挂起。
+    #[tokio::test(start_paused = true)]
+    async fn tls_accept_times_out_on_half_open_handshake() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let data_dir = dir.path().display().to_string();
+        write_hop_creds_pair(&data_dir, 9, 0, 1).await;
+        let server_t = TlsTransport::load(&data_dir, &ctx(9, 1)).unwrap();
+        let mut listener = server_t.bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // client 连上 TCP 但永不发握手数据,保持半开。
+        let client = tokio::spawn(async move {
+            let _s = tokio::net::TcpStream::connect(addr).await.unwrap();
+            std::future::pending::<()>().await;
+        });
+
+        let r = listener.accept().await;
+        assert!(r.is_err(), "半开握手必须超时断开,而非永久挂起");
+        client.abort();
     }
 }
