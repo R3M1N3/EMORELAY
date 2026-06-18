@@ -150,10 +150,36 @@ async fn bridge(
     // bail 走调用方的 error_count(被阻断连接计 error,可观测);此连接在 sniff 前已计
     // connection_count、已持 permit,最长占名额 2s(HTTP/TLS/SOCKS 首包即到,实际微秒级)。
     if blocked_protocols != 0 {
+        // 单次 peek 只返回当前内核缓冲已有的字节;攻击者把首包拆成 1~2 字节(主动分片,或自然
+        // MSS/Nagle 分段)即可让单次 peek 字节不足、被 sniff_blocked 保守放行,平凡绕过协议屏蔽。
+        // 这里在 2s 截止内循环 peek 累积(peek 不消费,后续 splice/pump 仍读到完整流),每次都判一遍——
+        // 首包凑齐指纹即断连。仍保留"截止仍判不出则放行"的 best-effort 语义(愿意每连接 stall >2s 的
+        // 对端无法被时限内的被动嗅探覆盖,这是该防滥用控制的固有边界)。
+        // 取所有指纹里最长的:HTTP "CONNECT "/"OPTIONS " = 8 字节(含尾空格,is_http_request 用
+        // starts_with 需完整方法名才命中)。阈值低于它会在凑齐前就因 n>=MIN 放行,使 CONNECT/
+        // OPTIONS 等长方法被 5~7 字节首段分片绕过(CONNECT 正是最该屏蔽的代理方法)。
+        const MIN_SNIFF_LEN: usize = 8;
         let mut peekbuf = [0u8; 16];
-        if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_secs(2), client.peek(&mut peekbuf)).await {
-            if let Some(proto) = crate::sniff::sniff_blocked(&peekbuf[..n], blocked_protocols) {
-                anyhow::bail!("blocked protocol: {proto}");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match tokio::time::timeout_at(deadline, client.peek(&mut peekbuf)).await {
+                Ok(Ok(0)) => break, // 对端关闭,无可判数据
+                Ok(Ok(n)) => {
+                    if let Some(proto) = crate::sniff::sniff_blocked(&peekbuf[..n], blocked_protocols) {
+                        anyhow::bail!("blocked protocol: {proto}");
+                    }
+                    if n >= MIN_SNIFF_LEN {
+                        break; // 已够判定且未命中 → 放行
+                    }
+                    // 字节不足且未命中:首包可能被分片,等一拍再 peek 累积(到截止则放行)。
+                    if tokio::time::timeout_at(deadline, tokio::time::sleep(Duration::from_millis(50)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                _ => break, // 截止 / 读错误 → best-effort 放行
             }
         }
     }
@@ -541,6 +567,37 @@ mod tests {
         let mut echo = [0u8; 6];
         ok.read_exact(&mut echo).await.expect("普通流量应放行并回显");
         assert_eq!(&echo, b"\x00\x01ping");
+
+        handle.stop().await;
+    }
+
+    /// M5:嗅探阻断不能被首包分片绕过,且累积阈值须 ≥ 最长指纹。把 HTTP CONNECT(最该屏蔽
+    /// 的代理方法,"CONNECT " 含尾空格 8 字节)拆成首段 "CONNE"(5 字节)+ 其余,段间留间隔——
+    /// 首个 peek 只看到 5 字节、不足以匹配 CONNECT。验证循环 peek 累积到 8 字节后识别并断连。
+    /// (旧 MIN_SNIFF_LEN=5 会在首个 peek 处 n>=MIN 放行 → 连接被转发回显 → 本测试失败。)
+    #[tokio::test]
+    async fn tcp_relay_blocks_fragmented_connect() {
+        let echo_port = spawn_echo_server().await;
+        let listen_port = ephemeral_port();
+        let stats = Arc::new(StatsCollector::new());
+        let mut rule = rule_for(listen_port, echo_port);
+        rule.blocked_protocols = crate::sniff::BLOCK_HTTP;
+        let handle = start(rule, stats.clone(), None).await.expect("relay start");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut conn = TcpStream::connect(("127.0.0.1", listen_port)).await.unwrap();
+        // 首段 "CONNE"(5 字节)不足以匹配 "CONNECT "(8 字节);旧 MIN=5 会在此处放行。
+        conn.write_all(b"CONNE").await.unwrap();
+        conn.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        conn.write_all(b"CT example.com:443 HTTP/1.1\r\n").await.unwrap();
+        conn.flush().await.unwrap();
+
+        let mut buf = [0u8; 8];
+        let r = tokio::time::timeout(Duration::from_secs(3), conn.read(&mut buf))
+            .await
+            .expect("read 应在嗅探断连后迅速返回");
+        assert!(matches!(r, Ok(0)) || r.is_err(), "分片 CONNECT 首包应被累积嗅探阻断, got {r:?}");
 
         handle.stop().await;
     }

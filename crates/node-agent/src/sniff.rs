@@ -36,6 +36,8 @@ fn is_http_request(b: &[u8]) -> bool {
     const METHODS: &[&[u8]] = &[
         b"GET ", b"POST ", b"PUT ", b"HEAD ", b"DELETE ", b"OPTIONS ", b"PATCH ", b"TRACE ",
         b"CONNECT ",
+        // HTTP/2 明文(h2c)prior-knowledge 连接前导 "PRI * HTTP/2.0\r\n";不补则 h2c 直连绕过 HTTP 阻断。
+        b"PRI ",
     ];
     METHODS.iter().any(|m| b.starts_with(m))
 }
@@ -85,6 +87,12 @@ mod tests {
         assert_eq!(sniff_blocked(&[0x04, 0x01, 0x00, 0x50], BLOCK_SOCKS), Some("socks"));
         // SOCKS4 第二字节非 CONNECT/BIND 放行。
         assert_eq!(sniff_blocked(&[0x04, 0x09], BLOCK_SOCKS), None);
+    }
+
+    #[test]
+    fn detects_h2c_prior_knowledge_preface() {
+        // h2c prior-knowledge 前导;不补 PRI 方法则 HTTP/2 明文直连绕过 HTTP 阻断。
+        assert_eq!(sniff_blocked(b"PRI * HTTP/2.0\r\n", BLOCK_HTTP), Some("http"));
     }
 
     #[test]
