@@ -20,9 +20,11 @@ const SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// 最大单包 UDP 字节（IPv4 64KB - header）。
 const MAX_PACKET: usize = 65535;
-/// UDP NAT 表上限:每 session 占一个 upstream socket(fd + ephemeral 端口)与一个反向 task。
-/// 源地址可伪造,无上限会被海量伪造源耗尽 fd/端口/内存;达上限丢新包(既有 session 不受影响)。
-const MAX_UDP_SESSIONS: usize = 8192;
+/// UDP NAT 表上限:每 session 占一个 upstream socket(fd + ephemeral 端口)与一个反向 task
+/// (后者常驻一个 MAX_PACKET 接收缓冲)。源地址可伪造,无上限会被海量伪造源耗尽 fd/端口/内存;
+/// 达上限丢新包(既有 session 不受影响)。4096 对个人/小规模转发足够,把满载内存/fd/端口上限
+/// 收敛到原 8192 的一半;反向缓冲保持 MAX_PACKET 不截断大响应,故用降并发数而非缩缓冲来控内存。
+const MAX_UDP_SESSIONS: usize = 4096;
 
 pub struct UdpRelayHandle {
     stop_tx: oneshot::Sender<()>,
@@ -117,6 +119,9 @@ async fn start_inner(
                         Err(e) => {
                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                             error!(rule_id, error = ?e, "udp recv error");
+                            // 持续性 recv 错误(如内核 ENOBUFS/ENOMEM)下立即重试会忙循环烧满单核;
+                            // 复用 accept 退避:仅对资源耗尽类 errno sleep 一拍,瞬时错误(绝大多数)不退避。
+                            crate::relay::accept_backoff(&e).await;
                         }
                     }
                 }
@@ -209,6 +214,13 @@ async fn forward(
             return Ok(());
         }
     };
+    // 先发首包:connected UDP 的 send 在 connect 成功后极少失败,但若失败必须在 spawn 反向 task
+    // 之前返回——否则反向 task(持 upstream 的 Arc)无人 abort,task+upstream fd 永久泄漏
+    // (sweep/stop 只 abort map 内的 session,够不着尚未插入的它)。首包成功后再计 connection_count。
+    upstream
+        .send(data)
+        .await
+        .context("upstream send (new session)")?;
     counter.connection_count.fetch_add(1, Ordering::Relaxed);
 
     // 反向 task：从 upstream 收响应写回原 client_addr。
@@ -244,10 +256,6 @@ async fn forward(
         }
     });
 
-    upstream
-        .send(data)
-        .await
-        .context("upstream send (new session)")?;
     map.insert(
         client_addr,
         Session {
