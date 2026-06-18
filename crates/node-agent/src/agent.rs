@@ -121,6 +121,17 @@ async fn run_session(
                         // manager(不改规则状态),也不阻塞主循环(count 次 connect 可能耗时)。
                         if let Some(emorelay_common::control::v1::command::Body::Probe(p)) = &cmd.body {
                             if let Some(reporter) = client.probe_reporter() {
+                                // 在飞探测上限:每个 probe 最多 count(≤20)次 3s connect;面板用户可对自己
+                                // 规则反复触发诊断(隧道还按 hop fan-out),无上限会堆积大量 connect task 占
+                                // fd/CPU。满则丢弃本次(仿 UpgradeAgent 的并发守卫)。
+                                use std::sync::atomic::{AtomicUsize, Ordering};
+                                static PROBE_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+                                const MAX_PROBE_INFLIGHT: usize = 16;
+                                if PROBE_INFLIGHT.fetch_add(1, Ordering::SeqCst) >= MAX_PROBE_INFLIGHT {
+                                    PROBE_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+                                    warn!("probe in-flight at cap; dropping probe command");
+                                    continue;
+                                }
                                 let p = p.clone();
                                 tokio::spawn(async move {
                                     let port = u16::try_from(p.target_port).unwrap_or(0);
@@ -131,6 +142,7 @@ async fn run_session(
                                     if let Err(e) = reporter.report(result).await {
                                         warn!(error = ?e, "report probe result failed");
                                     }
+                                    PROBE_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
                                 });
                             }
                             continue;
@@ -197,8 +209,8 @@ async fn report_node_stats(
 ) -> Result<()> {
     use emorelay_common::control::v1::{NodeStatsBatch, NodeStatsBucket};
 
-    let sample = sampler.drain();
-
+    // 先做时钟检查再 drain:时钟异常时若已 drain 却 return Ok 跳过上报,本窗口增量就丢了
+    // (drain 不可逆)。把 drain 放到确定要上报之后。
     let now_unix = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
         Err(e) => {
@@ -208,6 +220,7 @@ async fn report_node_stats(
     };
     let bucket_at_unix = (now_unix / 60) * 60;
 
+    let sample = sampler.drain();
     let bucket = NodeStatsBucket {
         bucket_at_unix,
         cpu_usage: sample.cpu_usage,
@@ -221,9 +234,15 @@ async fn report_node_stats(
         buckets: vec![bucket],
     };
 
-    client
+    // 上报失败:把已 drain 的 rx/tx 增量回填基线,下个窗口补报,避免节点流量丢数
+    // (与 report_stats 的 stats.restore 同语义;cpu/mem/load 是瞬时量不需回填)。
+    if let Err(e) = client
         .report_node_stats(tokio_stream::iter(vec![batch]))
-        .await?;
+        .await
+    {
+        sampler.restore_traffic(sample.rx_bytes_delta, sample.tx_bytes_delta);
+        return Err(e.into());
+    }
     info!(
         cpu = sample.cpu_usage,
         mem = sample.memory_usage,

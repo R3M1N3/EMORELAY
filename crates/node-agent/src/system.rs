@@ -109,6 +109,16 @@ impl SystemSampler {
             tx_bytes_delta: tx_delta,
         }
     }
+
+    /// 上报失败时回填:把已 drain 的 rx/tx 增量从基线减回去,下次 drain 会重新带出补报。
+    /// 与 report_stats 的 StatsCollector::restore 同语义("上报成功才推进基线")。
+    /// drain 把"取增量"和"推进基线"耦合成不可逆的一步,失败时无法报出去也无法回滚,
+    /// 本方法提供回滚通道。只回填累计流量(rx/tx);cpu/mem/load 是瞬时采样,不需回填。
+    pub fn restore_traffic(&self, rx_delta: i64, tx_delta: i64) {
+        let mut g = self.inner.lock().expect("sysinfo sampler poisoned");
+        g.last_rx_total = g.last_rx_total.saturating_sub(rx_delta.max(0) as u64);
+        g.last_tx_total = g.last_tx_total.saturating_sub(tx_delta.max(0) as u64);
+    }
 }
 
 impl Default for SystemSampler {
