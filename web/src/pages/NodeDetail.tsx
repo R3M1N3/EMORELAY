@@ -53,8 +53,13 @@ export default function NodeDetail() {
   useAutoRefresh(() => setRefreshTick((n) => n + 1), 30_000)
 
   function copyCred(value: string, label: string) {
+    if (!navigator.clipboard) {
+      // HTTP 非安全上下文剪贴板不可用:提示手动复制(凭据均以可选文本展示)。
+      toast.error('当前环境(非 HTTPS)无法自动复制，请手动选择文本复制')
+      return
+    }
     navigator.clipboard
-      ?.writeText(value)
+      .writeText(value)
       .then(() => toast.success(`已复制${label}`))
       .catch(() => toast.error('复制失败，请手动选择'))
   }

@@ -148,8 +148,13 @@ export default function Nodes() {
   }
 
   function copyCred(value: string, label: string) {
+    if (!navigator.clipboard) {
+      // HTTP 非安全上下文剪贴板不可用:提示手动复制(命令/凭据均以可全选文本展示)。
+      toast.error('当前环境(非 HTTPS)无法自动复制，请点击文本框手动选择复制')
+      return
+    }
     navigator.clipboard
-      ?.writeText(value)
+      .writeText(value)
       .then(() => toast.success(`已复制${label}`))
       .catch(() => toast.error('复制失败，请手动选择'))
   }
@@ -354,9 +359,14 @@ export default function Nodes() {
                 <div className="text-[11px] text-zinc-400 mb-1">
                   一键安装命令（已内嵌 mTLS 凭据）
                 </div>
-                <div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 break-all max-h-32 overflow-auto">
-                  {cmd}
-                </div>
+                {/* 只读 textarea:聚焦自动全选,HTTP 内网剪贴板不可用时也能手动 Ctrl+C 复制 */}
+                <textarea
+                  readOnly
+                  value={cmd}
+                  onFocus={(e) => e.currentTarget.select()}
+                  rows={3}
+                  className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 resize-none break-all"
+                />
                 <button
                   type="button"
                   onClick={() => copyCred(cmd, '安装命令')}
@@ -444,10 +454,15 @@ function NodeRow({
           <div className="text-[10px] text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
         )}
       </td>
-      <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
-        <div>CPU {node.cpu_usage.toFixed(1)}%</div>
-        <div>MEM {node.memory_usage.toFixed(1)}%</div>
-        <div>LOAD {node.load_average.toFixed(2)}</div>
+      <td className="px-4 py-3 align-top text-[12px] text-zinc-300 min-w-[8rem]">
+        <div className="space-y-1.5">
+          <UsageGauge label="CPU" pct={node.cpu_usage} />
+          <UsageGauge label="MEM" pct={node.memory_usage} />
+          <div className="flex justify-between text-[11px] text-zinc-400">
+            <span>LOAD</span>
+            <span>{node.load_average.toFixed(2)}</span>
+          </div>
+        </div>
       </td>
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>↓ {formatBytes(node.rx_bytes_total)}</div>
@@ -473,6 +488,30 @@ function NodeRow({
         </button>
       </td>
     </tr>
+  )
+}
+
+// 节点资源用量进度条:CPU/MEM 百分比,带红黄绿阈值(<60 绿 / <85 黄 / 否则红)。
+function UsageGauge({ label, pct }: { label: string; pct: number }) {
+  const v = Math.max(0, Math.min(100, pct))
+  const color = v < 60 ? 'bg-emerald-400' : v < 85 ? 'bg-amber-400' : 'bg-red-400'
+  return (
+    <div>
+      <div className="flex justify-between text-[11px] text-zinc-400">
+        <span>{label}</span>
+        <span>{pct.toFixed(1)}%</span>
+      </div>
+      <div
+        className="mt-0.5 h-1 rounded-full bg-white/10 overflow-hidden"
+        role="progressbar"
+        aria-valuenow={Math.round(v)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${label} 用量 ${pct.toFixed(1)}%`}
+      >
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${v}%` }} />
+      </div>
+    </div>
   )
 }
 

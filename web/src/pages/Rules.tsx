@@ -539,6 +539,9 @@ export default function Rules() {
             （入口 {formatHostPort(nodeEntryHost(nodesById.get(confirming.node_id)) || confirming.listen_ip, confirming.listen_port)}）。
             节点在线时对应端口将立即停止监听；若节点离线，规则将在其恢复后自动清理。
           </p>
+          <p className="mt-2 text-[12px] text-amber-300/90">
+            将一并清除该规则累计统计：↓{formatBytes(confirming.rx_bytes)} ↑{formatBytes(confirming.tx_bytes)} · 连接 {confirming.connection_count}
+          </p>
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
