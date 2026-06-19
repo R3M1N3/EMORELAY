@@ -16,6 +16,8 @@ import {
 } from '../lib/api'
 import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
+import { RegionBadge } from '../components/RegionBadge'
+import { COMMON_COUNTRY_CODES, countryName, normalizeRegion } from '../lib/country'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -420,7 +422,7 @@ function NodeRow({
         <div className="text-[11px] text-zinc-400 mt-0.5">ID #{node.id}</div>
       </td>
       <td className="px-4 py-3 align-top text-zinc-300">
-        <div>{node.region || '—'}</div>
+        <div><RegionBadge region={node.region} /></div>
         <div className="text-[11px] text-zinc-400 mt-0.5">{node.public_ip || '未填'}</div>
       </td>
       {/* 长 URL 截断显示,完整值挂 title;否则挤压名称/状态列(移动端尤甚)。 */}
@@ -577,7 +579,7 @@ function NodeForm({
       if (mode === 'create') {
         const payload: CreateNodeRequest = {
           name: form.name.trim(),
-          region: form.region.trim(),
+          region: normalizeRegion(form.region),
           public_ip: form.public_ip.trim(),
           display_address: form.display_address.trim(),
           grpc_endpoint: form.grpc_endpoint.trim(),
@@ -596,7 +598,7 @@ function NodeForm({
       } else if (initial) {
         const payload: UpdateNodeRequest = {
           name: form.name.trim() !== initial.name ? form.name.trim() : undefined,
-          region: form.region.trim() !== initial.region ? form.region.trim() : undefined,
+          region: normalizeRegion(form.region) !== normalizeRegion(initial.region) ? normalizeRegion(form.region) : undefined,
           public_ip: form.public_ip.trim() !== initial.public_ip ? form.public_ip.trim() : undefined,
           // '' 是合法值(清空 = 回落接入地址),有变更就原样发送。
           display_address:
@@ -646,9 +648,15 @@ function NodeForm({
             id="node-region"
             value={form.region}
             onChange={(e) => set('region', e.target.value)}
+            list="node-country-codes"
             className={fieldInputCls}
-            placeholder="HK / SG / JP …"
+            placeholder="国家码如 HK / JP（可下拉选）"
           />
+          <datalist id="node-country-codes">
+            {COMMON_COUNTRY_CODES.map((c) => (
+              <option key={c} value={c}>{countryName(c)}</option>
+            ))}
+          </datalist>
         </div>
         <div>
           <label htmlFor="node-public-ip" className={fieldLabelCls}>接入地址</label>

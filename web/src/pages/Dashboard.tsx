@@ -12,6 +12,7 @@ import {
 } from '../lib/api'
 import { useAuth } from '../lib/use-auth'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
+import { RegionBadge } from '../components/RegionBadge'
 import UserDashboard from './UserDashboard'
 import { ErrorBox, PageLoading } from '../lib/ui'
 
@@ -236,7 +237,7 @@ function NodeRow({ node }: { node: NodeView }) {
         <span className="sr-only">{node.status === 'online' ? '在线' : node.status === 'offline' ? '离线' : '状态未知'}</span>
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{node.name}</div>
-          <div className="text-[11px] text-zinc-400 truncate">{node.region || '—'} · {node.public_ip || '未填'}</div>
+          <div className="text-[11px] text-zinc-400 truncate"><RegionBadge region={node.region} /> · {node.public_ip || '未填'}</div>
         </div>
       </div>
       <div className="flex items-center gap-4 text-[11px] text-zinc-400 shrink-0">

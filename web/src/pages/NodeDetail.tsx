@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
@@ -12,6 +12,7 @@ import {
   type NodeView,
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
+import { RegionBadge } from '../components/RegionBadge'
 import { ErrorBox, Modal, PageLoading, StatusDot } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -152,7 +153,7 @@ export default function NodeDetail() {
               <StatusDot kind={node.status} />
               {statusLabel(node.status)}
             </span>
-            ID #{node.id} · {node.region || '—'} · {node.public_ip || '未填'}
+            ID #{node.id} · <RegionBadge region={node.region} /> · {node.public_ip || '未填'}
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -194,7 +195,7 @@ export default function NodeDetail() {
         <section className="glass-card rise p-5">
           <h3 className="text-sm font-medium text-zinc-200 mb-3">基本信息</h3>
           <dl className="text-sm space-y-2">
-            <Row k="区域" v={node.region || '—'} />
+            <Row k="区域" v={<RegionBadge region={node.region} />} />
             <Row k="接入地址" v={node.public_ip || '—'} mono />
             <Row
               k="展示地址"
@@ -423,7 +424,7 @@ function SeriesCard({
   )
 }
 
-function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function Row({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-zinc-400">{k}</dt>
