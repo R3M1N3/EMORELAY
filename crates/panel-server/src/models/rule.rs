@@ -25,6 +25,8 @@ pub struct Rule {
     pub extra_targets: Option<String>,
     /// 负载策略 fifo/round/rand/hash;默认 fifo。仅目标数 > 1 时生效。
     pub lb_strategy: String,
+    /// realm-parity:是否向上游发送 PROXY protocol v1 头(0/1)。仅非隧道 TCP relay 生效。
+    pub send_proxy_protocol: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -34,7 +36,7 @@ const RULE_COLUMNS: &str = "id, user_id, node_id, name, protocol, listen_ip, lis
     bandwidth_profile_id, \
     (SELECT bp.bandwidth_mbps FROM bandwidth_profiles bp \
         WHERE bp.id = forward_rules.bandwidth_profile_id AND bp.deleted_at IS NULL) AS bandwidth_mbps, \
-    tunnel_id, max_connections, extra_targets, lb_strategy, created_at, updated_at";
+    tunnel_id, max_connections, extra_targets, lb_strategy, send_proxy_protocol, created_at, updated_at";
 
 /// 允许的排序字段白名单。值必须为 schema 真实列名且非敏感字段；
 /// SQL 拼接前必须经此过滤。
@@ -214,6 +216,23 @@ impl Rule {
         .execute(pool)
         .await?;
         Ok(res.last_insert_rowid())
+    }
+
+    /// 设置「向上游发送 PROXY protocol」开关(0/1)。单独成方法,避免改 create/update_fields 签名。
+    pub async fn set_send_proxy_protocol(
+        pool: &SqlitePool,
+        id: i64,
+        enabled: bool,
+    ) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE forward_rules SET send_proxy_protocol = ?, updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(i64::from(enabled))
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     /// 设置多目标:extra_targets(JSON,None=清空)+ lb_strategy。

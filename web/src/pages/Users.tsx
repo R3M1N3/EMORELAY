@@ -257,6 +257,7 @@ function UserRow({
       </td>
       <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
         {user.rule_count}
+        {user.forward_rules_quota != null ? ` / ${user.forward_rules_quota}` : ''}
       </td>
       <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
         {formatBytes(user.total_traffic_bytes)}
@@ -390,6 +391,8 @@ interface UserFormState {
   traffic_limit_gb: string
   /** '' = 滚动 30 天;'1'..'31' = 月度重置日 */
   quota_reset_day: string
+  /** '' = 不限;'>0' = 转发规则数上限 */
+  forward_rules_quota: string
 }
 
 function UserForm({
@@ -411,6 +414,8 @@ function UserForm({
     expires_at: initial?.expires_at ? utcToLocalInput(initial.expires_at) : '',
     traffic_limit_gb: bytesToGbString(initial?.traffic_limit_bytes_30d ?? null),
     quota_reset_day: initial?.quota_reset_day != null ? String(initial.quota_reset_day) : '',
+    forward_rules_quota:
+      initial?.forward_rules_quota != null ? String(initial.forward_rules_quota) : '',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -420,16 +425,20 @@ function UserForm({
   const [tunnelOptions, setTunnelOptions] = useState<TunnelView[]>([])
   const [grantedNodes, setGrantedNodes] = useState<Set<number>>(new Set())
   const [grantedTunnels, setGrantedTunnels] = useState<Set<number>>(new Set())
-  const [initialGrants, setInitialGrants] = useState<{ nodes: number[]; tunnels: number[] } | null>(
-    mode === 'create' ? { nodes: [], tunnels: [] } : null,
-  )
+  // per-隧道转发条数上限(tunnel_id → 字符串输入;'' = 不限)。
+  const [tunnelLimits, setTunnelLimits] = useState<Record<number, string>>({})
+  const [initialGrants, setInitialGrants] = useState<{
+    nodes: number[]
+    tunnels: number[]
+    tunnelLimits: Record<number, string>
+  } | null>(mode === 'create' ? { nodes: [], tunnels: [], tunnelLimits: {} } : null)
 
   useEffect(() => {
     let cancelled = false
     const work: [
       ReturnType<typeof nodes.list>,
       ReturnType<typeof tunnels.list>,
-      Promise<{ granted_node_ids: number[]; granted_tunnel_ids: number[] } | null>,
+      Promise<Awaited<ReturnType<typeof users.grants>> | null>,
     ] = [
       nodes.list({ page_size: 100 }),
       tunnels.list({ page_size: 100 }),
@@ -443,7 +452,16 @@ function UserForm({
         if (g) {
           setGrantedNodes(new Set(g.granted_node_ids))
           setGrantedTunnels(new Set(g.granted_tunnel_ids))
-          setInitialGrants({ nodes: g.granted_node_ids, tunnels: g.granted_tunnel_ids })
+          const tl: Record<number, string> = {}
+          for (const x of g.tunnel_forward_limits) {
+            if (x.limit != null) tl[x.tunnel_id] = String(x.limit)
+          }
+          setTunnelLimits(tl)
+          setInitialGrants({
+            nodes: g.granted_node_ids,
+            tunnels: g.granted_tunnel_ids,
+            tunnelLimits: tl,
+          })
         }
       })
       .catch(() => {
@@ -459,6 +477,26 @@ function UserForm({
 
   function sameIds(a: number[], chosen: Set<number>): boolean {
     return a.length === chosen.size && a.every((id) => chosen.has(id))
+  }
+
+  /** 当前已选隧道的有效上限(>0 整数);留空/非正视为不限,不下发。 */
+  function buildTunnelLimits(): { tunnel_id: number; limit: number }[] {
+    const out: { tunnel_id: number; limit: number }[] = []
+    for (const tid of grantedTunnels) {
+      const raw = (tunnelLimits[tid] ?? '').trim()
+      if (raw === '') continue
+      const n = Number(raw)
+      if (Number.isInteger(n) && n > 0) out.push({ tunnel_id: tid, limit: n })
+    }
+    return out
+  }
+
+  /** 隧道授权 + 上限的可比较签名(集合或任一上限变化即不同)。 */
+  function tunnelGrantKey(tunnels: Set<number>, limits: Record<number, string>): string {
+    return [...tunnels]
+      .sort((a, b) => a - b)
+      .map((t) => `${t}:${(limits[t] ?? '').trim()}`)
+      .join(',')
   }
 
   async function onSubmit(e: FormEvent) {
@@ -483,6 +521,29 @@ function UserForm({
         }
         resetDay = d
       }
+      // 转发规则数上限:'' = 不限;否则非负整数。
+      let fwdQuota: number | undefined
+      if (form.forward_rules_quota.trim() !== '') {
+        const q = Number(form.forward_rules_quota)
+        if (!Number.isInteger(q) || q < 0) {
+          setError('转发规则数上限必须是非负整数,或留空表示不限')
+          setSubmitting(false)
+          return
+        }
+        fwdQuota = q
+      }
+      // 每隧道上限:留空 = 不限;否则须 ≥1 整数。
+      for (const tid of grantedTunnels) {
+        const raw = (tunnelLimits[tid] ?? '').trim()
+        if (raw !== '') {
+          const n = Number(raw)
+          if (!Number.isInteger(n) || n < 1) {
+            setError('隧道转发条数上限必须是 ≥1 的整数,或留空表示不限')
+            setSubmitting(false)
+            return
+          }
+        }
+      }
       if (mode === 'create') {
         if (form.username.trim().length < 3) {
           setError('用户名长度需 3-32')
@@ -502,10 +563,15 @@ function UserForm({
           traffic_limit_bytes_30d: limitBytes,
         }
         if (resetDay !== undefined) payload.quota_reset_day = resetDay
+        if (fwdQuota !== undefined && fwdQuota > 0) payload.forward_rules_quota = fwdQuota
         // 默认拒绝:不勾选即不发送(admin 角色不受授权限制,不发送)。
         if (form.role === 'user') {
           if (grantedNodes.size > 0) payload.granted_node_ids = [...grantedNodes]
-          if (grantedTunnels.size > 0) payload.granted_tunnel_ids = [...grantedTunnels]
+          if (grantedTunnels.size > 0) {
+            payload.granted_tunnel_ids = [...grantedTunnels]
+            const lims = buildTunnelLimits()
+            if (lims.length > 0) payload.tunnel_forward_limits = lims
+          }
         }
         await users.create(payload)
       } else if (initial) {
@@ -535,13 +601,22 @@ function UserForm({
         if ((resetDay ?? 0) !== (initial.quota_reset_day ?? 0)) {
           payload.quota_reset_day = resetDay ?? 0
         }
+        // 转发规则数上限变更:0 清除(回不限),>0 设置。
+        if ((fwdQuota ?? 0) !== (initial.forward_rules_quota ?? 0)) {
+          payload.forward_rules_quota = fwdQuota ?? 0
+        }
         // 授权变更检测:回显成功(initialGrants 非 null)且勾选有变化才发送全量替换。
         if (initialGrants && form.role === 'user') {
           if (!sameIds(initialGrants.nodes, grantedNodes)) {
             payload.granted_node_ids = [...grantedNodes]
           }
-          if (!sameIds(initialGrants.tunnels, grantedTunnels)) {
+          // 隧道集合或任一上限变化即全量替换(set_tunnel_grants 一并写入 num)。
+          if (
+            tunnelGrantKey(grantedTunnels, tunnelLimits) !==
+            tunnelGrantKey(new Set(initialGrants.tunnels), initialGrants.tunnelLimits)
+          ) {
             payload.granted_tunnel_ids = [...grantedTunnels]
+            payload.tunnel_forward_limits = buildTunnelLimits()
           }
         }
         if (Object.keys(payload).length === 0) {
@@ -650,6 +725,19 @@ function UserForm({
             滚动窗口按最近 30 天统计；月度则每月固定日 0 点清零（月末容错）。
           </p>
         </div>
+        <div>
+          <label className={fieldLabelCls}>转发规则数上限</label>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={form.forward_rules_quota}
+            onChange={(e) => setForm((f) => ({ ...f, forward_rules_quota: e.target.value }))}
+            className={fieldInputCls}
+            placeholder="留空 = 不限"
+          />
+          <p className="text-[11px] text-zinc-500 mt-1">该用户最多可创建的转发规则数;留空/0 = 不限。</p>
+        </div>
       </div>
 
       {/* P7 授权:仅 user 角色;默认拒绝,勾选即授权。撤销不影响存量规则,仅禁止新建。 */}
@@ -689,6 +777,31 @@ function UserForm({
           <p className="col-span-2 text-[11px] text-zinc-500 -mt-1">
             默认拒绝:未勾选的节点/隧道该用户不可见、不可建规则。撤销授权不影响已建规则(保留运行,仅禁止新建)。
           </p>
+          {grantedTunnels.size > 0 && (
+            <div className="col-span-2">
+              <label className={fieldLabelCls}>各隧道转发条数上限（可选,留空 = 不限）</label>
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 space-y-1">
+                {tunnelOptions
+                  .filter((t) => grantedTunnels.has(t.id))
+                  .map((t) => (
+                    <div key={t.id} className="flex items-center gap-2 text-[12px]">
+                      <span className="truncate flex-1 text-zinc-300">{t.name}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={tunnelLimits[t.id] ?? ''}
+                        onChange={(e) =>
+                          setTunnelLimits((m) => ({ ...m, [t.id]: e.target.value }))
+                        }
+                        className={`${fieldInputCls} w-24`}
+                        placeholder="不限"
+                      />
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

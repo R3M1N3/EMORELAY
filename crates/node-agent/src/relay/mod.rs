@@ -21,6 +21,23 @@ pub(crate) fn set_nodelay(stream: &tokio::net::TcpStream) {
     let _ = stream.set_nodelay(true);
 }
 
+/// 转发两端 TCP 连接都启用 keepalive。中转长空闲连接(SSH/数据库长连/WebSocket)经 NAT
+/// 静默超时或对端崩溃时,无 keepalive 的半开连接既不转发也不释放、挂死占 fd
+/// (realm 对入站 client + 出站 server 两侧都设)。time=空闲 30s 起首探,interval=每 10s 一次;
+/// 探测次数用 OS 默认(跨平台 with_retries 不一致,省略)。设置失败极罕见(socket 已关),忽略。
+pub(crate) fn set_keepalive(stream: &tokio::net::TcpStream) {
+    let ka = socket2::TcpKeepalive::new()
+        .with_time(std::time::Duration::from_secs(30))
+        .with_interval(std::time::Duration::from_secs(10));
+    let _ = socket2::SockRef::from(stream).set_tcp_keepalive(&ka);
+}
+
+/// accept() 出错是否属"良性"。ECONNABORTED 表示对端在 accept 完成前就断开,是正常现象,
+/// 不应计入 error_count 污染错误率(realm 对该错误亦 continue 不计错)。
+pub(crate) fn accept_error_is_benign(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::ConnectionAborted
+}
+
 /// 对端地址是否为回环/内网/链路本地等不可对外路由的地址。
 /// SSRF 二次防御用:panel 端只能校验字面 IP,域名解析发生在 Agent,需在此堵 DNS rebinding。
 pub(crate) fn is_internal_addr(ip: &IpAddr) -> bool {
@@ -175,5 +192,32 @@ mod backoff_tests {
     fn non_linux_oom_fallback_only() {
         assert!(is_resource_exhausted(&Error::from(ErrorKind::OutOfMemory)));
         assert!(!is_resource_exhausted(&Error::from(ErrorKind::ConnectionAborted)));
+    }
+}
+
+#[cfg(test)]
+mod keepalive_tests {
+    use super::*;
+
+    /// set_keepalive 后应真的启用 SO_KEEPALIVE(socket2 读回校验),且不 panic。
+    #[tokio::test]
+    async fn set_keepalive_enables_so_keepalive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        set_keepalive(&client);
+        set_keepalive(&server);
+        let sr = socket2::SockRef::from(&client);
+        assert!(sr.keepalive().unwrap_or(false), "client keepalive 应启用");
+    }
+
+    /// 仅 ECONNABORTED 算良性,其它 accept 错误照常计入 error。
+    #[test]
+    fn econnaborted_is_benign_others_not() {
+        use std::io::{Error, ErrorKind};
+        assert!(accept_error_is_benign(&Error::from(ErrorKind::ConnectionAborted)));
+        assert!(!accept_error_is_benign(&Error::from(ErrorKind::Other)));
+        assert!(!accept_error_is_benign(&Error::from(ErrorKind::OutOfMemory)));
     }
 }

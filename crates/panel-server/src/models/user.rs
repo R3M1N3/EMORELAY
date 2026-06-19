@@ -14,6 +14,8 @@ pub struct User {
     pub must_change_password: i64,
     /// 月度重置日(1-31);NULL = 滚动 30 天窗口。
     pub quota_reset_day: Option<i64>,
+    /// 可创建转发规则条数上限(对标 flux User.num);NULL = 不限。
+    pub forward_rules_quota: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -24,7 +26,7 @@ impl User {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
                  period_used_bytes_cached, period_used_calculated_at, must_change_password, \
-                 quota_reset_day, created_at, updated_at, deleted_at \
+                 quota_reset_day, forward_rules_quota, created_at, updated_at, deleted_at \
              FROM users WHERE username = ? AND deleted_at IS NULL",
         )
         .bind(username)
@@ -36,7 +38,7 @@ impl User {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
                  period_used_bytes_cached, period_used_calculated_at, must_change_password, \
-                 quota_reset_day, created_at, updated_at, deleted_at \
+                 quota_reset_day, forward_rules_quota, created_at, updated_at, deleted_at \
              FROM users WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(id)
@@ -104,7 +106,7 @@ impl User {
         sqlx::query_as::<_, User>(
             "SELECT id, username, password_hash, role, expires_at, traffic_limit_bytes_30d, \
                  period_used_bytes_cached, period_used_calculated_at, must_change_password, \
-                 quota_reset_day, created_at, updated_at, deleted_at \
+                 quota_reset_day, forward_rules_quota, created_at, updated_at, deleted_at \
              FROM users WHERE deleted_at IS NULL \
              ORDER BY id DESC LIMIT ? OFFSET ?",
         )
@@ -163,6 +165,24 @@ impl User {
              WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(day)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// 设置/清除转发规则条数上限。quota=Some(n>0) 启用;None 清除(回不限)。
+    /// 与 User::update 解耦(同 set_quota_reset_day),由 routes 层归一 0/负值为 None。
+    pub async fn set_forward_rules_quota(
+        pool: &SqlitePool,
+        id: i64,
+        quota: Option<i64>,
+    ) -> sqlx::Result<u64> {
+        let res = sqlx::query(
+            "UPDATE users SET forward_rules_quota = ?, updated_at = datetime('now') \
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(quota)
         .bind(id)
         .execute(pool)
         .await?;

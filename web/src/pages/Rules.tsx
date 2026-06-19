@@ -799,6 +799,8 @@ interface RuleFormState {
   tunnel_id: string
   user_id: string
   max_connections: string
+  /** 向上游发送 PROXY protocol(admin 管控,仅非隧道 TCP) */
+  send_proxy_protocol: boolean
   /** 额外目标,每行一个 host:port */
   extra_targets: string
   lb_strategy: LbStrategy
@@ -841,6 +843,7 @@ export function RuleForm({
     tunnel_id: initial?.tunnel_id != null ? String(initial.tunnel_id) : '',
     user_id: initial != null ? String(initial.user_id) : '',
     max_connections: initial?.max_connections != null ? String(initial.max_connections) : '',
+    send_proxy_protocol: initial?.send_proxy_protocol ?? false,
     extra_targets: (initial?.extra_targets ?? []).map((t) => `${t.host}:${t.port}`).join('\n'),
     lb_strategy: initial?.lb_strategy ?? 'fifo',
   })
@@ -966,6 +969,7 @@ export function RuleForm({
             : null
           if (form.user_id) payload.user_id = Number(form.user_id)
           if (form.max_connections) payload.max_connections = Number(form.max_connections)
+          if (form.send_proxy_protocol) payload.send_proxy_protocol = true
         }
         payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
         if (extraTargets.length > 0) {
@@ -1005,6 +1009,11 @@ export function RuleForm({
               ? form.max_connections
                 ? Number(form.max_connections)
                 : 0
+              : undefined,
+          // admin 管控:PROXY protocol 开关变化才发送。
+          send_proxy_protocol:
+            isAdmin && form.send_proxy_protocol !== initial.send_proxy_protocol
+              ? form.send_proxy_protocol
               : undefined,
         }
         // 多目标/策略变更才发(空数组 = 清空回单目标)。
@@ -1277,6 +1286,20 @@ export function RuleForm({
             />
             <p className="text-[11px] text-zinc-500 mt-1">
               仅 TCP 生效;达到上限时新连接被直接断开。
+            </p>
+          </div>
+          <div>
+            <label className={fieldLabelCls}>PROXY protocol</label>
+            <label className="flex items-center gap-2 text-[13px] text-zinc-200 mt-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.send_proxy_protocol}
+                onChange={(e) => set('send_proxy_protocol', e.target.checked)}
+              />
+              向上游发送 PROXY protocol v1
+            </label>
+            <p className="text-[11px] text-zinc-500 mt-1">
+              仅非隧道 TCP;让上游(如 nginx)拿到真实客户端 IP(需上游启用 proxy_protocol)。
             </p>
           </div>
         </div>

@@ -19,6 +19,7 @@ fn rule_carries_tunnel_context() {
         blocked_protocols: 0,
         extra_targets: Vec::new(),
         lb_strategy: String::new(),
+        send_proxy_protocol: false,
         tunnel: Some(TunnelContext {
             tunnel_id: 7,
             role: TunnelRole::Entry as i32,

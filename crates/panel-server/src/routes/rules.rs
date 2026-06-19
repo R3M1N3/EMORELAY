@@ -58,6 +58,8 @@ pub struct RuleView {
     /// P2 多目标额外目标 + 负载策略。
     pub extra_targets: Vec<TargetDto>,
     pub lb_strategy: String,
+    /// 是否向上游发送 PROXY protocol v1(仅非隧道 TCP relay)。
+    pub send_proxy_protocol: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -85,6 +87,7 @@ impl From<Rule> for RuleView {
             max_connections: r.max_connections,
             extra_targets: parse_extra_targets(r.extra_targets.as_deref()),
             lb_strategy: r.lb_strategy,
+            send_proxy_protocol: r.send_proxy_protocol != 0,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -130,6 +133,8 @@ pub struct CreateRuleRequest {
     pub extra_targets: Option<Vec<TargetDto>>,
     /// 负载策略 fifo/round/rand/hash;未传 = fifo。
     pub lb_strategy: Option<String>,
+    /// realm-parity:向上游发送 PROXY protocol(admin 管控);未传/false = 关。仅非隧道 TCP。
+    pub send_proxy_protocol: Option<bool>,
 }
 
 fn default_listen_ip() -> String {
@@ -150,6 +155,8 @@ pub struct UpdateRuleRequest {
     /// 给定则全量替换额外目标(空数组 = 清空回单目标);None = 不改。
     pub extra_targets: Option<Vec<TargetDto>>,
     pub lb_strategy: Option<String>,
+    /// admin 管控:向上游发送 PROXY protocol 开关;None = 不改。
+    pub send_proxy_protocol: Option<bool>,
 }
 
 /// 校验多目标 + 策略,返回 (extra_targets_json, lb_strategy)。每个额外目标做与主目标
@@ -364,8 +371,21 @@ pub async fn create(
         None => auth.0.sub,
     };
     // 限速档/连接数上限是 admin 管控资产,普通用户不得自配;隧道改为按授权放开(校验见下)。
-    if !auth.is_admin() && (req.bandwidth_profile_id.is_some() || req.max_connections.is_some()) {
-        return Err(ApiError::BadRequest("仅管理员可配置限速与连接数上限".into()));
+    if !auth.is_admin()
+        && (req.bandwidth_profile_id.is_some()
+            || req.max_connections.is_some()
+            || req.send_proxy_protocol.is_some())
+    {
+        return Err(ApiError::BadRequest(
+            "仅管理员可配置限速 / 连接数上限 / PROXY protocol".into(),
+        ));
+    }
+    // PROXY protocol 仅对非隧道 TCP relay 生效(隧道 split 恒丢弃该字段),隧道规则开启会
+    // 落库 true 却永不发头=静默失效,入口直接挡住,避免管理员误解。
+    if req.send_proxy_protocol == Some(true) && req.tunnel_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "PROXY protocol 仅对非隧道 TCP 规则生效".into(),
+        ));
     }
     if matches!(req.max_connections, Some(n) if n < 0) {
         return Err(ApiError::BadRequest("连接数上限不能为负数".into()));
@@ -422,6 +442,45 @@ pub async fn create(
         }
     } else if !auth.is_admin() && !grant::node_granted(&state.pool, owner_id, req.node_id).await? {
         return Err(ApiError::BadRequest("无权使用该节点,请联系管理员授权".into()));
+    }
+
+    // 转发条数配额(对标 flux User.num/UserTunnel.num):按 owner 判定,配额 NULL=不限
+    // (admin 用户天然 NULL → 不受限)。软删规则不计入。仅创建时校验,撤销配额不影响存量。
+    {
+        let owner = crate::models::user::User::find_by_id(&state.pool, owner_id)
+            .await?
+            .ok_or_else(|| ApiError::BadRequest("归属用户不存在".into()))?;
+        if let Some(limit) = owner.forward_rules_quota {
+            let used: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM forward_rules WHERE user_id = ? AND deleted_at IS NULL",
+            )
+            .bind(owner_id)
+            .fetch_one(&state.pool)
+            .await?;
+            if used >= limit {
+                return Err(ApiError::BadRequest(format!(
+                    "转发规则数已达上限({used}/{limit}),请联系管理员调整配额"
+                )));
+            }
+        }
+        // 隧道规则额外受 per-(用户,隧道) 上限约束。
+        if let Some(tid) = req.tunnel_id {
+            if let Some(limit) = grant::tunnel_grant_num(&state.pool, owner_id, tid).await? {
+                let used: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM forward_rules \
+                     WHERE user_id = ? AND tunnel_id = ? AND deleted_at IS NULL",
+                )
+                .bind(owner_id)
+                .bind(tid)
+                .fetch_one(&state.pool)
+                .await?;
+                if used >= limit {
+                    return Err(ApiError::BadRequest(format!(
+                        "该隧道内转发规则数已达上限({used}/{limit})"
+                    )));
+                }
+            }
+        }
     }
     if let Some(pid) = req.bandwidth_profile_id {
         if pid <= 0 {
@@ -491,6 +550,10 @@ pub async fn create(
     // 多目标 / 策略非默认时落库(create 取 DB 默认 NULL/fifo)。
     if extra_json.is_some() || lb_strat != "fifo" {
         Rule::set_targets(&state.pool, new_id, extra_json.as_deref(), &lb_strat).await?;
+    }
+    // PROXY protocol 开关(create 默认 0,仅 true 时落库)。
+    if req.send_proxy_protocol == Some(true) {
+        Rule::set_send_proxy_protocol(&state.pool, new_id, true).await?;
     }
 
     let rule = Rule::find_by_id(&state.pool, new_id)
@@ -580,6 +643,16 @@ pub async fn update(
     if req.max_connections.is_some() && !auth.is_admin() {
         return Err(ApiError::BadRequest("仅管理员可修改连接数上限".into()));
     }
+    // 同理:PROXY protocol 开关仅 admin 可改。
+    if req.send_proxy_protocol.is_some() && !auth.is_admin() {
+        return Err(ApiError::BadRequest("仅管理员可修改 PROXY protocol 开关".into()));
+    }
+    // PROXY protocol 仅非隧道 TCP 生效:隧道规则开启属静默失效,入口挡住(同 create)。
+    if req.send_proxy_protocol == Some(true) && existing.tunnel_id.is_some() {
+        return Err(ApiError::BadRequest(
+            "PROXY protocol 仅对非隧道 TCP 规则生效".into(),
+        ));
+    }
     if matches!(req.max_connections, Some(n) if n < 0) {
         return Err(ApiError::BadRequest("连接数上限不能为负数".into()));
     }
@@ -660,6 +733,10 @@ pub async fn update(
     // 多目标变更落库(在 find_by_id 前,使下发的 proto 含新目标)。
     if let Some((extra_json, lb_strat)) = target_update {
         Rule::set_targets(&state.pool, id, extra_json.as_deref(), &lb_strat).await?;
+    }
+    // PROXY protocol 开关变更(None = 不改)。
+    if let Some(v) = req.send_proxy_protocol {
+        Rule::set_send_proxy_protocol(&state.pool, id, v).await?;
     }
     let rule = Rule::find_by_id(&state.pool, id)
         .await?

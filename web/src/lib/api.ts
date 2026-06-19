@@ -75,6 +75,8 @@ export interface MeView extends UserView {
   period_used_bytes_cached: number
   period_used_calculated_at: string | null
   rule_count: number
+  /** 可创建转发规则条数上限;null = 不限 */
+  forward_rules_quota: number | null
   total_traffic_bytes: number
   /** true = 强制改密未完成,前端把用户挡在改密页 */
   must_change_password: boolean
@@ -138,6 +140,8 @@ export interface RuleView {
   tunnel_id: number | null
   /** 并发连接上限(仅 TCP);null = 不限 */
   max_connections: number | null
+  /** 是否向上游发送 PROXY protocol v1(仅非隧道 TCP relay) */
+  send_proxy_protocol: boolean
   /** P2 多目标额外目标 + 负载策略 */
   extra_targets: TargetDto[]
   lb_strategy: LbStrategy
@@ -240,6 +244,8 @@ export interface CreateRuleRequest {
   user_id?: number
   /** 并发连接上限(仅 TCP,admin 管控);不传 = 不限 */
   max_connections?: number
+  /** 向上游发送 PROXY protocol(admin 管控);不传/false = 关 */
+  send_proxy_protocol?: boolean
   /** P2 多目标额外目标(空数组 = 单目标)+ 负载策略 */
   extra_targets?: TargetDto[]
   lb_strategy?: LbStrategy
@@ -255,6 +261,8 @@ export interface UpdateRuleRequest {
   bandwidth_profile_id?: number
   /** 0 = 清除上限(admin 管控) */
   max_connections?: number
+  /** admin 管控:PROXY protocol 开关;不传 = 不改 */
+  send_proxy_protocol?: boolean
   /** 给定则全量替换额外目标(空 = 清空);不传 = 不改 */
   extra_targets?: TargetDto[]
   lb_strategy?: LbStrategy
@@ -329,6 +337,8 @@ export interface UserDetail {
   period_remaining_bytes: number | null
   /** 月度重置日 1-31;null = 滚动 30 天 */
   quota_reset_day: number | null
+  /** 可创建转发规则条数上限;null = 不限 */
+  forward_rules_quota: number | null
 }
 
 export interface UserListResponse {
@@ -346,9 +356,13 @@ export interface CreateUserRequest {
   traffic_limit_bytes_30d?: number | null
   /** 月度重置日 1-31;0/不传 = 滚动 30 天 */
   quota_reset_day?: number | null
+  /** 可创建转发规则条数上限;0/不传 = 不限 */
+  forward_rules_quota?: number | null
   /** P7 授权(默认拒绝):未传 = 不授权任何节点/隧道 */
   granted_node_ids?: number[]
   granted_tunnel_ids?: number[]
+  /** 可选:每隧道转发条数上限(仅对 granted_tunnel_ids 内的隧道生效) */
+  tunnel_forward_limits?: TunnelForwardLimit[]
 }
 
 export interface UpdateUserRequest {
@@ -360,21 +374,35 @@ export interface UpdateUserRequest {
   traffic_limit_bytes_30d?: number
   /** None=不改;0=清除(回滚动);1-31=月度重置日 */
   quota_reset_day?: number
+  /** None=不改;0=清除(回不限);>0=转发条数上限 */
+  forward_rules_quota?: number
   /** 给定则全量替换该用户授权;不传 = 不改动 */
   granted_node_ids?: number[]
   granted_tunnel_ids?: number[]
+  /** 可选:每隧道转发条数上限(随 granted_tunnel_ids 一起全量替换) */
+  tunnel_forward_limits?: TunnelForwardLimit[]
+}
+
+/** 每隧道转发条数上限项(tunnel_id → 上限;limit null/<=0 = 不限)。 */
+export interface TunnelForwardLimit {
+  tunnel_id: number
+  limit: number | null
 }
 
 /** P7: 用户当前授权(编辑回显)。 */
 export interface UserGrants {
   granted_node_ids: number[]
   granted_tunnel_ids: number[]
+  /** 每隧道转发条数上限(仅含设了上限的隧道) */
+  tunnel_forward_limits: TunnelForwardLimit[]
 }
 
 /** P7: 节点/隧道详情页反向显示「已授权用户」。 */
 export interface GrantedUser {
   id: number
   username: string
+  /** 仅隧道授权:该用户在该隧道下的转发条数上限;null = 不限 */
+  forward_rules_limit_in_tunnel: number | null
 }
 
 export interface SystemOverview {

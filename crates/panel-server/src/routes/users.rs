@@ -35,6 +35,8 @@ pub struct UserView {
     pub period_remaining_bytes: Option<i64>,
     /// 月度重置日(1-31);None = 滚动 30 天窗口。
     pub quota_reset_day: Option<i64>,
+    /// 可创建转发规则条数上限;None = 不限。
+    pub forward_rules_quota: Option<i64>,
 }
 
 fn remaining(limit: Option<i64>, used: i64) -> Option<i64> {
@@ -59,6 +61,7 @@ impl From<User> for UserView {
             period_used_calculated_at: u.period_used_calculated_at,
             period_remaining_bytes,
             quota_reset_day: u.quota_reset_day,
+            forward_rules_quota: u.forward_rules_quota,
         }
     }
 }
@@ -78,6 +81,7 @@ struct UserListRow {
     period_used_bytes_cached: i64,
     period_used_calculated_at: Option<String>,
     quota_reset_day: Option<i64>,
+    forward_rules_quota: Option<i64>,
 }
 
 impl From<UserListRow> for UserView {
@@ -98,6 +102,7 @@ impl From<UserListRow> for UserView {
             period_used_calculated_at: r.period_used_calculated_at,
             period_remaining_bytes,
             quota_reset_day: r.quota_reset_day,
+            forward_rules_quota: r.forward_rules_quota,
         }
     }
 }
@@ -117,6 +122,32 @@ pub struct UserListResponse {
     pub page_size: i64,
 }
 
+/// 每隧道转发条数上限项(tunnel_id → 上限;limit None/<=0 归一为不限)。
+#[derive(Deserialize, Serialize, Clone)]
+pub struct TunnelForwardLimit {
+    pub tunnel_id: i64,
+    pub limit: Option<i64>,
+}
+
+/// 把 ACL 隧道 id 列表与 per-隧道上限合并成 set_tunnel_grants 所需的 (tunnel_id, num) 对。
+fn build_tunnel_grants(
+    ids: &[i64],
+    limits: &Option<Vec<TunnelForwardLimit>>,
+) -> Vec<(i64, Option<i64>)> {
+    use std::collections::HashMap;
+    let map: HashMap<i64, Option<i64>> = limits
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .map(|t| (t.tunnel_id, t.limit.filter(|n| *n > 0)))
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.iter()
+        .map(|&id| (id, map.get(&id).copied().flatten()))
+        .collect()
+}
+
 #[derive(Deserialize)]
 pub struct CreateUserRequest {
     pub username: String,
@@ -126,9 +157,13 @@ pub struct CreateUserRequest {
     pub traffic_limit_bytes_30d: Option<i64>,
     /// 月度重置日 1-31;0/None = 滚动 30 天(默认)。
     pub quota_reset_day: Option<i64>,
+    /// 可创建转发规则条数上限;0/None = 不限。
+    pub forward_rules_quota: Option<i64>,
     /// 授权可用的节点/隧道 id(默认拒绝;未传/None 表示不授权任何)。
     pub granted_node_ids: Option<Vec<i64>>,
     pub granted_tunnel_ids: Option<Vec<i64>>,
+    /// 可选:每隧道转发条数上限;仅对 granted_tunnel_ids 内的隧道生效。
+    pub tunnel_forward_limits: Option<Vec<TunnelForwardLimit>>,
 }
 
 #[derive(Deserialize)]
@@ -141,9 +176,13 @@ pub struct UpdateUserRequest {
     pub traffic_limit_bytes_30d: Option<i64>,
     /// None = 不改;0 = 清除(回滚动 30 天);1-31 = 月度重置日。
     pub quota_reset_day: Option<i64>,
+    /// None = 不改;0 = 清除(回不限);>0 = 转发条数上限。
+    pub forward_rules_quota: Option<i64>,
     /// 给定则全量替换该用户的授权;None 表示不改动授权。
     pub granted_node_ids: Option<Vec<i64>>,
     pub granted_tunnel_ids: Option<Vec<i64>>,
+    /// 可选:每隧道转发条数上限(随 granted_tunnel_ids 一起全量替换)。
+    pub tunnel_forward_limits: Option<Vec<TunnelForwardLimit>>,
 }
 
 /// 校验月度重置日:允许 0(清除/滚动)或 1-31。
@@ -182,7 +221,8 @@ pub async fn list(
                 COALESCE(r.cnt, 0) AS rule_count, \
                 COALESCE(r.tot, 0) AS total_traffic_bytes, \
                 u.expires_at, u.traffic_limit_bytes_30d, \
-                u.period_used_bytes_cached, u.period_used_calculated_at, u.quota_reset_day \
+                u.period_used_bytes_cached, u.period_used_calculated_at, u.quota_reset_day, \
+                u.forward_rules_quota \
          FROM users u \
          LEFT JOIN ( \
              SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
@@ -233,18 +273,32 @@ pub async fn get(
 pub struct UserGrants {
     pub granted_node_ids: Vec<i64>,
     pub granted_tunnel_ids: Vec<i64>,
+    /// 每隧道转发条数上限(仅含设了上限的隧道,供编辑回显)。
+    pub tunnel_forward_limits: Vec<TunnelForwardLimit>,
 }
 
-/// 某用户当前的授权(前端编辑用户时回显已勾选的节点/隧道)。
+/// 某用户当前的授权(前端编辑用户时回显已勾选的节点/隧道 + 每隧道转发条数上限)。
 pub async fn grants(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> ApiResult<Json<UserGrants>> {
     auth.require_admin()?;
+    let tunnel_grants = grant::granted_tunnel_grants(&state.pool, id).await?;
+    let granted_tunnel_ids = tunnel_grants.iter().map(|(tid, _)| *tid).collect();
+    let tunnel_forward_limits = tunnel_grants
+        .iter()
+        .filter_map(|(tid, num)| {
+            num.map(|n| TunnelForwardLimit {
+                tunnel_id: *tid,
+                limit: Some(n),
+            })
+        })
+        .collect();
     Ok(Json(UserGrants {
         granted_node_ids: grant::granted_node_ids(&state.pool, id).await?,
-        granted_tunnel_ids: grant::granted_tunnel_ids(&state.pool, id).await?,
+        granted_tunnel_ids,
+        tunnel_forward_limits,
     }))
 }
 
@@ -276,6 +330,9 @@ pub async fn create(
     validate_password(&req.password)?;
     validate_role(&req.role)?;
     validate_quota_reset_day(req.quota_reset_day)?;
+    if matches!(req.forward_rules_quota, Some(n) if n < 0) {
+        return Err(ApiError::BadRequest("转发规则数上限不能为负数".into()));
+    }
     let normalized_expires = match req.expires_at.as_deref() {
         None | Some("") => None,
         Some(s) => Some(crate::util::normalize_datetime(s).ok_or_else(|| {
@@ -307,6 +364,10 @@ pub async fn create(
     if let Some(d) = req.quota_reset_day.filter(|d| (1..=31).contains(d)) {
         User::set_quota_reset_day(&state.pool, new_id, Some(d)).await?;
     }
+    // 转发条数上限:>0 启用;0/None 不限。
+    if let Some(q) = req.forward_rules_quota.filter(|n| *n > 0) {
+        User::set_forward_rules_quota(&state.pool, new_id, Some(q)).await?;
+    }
     let user = User::find_by_id(&state.pool, new_id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -316,7 +377,8 @@ pub async fn create(
         grant::set_node_grants(&state.pool, new_id, ids).await?;
     }
     if let Some(ids) = &req.granted_tunnel_ids {
-        grant::set_tunnel_grants(&state.pool, new_id, ids).await?;
+        grant::set_tunnel_grants(&state.pool, new_id, &build_tunnel_grants(ids, &req.tunnel_forward_limits))
+            .await?;
     }
 
     // payload 带授权摘要,使授权变更可从 audit_logs 追溯。
@@ -386,6 +448,9 @@ pub async fn update(
         ));
     }
     validate_quota_reset_day(req.quota_reset_day)?;
+    if matches!(req.forward_rules_quota, Some(n) if n < 0) {
+        return Err(ApiError::BadRequest("转发规则数上限不能为负数".into()));
+    }
 
     let new_hash = match req.password.as_deref() {
         Some(p) => Some(hash_password(p).map_err(ApiError::Internal)?),
@@ -408,6 +473,11 @@ pub async fn update(
         let val = if d == 0 { None } else { Some(d) };
         User::set_quota_reset_day(&state.pool, id, val).await?;
     }
+    // 转发条数上限:None 不改;<=0 清除(回不限);>0 设上限。
+    if let Some(q) = req.forward_rules_quota {
+        let val = if q <= 0 { None } else { Some(q) };
+        User::set_forward_rules_quota(&state.pool, id, val).await?;
+    }
     let user = User::find_by_id(&state.pool, id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -417,7 +487,8 @@ pub async fn update(
         grant::set_node_grants(&state.pool, id, ids).await?;
     }
     if let Some(ids) = &req.granted_tunnel_ids {
-        grant::set_tunnel_grants(&state.pool, id, ids).await?;
+        grant::set_tunnel_grants(&state.pool, id, &build_tunnel_grants(ids, &req.tunnel_forward_limits))
+            .await?;
     }
 
     let payload = grants_payload(&existing.username, &req.granted_node_ids, &req.granted_tunnel_ids);

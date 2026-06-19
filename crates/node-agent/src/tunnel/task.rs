@@ -182,9 +182,14 @@ async fn entry_tcp_loop(
                 });
             }
             Err(e) => {
-                counter.error_count.fetch_add(1, Ordering::Relaxed);
-                warn!(rule_id, error = ?e, "tunnel entry accept error");
-                // fd/内存耗尽时退避,防 100% CPU 忙循环阻碍恢复。
+                // ECONNABORTED 良性(对端 accept 前已断),不计 error;真错误才计数。
+                if crate::relay::accept_error_is_benign(&e) {
+                    tracing::debug!(rule_id, error = ?e, "tunnel entry accept aborted (benign)");
+                } else {
+                    counter.error_count.fetch_add(1, Ordering::Relaxed);
+                    warn!(rule_id, error = ?e, "tunnel entry accept error");
+                }
+                // fd/内存耗尽时退避,防 100% CPU 忙循环阻碍恢复(良性错误 no-op)。
                 crate::relay::accept_backoff(&e).await;
             }
         }
@@ -199,6 +204,8 @@ async fn entry_tcp_conn(
     bucket: Option<Arc<TokenBucket>>,
 ) -> Result<()> {
     crate::relay::set_nodelay(&client);
+    // 入站客户端连接也开 keepalive(同 relay/tcp.rs):隧道入口 client 半开同样需检测。
+    crate::relay::set_keepalive(&client);
     let mut tunnel = transport.dial(next_hop).await?;
     tunnel.write_all(&[STREAM_TCP]).await.context("write stream preamble")?;
     tunnel.flush().await.context("flush stream preamble")?;
@@ -514,22 +521,40 @@ async fn handle_hop_conn(
                 .context("read stream preamble")?;
             match preamble[0] {
                 STREAM_TCP => {
-                    // connect 套 5s 超时(与 relay/tcp.rs 一致):黑洞(DROP)目标否则会拖到 OS TCP
-                    // 超时(数十秒~数分钟)才失败,期间占住入站隧道连接与 fd。
-                    let upstream = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        TcpStream::connect((target_host.as_str(), target_port)),
-                    )
-                    .await
-                    .with_context(|| format!("connect target {target_host}:{target_port} timed out"))?
-                    .with_context(|| format!("connect target {target_host}:{target_port}"))?;
-                    // SSRF 二次防御:与 relay/tcp.rs 一致,校验解析结果非内网(堵域名 DNS rebinding)。
-                    // panel 只能校验字面 IP,域名解析在出口节点本地发生;字面内网 IP 已被 panel 拦,
-                    // 字面公网 IP 在此自动放行。隧道出口此前缺这道补偿控制(SSRF 可达出口内网/云元数据)。
-                    if let Ok(peer) = upstream.peer_addr() {
-                        crate::relay::guard_resolved_target(&target_host, peer)?;
+                    // DNS 缓存解析(字面 IP 直通)+ 逐 IP SSRF 校验后 connect,与 relay/tcp.rs 同形
+                    // (隧道出口此前缺缓存且 connect-后-校验,本轮统一)。5s/地址 上限避免黑洞目标
+                    // 拖到 OS TCP 超时(数十秒~数分钟)才失败,期间占住入站隧道连接与 fd。
+                    // SSRF:panel 只校验字面 IP,域名解析在出口节点本地发生 → 解析结果落内网则拒。
+                    let ips = crate::dns::resolve_target(&target_host)
+                        .await
+                        .with_context(|| format!("resolve target {target_host}"))?;
+                    let mut upstream: Option<TcpStream> = None;
+                    let mut last_err: Option<anyhow::Error> = None;
+                    for ip in ips {
+                        let sa = SocketAddr::new(ip, target_port);
+                        if let Err(e) = crate::relay::guard_resolved_target(&target_host, sa) {
+                            last_err = Some(e);
+                            continue;
+                        }
+                        match tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(sa)).await {
+                            Ok(Ok(s)) => {
+                                upstream = Some(s);
+                                break;
+                            }
+                            Ok(Err(e)) => {
+                                last_err = Some(anyhow::Error::new(e).context(format!("connect target {sa}")))
+                            }
+                            Err(_) => last_err = Some(anyhow::anyhow!("connect target {sa} timed out")),
+                        }
                     }
+                    let upstream = upstream.ok_or_else(|| {
+                        last_err.unwrap_or_else(|| {
+                            anyhow::anyhow!("connect target {target_host}:{target_port}: 无可达地址")
+                        })
+                    })?;
+                    // 出站关 Nagle + 开 keepalive(与 relay/tcp.rs 一致,检测半开/静默死连)。
                     crate::relay::set_nodelay(&upstream);
+                    crate::relay::set_keepalive(&upstream);
                     bridge_raw(conn, Box::new(upstream)).await
                 }
                 STREAM_UDP => exit_udp_conn(conn, &target_host, target_port).await,
@@ -583,13 +608,31 @@ where
 /// exit 端 UDP 帧流:拆帧 → UDP send;UDP recv → 打帧回写。
 /// 任一方向断(隧道 EOF / udp 错误)即结束,UDP socket 随之释放。
 async fn exit_udp_conn(conn: TunnelConn, target_host: &str, target_port: u16) -> Result<()> {
-    let udp = UdpSocket::bind("0.0.0.0:0").await.context("bind exit udp socket")?;
-    udp.connect((target_host, target_port))
+    // DNS 缓存解析(字面 IP 直通)+ 逐 IP SSRF 校验后 connect,与 relay/udp.rs 同形。
+    let ips = crate::dns::resolve_target(target_host)
         .await
-        .with_context(|| format!("connect udp target {target_host}:{target_port}"))?;
-    // SSRF 二次防御:与 relay/udp.rs 一致,校验解析结果非内网(堵域名 DNS rebinding)。
-    if let Ok(peer) = udp.peer_addr() {
-        crate::relay::guard_resolved_target(target_host, peer)?;
+        .with_context(|| format!("resolve udp target {target_host}"))?;
+    let udp = UdpSocket::bind("0.0.0.0:0").await.context("bind exit udp socket")?;
+    let mut connected = false;
+    let mut last_err: Option<anyhow::Error> = None;
+    for ip in ips {
+        let sa = SocketAddr::new(ip, target_port);
+        if let Err(e) = crate::relay::guard_resolved_target(target_host, sa) {
+            last_err = Some(e);
+            continue;
+        }
+        match udp.connect(sa).await {
+            Ok(()) => {
+                connected = true;
+                break;
+            }
+            Err(e) => last_err = Some(anyhow::Error::new(e).context(format!("connect udp target {sa}"))),
+        }
+    }
+    if !connected {
+        return Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!("connect udp target {target_host}:{target_port}: 无可达地址")
+        }));
     }
     let (mut t_r, mut t_w) = tokio::io::split(conn);
 
@@ -682,6 +725,7 @@ mod tests {
             blocked_protocols: 0,
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
+            send_proxy_protocol: false,
             tunnel: Some(TunnelContext {
                 tunnel_id: 9,
                 role: role as i32,

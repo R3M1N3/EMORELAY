@@ -73,6 +73,8 @@ pub async fn start(
     let limiter = crate::limit::conn_limiter(rule.max_connections);
     // 节点级协议嗅探阻断掩码(0=不阻断);随 re-apply 重建 listener 生效。
     let blocked_protocols = rule.blocked_protocols;
+    // realm-parity:是否向上游发送 PROXY protocol v1 头(仅非隧道 TCP relay)。
+    let send_proxy = rule.send_proxy_protocol;
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     // 取消闩:stop 时置 true,通知存量 bridge task 主动终止(断连=停止计费)。
     // 用 watch 而非 JoinSet/CancellationToken:仅需已启用的 tokio sync feature,零新依赖。
@@ -109,7 +111,7 @@ pub async fn start(
                                     // stop 触发:丢弃 bridge future,client/server socket 随之 drop 关闭。
                                     // wait_for 的 Err(sender 已 drop)亦视为取消,fail-safe 不会漏断。
                                     _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
-                                    r = bridge(client, &pool, &strategy, &rr, counter.clone(), bucket, blocked_protocols) => {
+                                    r = bridge(client, &pool, &strategy, &rr, counter.clone(), bucket, blocked_protocols, send_proxy) => {
                                         if let Err(e) = r {
                                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                                             warn!(rule_id, %peer, error = ?e, "tcp bridge error");
@@ -119,9 +121,15 @@ pub async fn start(
                             });
                         }
                         Err(e) => {
-                            counter.error_count.fetch_add(1, Ordering::Relaxed);
-                            error!(rule_id, error = ?e, "tcp accept error");
-                            // fd/内存耗尽时退避,防 100% CPU 忙循环阻碍恢复。
+                            // ECONNABORTED(对端在 accept 完成前已断)是正常现象,不计入 error_count
+                            // 以免污染错误率;真错误(资源耗尽等)照常计数。
+                            if crate::relay::accept_error_is_benign(&e) {
+                                tracing::debug!(rule_id, error = ?e, "tcp accept aborted (benign, not counted)");
+                            } else {
+                                counter.error_count.fetch_add(1, Ordering::Relaxed);
+                                error!(rule_id, error = ?e, "tcp accept error");
+                            }
+                            // fd/内存耗尽时退避,防 100% CPU 忙循环阻碍恢复(良性错误 no-op)。
                             crate::relay::accept_backoff(&e).await;
                         }
                     }
@@ -144,6 +152,7 @@ async fn bridge(
     counter: Arc<RuleCounter>,
     bucket: Option<Arc<TokenBucket>>,
     blocked_protocols: u32,
+    send_proxy: bool,
 ) -> Result<()> {
     // 协议嗅探阻断:peek 首包(不消费,后续 splice/pump 仍能读到),命中被阻断协议则断连。
     // 客户端不先说话(2s 超时)则放行——无法指纹的流量不阻断(best-effort 防滥用)。
@@ -200,29 +209,39 @@ async fn bridge(
     // 多目标时给每次 connect 5s 上限,避免黑洞(DROP)的主目标拖到 OS TCP 超时才故障转移;
     // 单目标(池长 1)同样受益(挂死目标快速失败)。
     let connect_timeout = Duration::from_secs(5);
-    for idx in order {
+    'outer: for idx in order {
         let (host, port) = &pool[idx];
-        let connected = match tokio::time::timeout(connect_timeout, TcpStream::connect((host.as_str(), *port))).await {
-            Ok(r) => r,
-            Err(_) => {
-                last_err = Some(anyhow::anyhow!("connect upstream {host}:{port} timed out"));
+        // DNS 缓存解析(字面 IP 直通,域名走缓存/getaddrinfo);失败记错并试下一个目标。
+        let ips = match crate::dns::resolve_target(host).await {
+            Ok(ips) if !ips.is_empty() => ips,
+            Ok(_) => {
+                last_err = Some(anyhow::anyhow!("resolve upstream {host}: 无地址"));
+                continue;
+            }
+            Err(e) => {
+                last_err = Some(anyhow::Error::new(e).context(format!("resolve upstream {host}")));
                 continue;
             }
         };
-        match connected {
-            Ok(s) => {
-                // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
-                if let Ok(peer) = s.peer_addr() {
-                    if let Err(e) = crate::relay::guard_resolved_target(host, peer) {
-                        last_err = Some(e);
-                        continue;
-                    }
-                }
-                server = Some(s);
-                break;
+        for ip in ips {
+            let sa = SocketAddr::new(ip, *port);
+            // SSRF 二次防御:域名解析到内网地址则拒绝(字面 IP 由 panel 按角色校验,guard 内部放行)。
+            if let Err(e) = crate::relay::guard_resolved_target(host, sa) {
+                last_err = Some(e);
+                continue;
             }
-            Err(e) => {
-                last_err = Some(anyhow::Error::new(e).context(format!("connect upstream {host}:{port}")));
+            // 每个候选地址独立 5s connect 上限,避免黑洞目标拖到 OS 超时才故障转移。
+            match tokio::time::timeout(connect_timeout, TcpStream::connect(sa)).await {
+                Ok(Ok(s)) => {
+                    server = Some(s);
+                    break 'outer;
+                }
+                Ok(Err(e)) => {
+                    last_err = Some(anyhow::Error::new(e).context(format!("connect upstream {sa}")));
+                }
+                Err(_) => {
+                    last_err = Some(anyhow::anyhow!("connect upstream {sa} timed out"));
+                }
             }
         }
     }
@@ -232,6 +251,15 @@ async fn bridge(
     // 转发两端关闭 Nagle:降低交互式小包延迟(client 与上游 target 均设)。
     crate::relay::set_nodelay(&client);
     crate::relay::set_nodelay(&server);
+    // 两端都开 TCP keepalive:检测经 NAT 静默超时/对端崩溃的半开连接,避免挂死不释放
+    // (realm 对入站 client + 出站 server 两侧都设,只设一侧会漏另一侧的静默死亡)。
+    crate::relay::set_keepalive(&client);
+    crate::relay::set_keepalive(&server);
+
+    // realm-parity:可选向上游发送 PROXY protocol v1 头(必须在任何转发数据之前)。
+    if send_proxy {
+        send_proxy_header_v1(&mut server, &client).await?;
+    }
 
     // Linux 不限速:走 splice 零拷贝,数据不过用户态(消除 pump 的两次 memcpy)。
     // 限速或非 Linux 回退下方 pump(用户态拷贝才能插入令牌桶计量)。
@@ -253,6 +281,25 @@ async fn bridge(
     let s2c = pump(&mut s_r, &mut c_w, &counter.rx_bytes, bucket.as_deref(), buf_size);
     tokio::try_join!(c2s, s2c)?;
     Ok(())
+}
+
+/// 向上游发送 PROXY protocol v1 文本头(realm-parity),透传真实客户端 src/dst:
+/// src = 客户端真实地址(peer),dst = 客户端连接到的本机监听地址(local)。地址族混合
+/// (极少,如 IPv4-mapped)退化为 "PROXY UNKNOWN"(后端按无 PROXY 处理)。须在任何数据前发。
+async fn send_proxy_header_v1(server: &mut TcpStream, client: &TcpStream) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let header = match (client.peer_addr()?, client.local_addr()?) {
+        (SocketAddr::V4(s), SocketAddr::V4(d)) => {
+            format!("PROXY TCP4 {} {} {} {}\r\n", s.ip(), d.ip(), s.port(), d.port())
+        }
+        (SocketAddr::V6(s), SocketAddr::V6(d)) => {
+            format!("PROXY TCP6 {} {} {} {}\r\n", s.ip(), d.ip(), s.port(), d.port())
+        }
+        // 混合地址族:PROXY v1 不支持,退化为 UNKNOWN(后端忽略 PROXY,用真实连接地址)。
+        _ => "PROXY UNKNOWN\r\n".to_string(),
+    };
+    server.write_all(header.as_bytes()).await?;
+    server.flush().await
 }
 
 /// 单向拷贝:读 → (可选)向令牌桶取配额 → 写 → 计数。EOF 时半关写端。
@@ -337,6 +384,7 @@ mod tests {
             blocked_protocols: 0,
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
+            send_proxy_protocol: false,
             tunnel: None,
         }
     }
@@ -605,5 +653,36 @@ mod tests {
         assert!(matches!(r, Ok(0)) || r.is_err(), "分片 CONNECT 首包应被累积嗅探阻断, got {r:?}");
 
         handle.stop().await;
+    }
+
+    /// PROXY protocol v1:send_proxy_header_v1 应把 "PROXY TCP4 <src> <dst> <sp> <dp>\r\n"
+    /// 作为首行写给上游(realm-parity 透传真实客户端地址)。
+    #[tokio::test]
+    async fn proxy_protocol_v1_header_format() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        // 上游:accept 后读首行(即 PROXY 头)。
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let up_addr = upstream.local_addr().unwrap();
+        let up_task = tokio::spawn(async move {
+            let (s, _) = upstream.accept().await.unwrap();
+            let mut line = String::new();
+            BufReader::new(s).read_line(&mut line).await.unwrap();
+            line
+        });
+        // server = relay→上游 连接(PROXY 头写入对象)。
+        let mut server = TcpStream::connect(up_addr).await.unwrap();
+        // client = 真实入站连接(取其 peer/local 地址填头)。
+        let cl = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(cl.local_addr().unwrap()).await.unwrap();
+        let _accepted = cl.accept().await.unwrap();
+
+        send_proxy_header_v1(&mut server, &client).await.unwrap();
+
+        let line = up_task.await.unwrap();
+        assert!(
+            line.starts_with("PROXY TCP4 127.0.0.1 127.0.0.1 "),
+            "PROXY v1 首行格式不符: {line:?}"
+        );
+        assert!(line.ends_with("\r\n"), "PROXY v1 头须 CRLF 结尾: {line:?}");
     }
 }

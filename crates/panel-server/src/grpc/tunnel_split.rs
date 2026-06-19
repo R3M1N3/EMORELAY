@@ -65,6 +65,7 @@ pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, Pro
             // 隧道规则暂不支持多目标(出口走单一业务目标),保持单目标 fifo。
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
+            send_proxy_protocol: false,
         };
         (hop.node_id, proto)
     }).collect()

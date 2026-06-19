@@ -31,6 +31,9 @@ pub async fn run_agent(config: Config) -> Result<()> {
     // 隧道 TLS/WSS 用 ring provider(与 tonic tls 栈对齐)。重复安装无害,忽略结果。
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
 
+    // 启动早期抬高 fd 软限到硬限(Linux),防大量并发 TCP/UDP 连接撞默认软限(常 1024)。
+    crate::system::raise_nofile_limit();
+
     let stats = Arc::new(StatsCollector::new());
     let manager = Arc::new(Mutex::new(RuleManager::new(
         stats.clone(),

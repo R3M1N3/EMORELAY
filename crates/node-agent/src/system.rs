@@ -164,3 +164,43 @@ fn is_loopback(name: &str) -> bool {
         || name.eq_ignore_ascii_case("loopback")
         || name.starts_with("Loopback")
 }
+
+/// 启动时把进程 RLIMIT_NOFILE 软限抬到硬限(Linux)。默认软限常为 1024,叠加 UDP 会话表
+/// + 海量 TCP fd 易触顶,导致 accept/connect 因 EMFILE 失败;抬到硬限(常 512K+)消除该瓶颈
+/// (realm 启动亦 bump_nofile_limit)。失败不致命(权限不足等),仅 warn,不影响启动。
+#[cfg(target_os = "linux")]
+pub fn raise_nofile_limit() {
+    // SAFETY: getrlimit/setrlimit 是标准 POSIX 调用,传入栈上合法 rlimit 指针。
+    unsafe {
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
+            tracing::warn!("getrlimit(RLIMIT_NOFILE) failed; keep default fd limit");
+            return;
+        }
+        if lim.rlim_cur >= lim.rlim_max {
+            return; // 软限已达硬限,无需抬。
+        }
+        lim.rlim_cur = lim.rlim_max;
+        if libc::setrlimit(libc::RLIMIT_NOFILE, &lim) == 0 {
+            tracing::info!(soft = lim.rlim_cur, "raised RLIMIT_NOFILE soft limit to hard limit");
+        } else {
+            tracing::warn!("setrlimit(RLIMIT_NOFILE) failed; keep default fd limit");
+        }
+    }
+}
+
+/// 非 Linux(本地开发/测试):生产为 Linux musl 静态二进制,此处空操作。
+#[cfg(not(target_os = "linux"))]
+pub fn raise_nofile_limit() {}
+
+#[cfg(test)]
+mod nofile_tests {
+    /// 冒烟:调用不应 panic(Linux 真抬限或 warn,其它平台空操作)。
+    #[test]
+    fn raise_nofile_does_not_panic() {
+        super::raise_nofile_limit();
+    }
+}

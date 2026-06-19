@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod config;
 pub mod control;
+pub mod dns;
 pub mod limit;
 pub mod manager;
 pub mod probe;

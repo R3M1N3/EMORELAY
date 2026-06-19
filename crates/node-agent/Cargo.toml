@@ -31,6 +31,8 @@ x509-parser = "0.16"
 # P10b 一键升级:从面板下载新二进制(rustls 栈与 tonic 对齐) + sha256 校验。
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 sha2 = "0.10"
+# realm-parity:转发两端 TCP keepalive(SockRef + TcpKeepalive),检测半开/静默死连。
+socket2 = "0.5"
 
 # P6.2 splice 零拷贝(Linux 专用),仅在 linux target 链接;其它平台回退用户态 pump。
 [target.'cfg(target_os = "linux")'.dependencies]

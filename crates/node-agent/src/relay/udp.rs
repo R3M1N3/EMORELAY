@@ -191,19 +191,31 @@ async fn forward(
     // recv 循环连同 sweep 一起停摆(本段在主循环内 inline await)。与隧道 UDP 路径
     // (tunnel/task.rs)一致套 5s 超时;超时按错误丢包(UDP 语义,不阻塞循环)。
     let upstream = match tokio::time::timeout(Duration::from_secs(5), async {
-        let sock = Arc::new(
-            UdpSocket::bind("0.0.0.0:0")
-                .await
-                .context("bind upstream udp socket")?,
-        );
-        sock.connect((target_host, target_port))
+        // DNS 缓存解析(字面 IP 直通);取第一个通过 SSRF 校验且 connect 成功的地址。
+        let ips = crate::dns::resolve_target(target_host)
             .await
-            .with_context(|| format!("connect upstream {target_host}:{target_port}"))?;
-        // SSRF 二次防御:域名目标解析到内网地址则拒绝(堵 DNS rebinding / 内网域名)。
-        if let Ok(peer) = sock.peer_addr() {
-            crate::relay::guard_resolved_target(target_host, peer)?;
+            .with_context(|| format!("resolve upstream {target_host}"))?;
+        let mut last: Option<anyhow::Error> = None;
+        for ip in ips {
+            let sa = SocketAddr::new(ip, target_port);
+            // SSRF 二次防御:域名解析到内网则拒(字面 IP 由 panel 按角色校验,guard 内部放行)。
+            if let Err(e) = crate::relay::guard_resolved_target(target_host, sa) {
+                last = Some(e);
+                continue;
+            }
+            let sock = Arc::new(
+                UdpSocket::bind("0.0.0.0:0")
+                    .await
+                    .context("bind upstream udp socket")?,
+            );
+            match sock.connect(sa).await {
+                Ok(()) => return anyhow::Ok(sock),
+                Err(e) => last = Some(anyhow::Error::new(e).context(format!("connect upstream {sa}"))),
+            }
         }
-        anyhow::Ok(sock)
+        Err(last.unwrap_or_else(|| {
+            anyhow::anyhow!("connect upstream {target_host}:{target_port}: 无可用地址")
+        }))
     })
     .await
     {
@@ -352,6 +364,7 @@ mod tests {
             blocked_protocols: 0,
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
+            send_proxy_protocol: false,
             tunnel: None,
         }
     }

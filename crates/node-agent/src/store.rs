@@ -54,6 +54,9 @@ struct RuleJson {
     extra_targets: Vec<TargetJson>,
     #[serde(default)]
     lb_strategy: String,
+    /// realm-parity PROXY protocol 开关。缺字段 → false(关;重连后由 reconcile/apply 刷新)。
+    #[serde(default)]
+    send_proxy_protocol: bool,
 }
 
 impl From<&Rule> for RuleJson {
@@ -75,6 +78,7 @@ impl From<&Rule> for RuleJson {
                 .map(|t| TargetJson { host: t.host.clone(), port: t.port })
                 .collect(),
             lb_strategy: r.lb_strategy.clone(),
+            send_proxy_protocol: r.send_proxy_protocol,
             tunnel: r.tunnel.as_ref().map(|t| TunnelJson {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -107,6 +111,7 @@ impl From<RuleJson> for Rule {
                 .map(|t| emorelay_common::control::v1::TargetEndpoint { host: t.host, port: t.port })
                 .collect(),
             lb_strategy: r.lb_strategy,
+            send_proxy_protocol: r.send_proxy_protocol,
             tunnel: r.tunnel.map(|t| emorelay_common::control::v1::TunnelContext {
                 tunnel_id: t.tunnel_id,
                 role: t.role,
@@ -217,6 +222,7 @@ mod tests {
             blocked_protocols: 0,
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
+            send_proxy_protocol: false,
             tunnel: Some(TunnelContext {
                 tunnel_id: 7,
                 role: TunnelRole::Mid as i32,

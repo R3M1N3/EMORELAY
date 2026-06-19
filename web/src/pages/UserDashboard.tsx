@@ -87,7 +87,16 @@ export default function UserDashboard() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="我的规则" value={me.rule_count} hint={`${enabled} 启用`} accent="indigo" />
+        <Stat
+          label="我的规则"
+          value={
+            me.forward_rules_quota != null
+              ? `${me.rule_count} / ${me.forward_rules_quota}`
+              : me.rule_count
+          }
+          hint={me.forward_rules_quota != null ? `${enabled} 启用 · 含上限` : `${enabled} 启用`}
+          accent="indigo"
+        />
         <Stat label="累计流量" value={formatBytes(me.total_traffic_bytes)} hint="规则转发累计" accent="amber" />
         <Stat
           label="30 天用量"

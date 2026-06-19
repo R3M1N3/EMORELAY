@@ -46,6 +46,8 @@ pub struct MeView {
     pub period_used_bytes_cached: i64,
     pub period_used_calculated_at: Option<String>,
     pub rule_count: i64,
+    /// 可创建转发规则条数上限;None = 不限。
+    pub forward_rules_quota: Option<i64>,
     pub total_traffic_bytes: i64,
     /// 强制改密标志:刷新/重进时前端据此把用户挡在改密页(login 之外的入口)。
     pub must_change_password: bool,
@@ -169,11 +171,13 @@ pub async fn me(
         i64,
         i64,
         i64,
+        Option<i64>,
     );
     let row: Option<MeRow> = sqlx::query_as(
         "SELECT u.id, u.username, u.role, u.expires_at, u.traffic_limit_bytes_30d, \
                 u.period_used_bytes_cached, u.period_used_calculated_at, \
-                COALESCE(r.cnt, 0), COALESCE(r.tot, 0), u.must_change_password \
+                COALESCE(r.cnt, 0), COALESCE(r.tot, 0), u.must_change_password, \
+                u.forward_rules_quota \
          FROM users u \
          LEFT JOIN (SELECT user_id, COUNT(*) AS cnt, SUM(rx_bytes + tx_bytes) AS tot \
                     FROM forward_rules WHERE deleted_at IS NULL GROUP BY user_id) r \
@@ -183,7 +187,7 @@ pub async fn me(
     .bind(claims.sub)
     .fetch_optional(&state.pool)
     .await?;
-    let (id, username, role, expires_at, limit, used, used_at, rule_count, total, must_change) =
+    let (id, username, role, expires_at, limit, used, used_at, rule_count, total, must_change, forward_rules_quota) =
         row.ok_or(ApiError::Unauthorized)?;
     Ok(Json(MeView {
         id,
@@ -194,6 +198,7 @@ pub async fn me(
         period_used_bytes_cached: used,
         period_used_calculated_at: used_at,
         rule_count,
+        forward_rules_quota,
         total_traffic_bytes: total,
         must_change_password: must_change != 0,
     }))
