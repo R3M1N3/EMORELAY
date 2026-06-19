@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "emorelay-common"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "prost",
  "protoc-bin-vendored",
@@ -1347,7 +1347,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "node-agent"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "dotenvy",
@@ -1498,7 +1498,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "panel-server"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "argon2",
