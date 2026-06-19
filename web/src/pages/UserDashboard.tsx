@@ -3,15 +3,18 @@ import { Link } from 'react-router-dom'
 import {
   auth,
   formatBytes,
+  nodes,
   rules,
   shortTime,
   subscription,
   type MeView,
+  type NodeView,
   type RuleView,
 } from '../lib/api'
 import { Stat } from './Dashboard'
 import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { CopyButton } from '../components/CopyButton'
+import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 import { useToast } from '../lib/use-toast'
 import { expiryWarning, expiryWarningKey } from '../lib/expiry-warning'
@@ -21,15 +24,18 @@ export default function UserDashboard() {
   const toast = useToast()
   const [me, setMe] = useState<MeView | null>(null)
   const [myRules, setMyRules] = useState<RuleView[]>([])
+  // 入口地址需节点展示地址;拉(授权)节点建 id→node 映射,规则行据此显示真实入口而非裸端口。
+  const [nodesById, setNodesById] = useState<Map<number, NodeView>>(new Map())
   const [error, setError] = useState<string | null>(null)
   // 订阅专用 token(scope=sub,仅查用量),进页面获取一次;失败则不展示链接(温和降级)。
   const [subToken, setSubToken] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    Promise.all([auth.me(), rules.list({ page_size: 100 })])
-      .then(([m, r]) => {
+    Promise.all([auth.me(), rules.list({ page_size: 100 }), nodes.list({ page_size: 100 })])
+      .then(([m, r, n]) => {
         setMe(m)
         setMyRules(r.items)
+        setNodesById(new Map(n.items.map((node) => [node.id, node])))
         setError(null)
       })
       .catch((e: unknown) =>
@@ -187,8 +193,12 @@ export default function UserDashboard() {
                       {r.name}
                     </Link>
                     <div className="text-[11px] text-zinc-400 truncate">
-                      {r.protocol.toUpperCase()} · :{r.listen_port} → {r.target_host}:
-                      {r.target_port}
+                      {r.protocol.toUpperCase()} ·{' '}
+                      {formatHostPort(
+                        nodeEntryHost(nodesById.get(r.node_id)) || r.listen_ip,
+                        r.listen_port,
+                      )}{' '}
+                      → {r.target_host}:{r.target_port}
                     </div>
                   </div>
                 </div>

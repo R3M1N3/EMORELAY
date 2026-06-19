@@ -25,7 +25,7 @@ import {
 import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
-import { formatHostPort } from '../lib/format-addr'
+import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; rule: RuleView } | null
@@ -460,7 +460,7 @@ export default function Rules() {
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
                   {isAdmin && <th scope="col" className="px-4 py-2.5 text-left font-medium">归属</th>}
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">节点 / 协议</th>
-                  <th scope="col" className="px-4 py-2.5 text-left font-medium">监听</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">入口</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">目标</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">状态</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">流量 / 连接</th>
@@ -541,7 +541,7 @@ export default function Rules() {
         <Modal title="删除规则" onClose={() => !busy && setConfirming(null)} size="sm">
           <p className="text-sm text-zinc-300">
             将删除规则 <span className="text-white font-medium">{confirming.name}</span>
-            （监听 {formatHostPort(confirming.listen_ip, confirming.listen_port)}）。
+            （入口 {formatHostPort(nodeEntryHost(nodesById.get(confirming.node_id)) || confirming.listen_ip, confirming.listen_port)}）。
             节点在线时对应端口将立即停止监听；若节点离线，规则将在其恢复后自动清理。
           </p>
           <div className="mt-5 flex justify-end gap-2">
@@ -705,6 +705,8 @@ function RuleRow({
   onRestart: () => void
 }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
+  // 入口地址 = 节点展示地址/public_ip + 监听端口;node 缺失(已删/未授权)回落绑定地址。
+  const entryHost = nodeEntryHost(node) || rule.listen_ip
   return (
     <tr className={grantRevoked ? 'bg-amber-500/[0.06] hover:bg-amber-500/10' : 'hover:bg-white/[0.02]'}>
       <td className="px-4 py-3 align-top">
@@ -738,10 +740,10 @@ function RuleRow({
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
         <span className="inline-flex items-center gap-1">
-          {formatHostPort(rule.listen_ip, rule.listen_port)}
+          {formatHostPort(entryHost, rule.listen_port)}
           <CopyButton
-            value={formatHostPort(rule.listen_ip, rule.listen_port)}
-            label="复制监听地址"
+            value={formatHostPort(entryHost, rule.listen_port)}
+            label="复制入口地址"
           />
         </span>
         {tunnelName != null && (
@@ -1173,37 +1175,28 @@ export function RuleForm({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="rule-listen-ip" className={fieldLabelCls}>监听 IP</label>
-          <input
-            id="rule-listen-ip"
-            value={form.listen_ip}
-            onChange={(e) => set('listen_ip', e.target.value)}
-            className={fieldInputCls}
-            placeholder="0.0.0.0"
-          />
-        </div>
-        <div>
-          <label htmlFor="rule-listen-port" className={fieldLabelCls}>
-            监听端口
-            {selectedNode && (
-              <span className="ml-1 text-zinc-400 font-normal">
-                {selectedNode.port_pool_min}-{selectedNode.port_pool_max}
-              </span>
-            )}
-          </label>
-          <input
-            id="rule-listen-port"
-            type="number"
-            min={1}
-            max={65535}
-            value={form.listen_port}
-            onChange={(e) => set('listen_port', e.target.value)}
-            className={fieldInputCls}
-            placeholder={mode === 'create' ? '留空 = 自动分配' : '留空 = 不修改'}
-          />
-        </div>
+      <div>
+        <label htmlFor="rule-listen-port" className={fieldLabelCls}>
+          监听端口
+          {selectedNode && (
+            <span className="ml-1 text-zinc-400 font-normal">
+              {selectedNode.port_pool_min}-{selectedNode.port_pool_max}
+            </span>
+          )}
+        </label>
+        <input
+          id="rule-listen-port"
+          type="number"
+          min={1}
+          max={65535}
+          value={form.listen_port}
+          onChange={(e) => set('listen_port', e.target.value)}
+          className={fieldInputCls}
+          placeholder={mode === 'create' ? '留空 = 自动分配' : '留空 = 不修改'}
+        />
+        <p className="text-[11px] text-zinc-400 mt-1">
+          监听 IP 固定 0.0.0.0(所有网卡);入口地址按节点展示地址显示。
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">

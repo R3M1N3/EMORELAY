@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
   formatBytes,
+  nodes,
   rules,
   shortTime,
   type RuleLogEntry,
@@ -12,7 +13,7 @@ import {
 import { Sparkline } from '../components/Sparkline'
 import { CopyButton } from '../components/CopyButton'
 import { DiagnosePanel } from '../components/DiagnosePanel'
-import { formatHostPort } from '../lib/format-addr'
+import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
 import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -20,6 +21,8 @@ interface State {
   rule: RuleView | null
   stats: RuleStatsResponse | null
   logs: RuleLogEntry[]
+  /** 规则入口地址主机(节点展示地址/public_ip);null = 未取到,回落 listen_ip */
+  entryHost: string | null
   loading: boolean
   error: string | null
 }
@@ -31,6 +34,7 @@ export default function RuleDetail() {
     rule: null,
     stats: null,
     logs: [],
+    entryHost: null,
     loading: true,
     error: null,
   })
@@ -42,15 +46,31 @@ export default function RuleDetail() {
     let cancelled = false
     // invalid id 走 Promise.reject 让 setState 落在 .catch 异步路径,
     // 避免触发 react-hooks/set-state-in-effect (effect body 同步 setState 禁用)。
-    const work: Promise<[RuleView, RuleStatsResponse, RuleLogEntry[]]> =
-      Number.isFinite(ruleId)
-        ? Promise.all([rules.get(ruleId), rules.stats(ruleId), rules.logs(ruleId)])
-        : Promise.reject(new Error('无效的规则 ID'))
+    const work: Promise<{
+      rule: RuleView
+      stats: RuleStatsResponse
+      logs: RuleLogEntry[]
+      entryHost: string | null
+    }> = Number.isFinite(ruleId)
+      ? Promise.all([rules.get(ruleId), rules.stats(ruleId), rules.logs(ruleId)]).then(
+          async ([rule, stats, logs]) => {
+            // 入口地址要用节点展示地址/public_ip,而非 rule.listen_ip(=0.0.0.0 绑定地址)。
+            // 单独拉节点,失败不致命(回落 listen_ip)。
+            let entryHost: string | null = null
+            try {
+              entryHost = nodeEntryHost(await nodes.get(rule.node_id)) || null
+            } catch {
+              /* 忽略:回落 listen_ip */
+            }
+            return { rule, stats, logs, entryHost }
+          },
+        )
+      : Promise.reject(new Error('无效的规则 ID'))
 
     work
-      .then(([rule, stats, logs]) => {
+      .then(({ rule, stats, logs, entryHost }) => {
         if (cancelled) return
-        setState({ rule, stats, logs, loading: false, error: null })
+        setState({ rule, stats, logs, entryHost, loading: false, error: null })
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -60,7 +80,7 @@ export default function RuleDetail() {
         setState((prev) =>
           prev.rule && prev.rule.id === ruleId
             ? prev
-            : { rule: null, stats: null, logs: [], loading: false, error: msg },
+            : { rule: null, stats: null, logs: [], entryHost: null, loading: false, error: msg },
         )
       })
     return () => {
@@ -102,7 +122,7 @@ export default function RuleDetail() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ConfigCard rule={rule} />
+        <ConfigCard rule={rule} entryHost={state.entryHost} />
         <TrafficCard stats={stats} />
       </div>
 
@@ -131,19 +151,16 @@ export default function RuleDetail() {
   )
 }
 
-function ConfigCard({ rule }: { rule: RuleView }) {
+function ConfigCard({ rule, entryHost }: { rule: RuleView; entryHost: string | null }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
+  // 入口地址用节点展示地址/public_ip;未取到回落 listen_ip。
+  const entry = formatHostPort(entryHost ?? rule.listen_ip, rule.listen_port)
   return (
     <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">配置</h3>
       <dl className="text-sm space-y-2">
         <Row k="协议" v={protoLabel} />
-        <Row
-          k="监听"
-          v={formatHostPort(rule.listen_ip, rule.listen_port)}
-          copy={formatHostPort(rule.listen_ip, rule.listen_port)}
-          mono
-        />
+        <Row k="入口" v={entry} copy={entry} mono />
         <Row k="目标" v={formatHostPort(rule.target_host, rule.target_port)} mono />
         <Row k="隧道" v={rule.tunnel_id != null ? `隧道 #${rule.tunnel_id}（流量经隧道链转发）` : '直连'} />
         <Row k="限速" v={rule.bandwidth_mbps != null ? `${rule.bandwidth_mbps} Mbps` : '不限'} />
