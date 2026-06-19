@@ -168,6 +168,11 @@ async fn bridge(
                     if let Some(proto) = crate::sniff::sniff_blocked(&peekbuf[..n], blocked_protocols) {
                         anyhow::bail!("blocked protocol: {proto}");
                     }
+                    // 当前字节已不可能是任何被阻断协议的前缀 → 立即放行,不必为良性 client-speaks-first
+                    // 短首帧协议死等到 8 字节/2s 截止(消除该延迟回归);真实分片仍是可能前缀,会继续累积。
+                    if !crate::sniff::could_be_blocked(&peekbuf[..n], blocked_protocols) {
+                        break;
+                    }
                     if n >= MIN_SNIFF_LEN {
                         break; // 已够判定且未命中 → 放行
                     }

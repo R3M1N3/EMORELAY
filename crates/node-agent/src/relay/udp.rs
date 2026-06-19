@@ -22,8 +22,8 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_PACKET: usize = 65535;
 /// UDP NAT 表上限:每 session 占一个 upstream socket(fd + ephemeral 端口)与一个反向 task
 /// (后者常驻一个 MAX_PACKET 接收缓冲)。源地址可伪造,无上限会被海量伪造源耗尽 fd/端口/内存;
-/// 达上限丢新包(既有 session 不受影响)。4096 对个人/小规模转发足够,把满载内存/fd/端口上限
-/// 收敛到原 8192 的一半;反向缓冲保持 MAX_PACKET 不截断大响应,故用降并发数而非缩缓冲来控内存。
+/// 达上限丢新包(既有 session 不受影响)。4096 对个人/小规模转发足够,为满载内存/fd/端口设一个
+/// 明确上限(基线本无上限);反向缓冲保持 MAX_PACKET 不截断大响应,故用限并发数而非缩缓冲来控内存。
 const MAX_UDP_SESSIONS: usize = 4096;
 
 pub struct UdpRelayHandle {

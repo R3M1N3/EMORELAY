@@ -260,12 +260,9 @@ async fn report_stats(
 ) -> Result<()> {
     use emorelay_common::control::v1::{RuleStatsBatch, RuleStatsBucket};
 
-    let snapshot = stats.drain_snapshot();
-    if snapshot.is_empty() {
-        return Ok(());
-    }
-    // 把窗口边界对齐到分钟，方便 server UPSERT 同窗口累加。
-    // 系统时钟异常（在 UNIX_EPOCH 之前）则跳过本次上报，避免所有 bucket 撞到 1970-01-01。
+    // 先做时钟检查再 drain:drain_snapshot 会把所有计数 swap 清零(不可逆),若已 drain 却因时钟
+    // 异常 return Ok 跳过上报,该窗口 per-rule rx/tx/conn/error 就永久丢了(计费/配额少计)。与
+    // report_node_stats 一致,把 drain 放到确定要上报之后。窗口边界对齐到分钟便于 server UPSERT 累加。
     let now_unix = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
         Err(e) => {
@@ -274,6 +271,11 @@ async fn report_stats(
         }
     };
     let bucket_at_unix = (now_unix / 60) * 60;
+
+    let snapshot = stats.drain_snapshot();
+    if snapshot.is_empty() {
+        return Ok(());
+    }
 
     let buckets: Vec<RuleStatsBucket> = snapshot
         .iter()

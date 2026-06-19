@@ -32,7 +32,7 @@ const UDP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_UDP_PACKET: usize = 65535;
 /// 隧道 entry UDP NAT 表上限:每 session 占一条隧道连接(fd)+ writer/reader 两个 task。
 /// 源地址可伪造,无上限会被海量伪造源耗尽 fd/内存;达上限丢新包(既有 session 不受影响)。
-/// 4096 与直连 relay/udp.rs 对齐,把满载 fd/内存上限收敛到原 8192 的一半。
+/// 4096 与直连 relay/udp.rs 对齐,为满载 fd/内存设一个明确上限(基线本无上限)。
 const MAX_UDP_SESSIONS: usize = 4096;
 /// mid/exit hop 同时在握手中的连接上限。握手已移出 accept loop(防队头阻塞),但需防
 /// 半开连接洪泛无限 spawn 握手 task 耗 fd/task:超过即立即丢弃新连接。握手完成(成功/
@@ -544,17 +544,40 @@ async fn bridge_raw(a: TunnelConn, b: TunnelConn) -> Result<()> {
     let (mut a_r, mut a_w) = tokio::io::split(a);
     let (mut b_r, mut b_w) = tokio::io::split(b);
     let a2b = async {
-        let n = tokio::io::copy(&mut a_r, &mut b_w).await;
+        let n = copy_raw(&mut a_r, &mut b_w).await;
         let _ = b_w.shutdown().await;
         n
     };
     let b2a = async {
-        let n = tokio::io::copy(&mut b_r, &mut a_w).await;
+        let n = copy_raw(&mut b_r, &mut a_w).await;
         let _ = a_w.shutdown().await;
         n
     };
     tokio::try_join!(a2b, b2a)?;
     Ok(())
+}
+
+/// mid/exit 中继的纯字节复制(不计数/不限速——计量只在 entry)。隧道不能走 splice,tokio::io::copy
+/// 固定 ~8KB 在多 Gbps 下 syscall 成为瓶颈,会把 entry 的大缓冲优化抵消在 mid/exit。这里用 64KB:
+/// 相比 8KB 已是 8× 的 syscall 削减;又不取 entry 的 256KB——mid/exit hop 连接无 max_connections 上限,
+/// 256KB×双向(512KB/连接)会成无界内存放大器,64KB 折中。逐块 flush 兼容 WSS 消息缓冲语义。EOF 半关写端。
+async fn copy_raw<R, W>(r: &mut R, w: &mut W) -> std::io::Result<u64>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let n = r.read(&mut buf).await?;
+        if n == 0 {
+            let _ = w.shutdown().await;
+            return Ok(total);
+        }
+        w.write_all(&buf[..n]).await?;
+        w.flush().await?;
+        total += n as u64;
+    }
 }
 
 /// exit 端 UDP 帧流:拆帧 → UDP send;UDP recv → 打帧回写。
