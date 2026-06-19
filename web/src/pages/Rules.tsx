@@ -57,6 +57,7 @@ export default function Rules() {
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
   const [diagnosing, setDiagnosing] = useState<RuleView | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
   const [importing, setImporting] = useState<{
     items: RuleExportItem[]
     report: ImportReport
@@ -320,16 +321,7 @@ export default function Rules() {
           {isAdmin && (
             <>
               <button
-                onClick={async () => {
-                  try {
-                    await rules.exportDownload({
-                      node_id: filters.node_id ? Number(filters.node_id) : undefined,
-                    })
-                    toast.success(filters.node_id ? '已导出（按节点筛选）' : '已导出全部规则')
-                  } catch (e) {
-                    toast.error(e instanceof ApiError ? e.message : '导出失败')
-                  }
-                }}
+                onClick={() => setExportOpen(true)}
                 className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
               >
                 导出
@@ -578,6 +570,14 @@ export default function Rules() {
         </Modal>
       )}
 
+      {exportOpen && (
+        <ExportModal
+          nodeList={nodeList}
+          tunnelList={tunnelList}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
+
       {importing && (
         <Modal
           title={`导入预览 · ${importing.items.length} 项`}
@@ -821,6 +821,135 @@ function RuleRow({
         </button>
       </td>
     </tr>
+  )
+}
+
+// 导出范围 Modal:全部 / 指定节点 / 指定隧道。复用已支持 node_id/tunnel_id 过滤的 exportDownload。
+// 显式让用户选维度(对标 flux「导出时选维度」),解决「导出入口分散/不能自选节点隧道」的体验断点。
+function ExportModal({
+  nodeList,
+  tunnelList,
+  onClose,
+}: {
+  nodeList: NodeView[]
+  tunnelList: TunnelView[]
+  onClose: () => void
+}) {
+  const toast = useToast()
+  const [scope, setScope] = useState<'all' | 'node' | 'tunnel'>('all')
+  const [nodeId, setNodeId] = useState('')
+  const [tunnelId, setTunnelId] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function doExport() {
+    if (scope === 'node' && !nodeId) {
+      toast.error('请选择节点')
+      return
+    }
+    if (scope === 'tunnel' && !tunnelId) {
+      toast.error('请选择隧道')
+      return
+    }
+    setBusy(true)
+    try {
+      const q =
+        scope === 'node'
+          ? { node_id: Number(nodeId) }
+          : scope === 'tunnel'
+            ? { tunnel_id: Number(tunnelId) }
+            : {}
+      await rules.exportDownload(q)
+      toast.success(
+        scope === 'all'
+          ? '已导出全部规则'
+          : scope === 'node'
+            ? '已导出该节点规则'
+            : '已导出该隧道规则',
+      )
+      onClose()
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : '导出失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title="导出规则" onClose={() => !busy && onClose()} size="sm">
+      <div className="space-y-3">
+        <p className="text-[12px] text-zinc-400">选择导出范围，生成 JSON 文件下载。</p>
+        <div className="flex flex-col gap-2 text-sm">
+          {(
+            [
+              ['all', '全部规则'],
+              ['node', '指定节点'],
+              ['tunnel', '指定隧道'],
+            ] as const
+          ).map(([v, label]) => (
+            <label key={v} className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="export-scope"
+                checked={scope === v}
+                disabled={busy}
+                onChange={() => setScope(v)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        {scope === 'node' && (
+          <div>
+            <label htmlFor="export-node" className={fieldLabelCls}>节点</label>
+            <select
+              id="export-node"
+              value={nodeId}
+              disabled={busy}
+              onChange={(e) => setNodeId(e.target.value)}
+              className={fieldInputCls}
+            >
+              <option value="">请选择节点</option>
+              {nodeList.map((n) => (
+                <option key={n.id} value={n.id}>{n.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {scope === 'tunnel' && (
+          <div>
+            <label htmlFor="export-tunnel" className={fieldLabelCls}>隧道</label>
+            <select
+              id="export-tunnel"
+              value={tunnelId}
+              disabled={busy}
+              onChange={(e) => setTunnelId(e.target.value)}
+              className={fieldInputCls}
+            >
+              <option value="">请选择隧道</option>
+              {tunnelList.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-zinc-400 mt-1">
+              隧道关联规则导入到其它实例时需手动重建隧道关联。
+            </p>
+          </div>
+        )}
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={busy}
+          className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+        >
+          取消
+        </button>
+        <button type="button" onClick={() => void doExport()} disabled={busy} className="btn-accent">
+          {busy ? '导出中…' : '导出'}
+        </button>
+      </div>
+    </Modal>
   )
 }
 
