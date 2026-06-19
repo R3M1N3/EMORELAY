@@ -10,7 +10,7 @@ import {
   type RuleView,
 } from '../lib/api'
 import { Stat } from './Dashboard'
-import { StatusDot } from '../lib/ui'
+import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { CopyButton } from '../components/CopyButton'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 import { useToast } from '../lib/use-toast'
@@ -67,12 +67,8 @@ export default function UserDashboard() {
   }, [expiresAt, toast])
 
   if (error)
-    return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-        {error}
-      </div>
-    )
-  if (!me) return <div className="text-zinc-400">加载中…</div>
+    return <ErrorBox message={error} onRetry={() => { setError(null); load() }} />
+  if (!me) return <PageLoading />
 
   const enabled = myRules.filter((r) => r.enabled).length
   const quota = me.traffic_limit_bytes_30d
@@ -124,7 +120,14 @@ export default function UserDashboard() {
               {formatBytes(used)} / {formatBytes(quota)}（{pct}%）
             </span>
           </div>
-          <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+          <div
+            className="h-2 rounded-full bg-zinc-800 overflow-hidden"
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`30 天用量 ${pct}%`}
+          >
             <div
               className={`h-full rounded-full ${pct >= 90 ? 'bg-red-400' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400'}`}
               style={{ width: `${pct}%` }}
@@ -148,19 +151,19 @@ export default function UserDashboard() {
             <p className="text-[12px] text-zinc-400 break-all font-mono">
               {`${window.location.origin}/api/subscription/usage?token=…`}
             </p>
-            <p className="text-[11px] text-zinc-500 mt-1.5">
+            <p className="text-[11px] text-zinc-400 mt-1.5">
               在 Clash 等客户端里添加此链接，可直接查看套餐余量与到期。此链接为只读用量链接（仅能查看本人流量余额，无法操作其它功能），有效期到账号到期。
             </p>
           </>
         ) : (
-          <p className="text-[12px] text-zinc-500">订阅链接获取失败，请刷新页面重试。</p>
+          <p className="text-[12px] text-zinc-400">订阅链接获取失败，请刷新页面重试。</p>
         )}
       </section>
 
       <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">我的规则</h3>
         {myRules.length === 0 ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-zinc-400">
             尚无规则。前往
             <Link to="/rules" className="text-accent hover:text-accent-hi mx-1">
               规则页
@@ -183,7 +186,7 @@ export default function UserDashboard() {
                     >
                       {r.name}
                     </Link>
-                    <div className="text-[11px] text-zinc-500 truncate">
+                    <div className="text-[11px] text-zinc-400 truncate">
                       {r.protocol.toUpperCase()} · :{r.listen_port} → {r.target_host}:
                       {r.target_port}
                     </div>

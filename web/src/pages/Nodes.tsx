@@ -14,7 +14,7 @@ import {
   type NodeView,
   type UpdateNodeRequest,
 } from '../lib/api'
-import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -183,11 +183,7 @@ export default function Nodes() {
         </button>
       </div>
 
-      {list.error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {list.error}
-        </div>
-      )}
+      {list.error && <ErrorBox message={list.error} onRetry={() => void reload()} />}
 
       {/* 服务端搜索:替换原「搜索当前页」本地过滤(数据过百后会搜不到明明存在的节点)。 */}
       <form
@@ -204,6 +200,7 @@ export default function Nodes() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          aria-label="搜索节点"
           placeholder="搜索名称 / 区域 / IP"
           className={`${fieldInputCls} max-w-sm`}
         />
@@ -214,27 +211,27 @@ export default function Nodes() {
 
       <section className="glass-card rise overflow-hidden">
         {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+          <TableSkeleton cols={8} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">
+          <div className="p-6 text-sm text-zinc-400">
             {search.trim() ? '没有匹配的节点。' : '尚无节点。点击右上角「新增节点」开始。'}
           </div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+                <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                   <tr>
-                    <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                    <th className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
-                    <th className="px-4 py-2.5 text-left font-medium">gRPC</th>
-                    <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                    <th className="px-4 py-2.5 text-left font-medium">资源</th>
-                    <th className="px-4 py-2.5 text-left font-medium" title="节点网卡总流量(含系统流量),非规则转发流量">
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">gRPC</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">状态</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">资源</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium" title="节点网卡总流量(含系统流量),非规则转发流量">
                       网卡流量
                     </th>
-                    <th className="px-4 py-2.5 text-left font-medium">端口池</th>
-                    <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">端口池</th>
+                    <th scope="col" className="px-4 py-2.5 text-right font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -346,7 +343,7 @@ export default function Nodes() {
             })
             return (
               <div className="mt-3">
-                <div className="text-[11px] text-zinc-500 mb-1">
+                <div className="text-[11px] text-zinc-400 mb-1">
                   一键安装命令（已内嵌 mTLS 凭据）
                 </div>
                 <div className="rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 break-all max-h-32 overflow-auto">
@@ -364,7 +361,7 @@ export default function Nodes() {
           })()}
 
           <div className="mt-4 space-y-2">
-            <div className="text-[11px] text-zinc-500">
+            <div className="text-[11px] text-zinc-400">
               或手动分发以下各项（与安装命令二选一）：
             </div>
             <CredBlock label="Agent Token" value={token.token} onCopy={copyCred} defaultOpen />
@@ -414,11 +411,11 @@ function NodeRow({
         >
           {node.name}
         </Link>
-        <div className="text-[11px] text-zinc-500 mt-0.5">ID #{node.id}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{node.id}</div>
       </td>
       <td className="px-4 py-3 align-top text-zinc-300">
         <div>{node.region || '—'}</div>
-        <div className="text-[11px] text-zinc-500 mt-0.5">{node.public_ip || '未填'}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">{node.public_ip || '未填'}</div>
       </td>
       {/* 长 URL 截断显示,完整值挂 title;否则挤压名称/状态列(移动端尤甚)。 */}
       <td
@@ -432,11 +429,11 @@ function NodeRow({
           <StatusDot kind={node.status} />
           {statusLabel(node.status)}
         </span>
-        <div className="text-[11px] text-zinc-500 mt-0.5">
+        <div className="text-[11px] text-zinc-400 mt-0.5">
           {node.last_seen_at ? `最后心跳 ${shortTime(node.last_seen_at)}` : '从未上线'}
         </div>
         {node.agent_version && (
-          <div className="text-[10px] text-zinc-600 mt-0.5">Agent v{node.agent_version}</div>
+          <div className="text-[10px] text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
         )}
       </td>
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
@@ -621,8 +618,9 @@ function NodeForm({
         </p>
       )}
       <div>
-        <label className={fieldLabelCls}>名称 *</label>
+        <label htmlFor="node-name" className={fieldLabelCls}>名称 *</label>
         <input
+          id="node-name"
           required
           value={form.name}
           onChange={(e) => set('name', e.target.value)}
@@ -632,8 +630,9 @@ function NodeForm({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>区域</label>
+          <label htmlFor="node-region" className={fieldLabelCls}>区域</label>
           <input
+            id="node-region"
             value={form.region}
             onChange={(e) => set('region', e.target.value)}
             className={fieldInputCls}
@@ -641,8 +640,9 @@ function NodeForm({
           />
         </div>
         <div>
-          <label className={fieldLabelCls}>接入地址</label>
+          <label htmlFor="node-public-ip" className={fieldLabelCls}>接入地址</label>
           <input
+            id="node-public-ip"
             value={form.public_ip}
             onChange={(e) => set('public_ip', e.target.value)}
             className={fieldInputCls}
@@ -651,34 +651,37 @@ function NodeForm({
         </div>
       </div>
       <div>
-        <label className={fieldLabelCls}>展示地址（可选）</label>
+        <label htmlFor="node-display" className={fieldLabelCls}>展示地址（可选）</label>
         <input
+          id="node-display"
           value={form.display_address}
           onChange={(e) => set('display_address', e.target.value)}
           className={fieldInputCls}
           placeholder="留空 = 直接展示接入地址"
         />
-        <p className="text-[11px] text-zinc-500 mt-1">
+        <p className="text-[11px] text-zinc-400 mt-1">
           接入地址是隧道/节点互联实际连接的地址(NAT/DDNS 机器填可达域名);
           展示地址是普通用户看到的入口,留空回落接入地址。
         </p>
       </div>
       <div>
-        <label className={fieldLabelCls}>gRPC 端点</label>
+        <label htmlFor="node-grpc" className={fieldLabelCls}>gRPC 端点</label>
         <input
+          id="node-grpc"
           value={form.grpc_endpoint}
           onChange={(e) => set('grpc_endpoint', e.target.value)}
           className={fieldInputCls}
           placeholder="https://agent.example.com:7001"
         />
-        <p className="text-[11px] text-zinc-500 mt-1">
+        <p className="text-[11px] text-zinc-400 mt-1">
           仅作展示用途。Agent 会主动用 token 连接主控，不由主控反向拨号。
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>端口池下界</label>
+          <label htmlFor="node-port-min" className={fieldLabelCls}>端口池下界</label>
           <input
+            id="node-port-min"
             type="number"
             min={1}
             max={65535}
@@ -689,8 +692,9 @@ function NodeForm({
           />
         </div>
         <div>
-          <label className={fieldLabelCls}>端口池上界</label>
+          <label htmlFor="node-port-max" className={fieldLabelCls}>端口池上界</label>
           <input
+            id="node-port-max"
             type="number"
             min={1}
             max={65535}
@@ -703,7 +707,7 @@ function NodeForm({
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {error}
         </div>
       )}

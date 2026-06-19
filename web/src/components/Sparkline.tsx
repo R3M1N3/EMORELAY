@@ -28,7 +28,7 @@ export function Sparkline({
   if (values.length < 2) {
     return (
       <div
-        className="flex items-center justify-center text-[11px] text-zinc-500"
+        className="flex items-center justify-center text-[11px] text-zinc-400"
         style={{ width, height }}
       >
         {values.length === 0 ? emptyLabel : '数据不足(再等一个统计周期)'}
@@ -58,7 +58,7 @@ export function Sparkline({
   return (
     <div className="relative inline-block" style={{ width, height }}>
       {formatValue && (
-        <span className="absolute right-0 -top-0.5 text-[10px] text-zinc-500">
+        <span className="absolute right-0 -top-0.5 text-[10px] text-zinc-400">
           峰值 {formatValue(Math.max(...values))}
         </span>
       )}

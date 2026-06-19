@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { useState } from 'react'
-import { Modal } from './ui'
+import { Modal, ErrorBox } from './ui'
 
 // 覆写 matchMedia 模拟桌面(精确指针 matches=true)或触屏(matches=false)。
 // setup.ts 默认桩为 matches=false;Modal 挂载聚焦目标依赖它,故各用例显式设定。
@@ -88,5 +88,20 @@ describe('Modal 焦点管理', () => {
     fireEvent.click(screen.getByText(/bump/))
     // 修复前:effect 因 onClose 引用变更重挂,setup 把焦点拉回「第一」;修复后焦点稳定。
     expect(second).toHaveFocus()
+  })
+})
+
+describe('ErrorBox', () => {
+  it('以 role="alert" 渲染错误信息,无 onRetry 时不显示重试', () => {
+    render(<ErrorBox message="加载失败" />)
+    expect(screen.getByRole('alert')).toHaveTextContent('加载失败')
+    expect(screen.queryByText('重试')).toBeNull()
+  })
+
+  it('提供 onRetry 时显示重试按钮并在点击时调用一次', () => {
+    let called = 0
+    render(<ErrorBox message="加载失败" onRetry={() => { called++ }} />)
+    fireEvent.click(screen.getByText('重试'))
+    expect(called).toBe(1)
   })
 })

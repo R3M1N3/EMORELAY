@@ -35,7 +35,7 @@ export function CopyButton({
       onClick={onCopy}
       aria-label={label ?? '复制'}
       title={label ?? '复制'}
-      className={`inline-flex items-center justify-center rounded p-0.5 text-zinc-500 hover:text-accent-hi transition-colors ${className}`}
+      className={`inline-flex items-center justify-center rounded p-0.5 text-zinc-400 hover:text-accent-hi transition-colors ${className}`}
     >
       {copied ? (
         <span aria-hidden className="text-emerald-400 text-[11px] leading-none">

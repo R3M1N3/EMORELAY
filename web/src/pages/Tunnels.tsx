@@ -10,7 +10,7 @@ import {
   type NodeView,
   type TunnelView,
 } from '../lib/api'
-import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -124,32 +124,28 @@ export default function Tunnels() {
         </button>
       </div>
 
-      {list.error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {list.error}
-        </div>
-      )}
+      {list.error && <ErrorBox message={list.error} onRetry={() => void reload()} />}
 
       <section className="glass-card rise overflow-hidden">
         {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+          <TableSkeleton cols={7} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">
+          <div className="p-6 text-sm text-zinc-400">
             尚无隧道。点击右上角「创建隧道」开始。
           </div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+                <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                   <tr>
-                    <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                    <th className="px-4 py-2.5 text-left font-medium">传输</th>
-                    <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                    <th className="px-4 py-2.5 text-left font-medium">跳数</th>
-                    <th className="px-4 py-2.5 text-left font-medium">规则数</th>
-                    <th className="px-4 py-2.5 text-left font-medium">创建时间</th>
-                    <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">传输</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">状态</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">跳数</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">规则数</th>
+                    <th scope="col" className="px-4 py-2.5 text-left font-medium">创建时间</th>
+                    <th scope="col" className="px-4 py-2.5 text-right font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -162,7 +158,7 @@ export default function Tunnels() {
                         >
                           {t.name}
                         </Link>
-                        <div className="text-[11px] text-zinc-500 mt-0.5">ID #{t.id}</div>
+                        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{t.id}</div>
                       </td>
                       <td className="px-4 py-3 align-top text-zinc-300 uppercase text-xs">
                         {t.transport}
@@ -426,7 +422,7 @@ function TunnelForm({
             onChange={(e) => setTrafficRatio(e.target.value)}
             className={fieldInputCls}
           />
-          <p className="mt-1 text-[11px] text-zinc-500">计费乘数，1 = 原样，2 = 双倍</p>
+          <p className="mt-1 text-[11px] text-zinc-400">计费乘数，1 = 原样，2 = 双倍</p>
         </div>
         <div>
           <label htmlFor="tunnel-billing" className={fieldLabelCls}>
@@ -499,13 +495,13 @@ function TunnelForm({
         >
           + 添加节点
         </button>
-        <p className="mt-1.5 text-[11px] text-zinc-500">
+        <p className="mt-1.5 text-[11px] text-zinc-400">
           第 2 跳起的节点必须配置公网 IP；所有节点须在线
         </p>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {error}
         </div>
       )}

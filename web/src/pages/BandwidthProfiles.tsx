@@ -5,7 +5,7 @@ import {
   shortTime,
   type BandwidthProfileView,
 } from '../lib/api'
-import { Modal, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
 
@@ -85,27 +85,23 @@ export default function BandwidthProfiles() {
         </button>
       </div>
 
-      {list.error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {list.error}
-        </div>
-      )}
+      {list.error && <ErrorBox message={list.error} onRetry={() => void reload()} />}
 
       <section className="glass-card rise overflow-hidden">
         {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+          <TableSkeleton cols={5} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">尚无限速配置。点击右上角「新增限速配置」。</div>
+          <div className="p-6 text-sm text-zinc-400">尚无限速配置。点击右上角「新增限速配置」。</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                  <th className="px-4 py-2.5 text-right font-medium">带宽 (Mbps)</th>
-                  <th className="px-4 py-2.5 text-left font-medium">描述</th>
-                  <th className="px-4 py-2.5 text-left font-medium">更新于</th>
-                  <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">带宽 (Mbps)</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">描述</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">更新于</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -113,7 +109,7 @@ export default function BandwidthProfiles() {
                   <tr key={p.id} className="hover:bg-white/[0.02]">
                     <td className="px-4 py-3 align-top">
                       <div className="font-medium text-zinc-100">{p.name}</div>
-                      <div className="text-[11px] text-zinc-500 mt-0.5">ID #{p.id}</div>
+                      <div className="text-[11px] text-zinc-400 mt-0.5">ID #{p.id}</div>
                     </td>
                     <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums">
                       {p.bandwidth_mbps}
@@ -269,8 +265,9 @@ function ProfileForm({
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
-        <label className={fieldLabelCls}>名称 *</label>
+        <label htmlFor="bw-name" className={fieldLabelCls}>名称 *</label>
         <input
+          id="bw-name"
           required
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -279,8 +276,9 @@ function ProfileForm({
         />
       </div>
       <div>
-        <label className={fieldLabelCls}>带宽 (Mbps) *</label>
+        <label htmlFor="bw-mbps" className={fieldLabelCls}>带宽 (Mbps) *</label>
         <input
+          id="bw-mbps"
           type="number"
           min={1}
           required
@@ -289,13 +287,14 @@ function ProfileForm({
           className={fieldInputCls}
           placeholder="100"
         />
-        <p className="text-[11px] text-zinc-500 mt-1">
+        <p className="text-[11px] text-zinc-400 mt-1">
           上下行合并计；修改后引用此配置的规则即时生效。
         </p>
       </div>
       <div>
-        <label className={fieldLabelCls}>描述</label>
+        <label htmlFor="bw-desc" className={fieldLabelCls}>描述</label>
         <input
+          id="bw-desc"
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
           className={fieldInputCls}
@@ -303,7 +302,7 @@ function ProfileForm({
         />
       </div>
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {error}
         </div>
       )}

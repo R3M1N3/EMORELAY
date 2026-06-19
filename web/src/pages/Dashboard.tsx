@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../lib/use-auth'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 import UserDashboard from './UserDashboard'
+import { ErrorBox, PageLoading } from '../lib/ui'
 
 type Last24h = { rx: number; tx: number } | 'unavailable' | null
 type RecentErrors = AuditLogEntry[] | 'loading' | 'unavailable'
@@ -77,12 +78,16 @@ function AdminDashboard() {
     // refreshTick 驱动周期重拉;首次挂载 tick=0 也执行。
   }, [refreshTick])
 
-  if (data.loading) return <div className="text-zinc-400">加载中…</div>
+  if (data.loading) return <PageLoading />
   if (data.error)
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-        {data.error}
-      </div>
+      <ErrorBox
+        message={data.error}
+        onRetry={() => {
+          setData((d) => ({ ...d, loading: true, error: null }))
+          setRefreshTick((n) => n + 1)
+        }}
+      />
     )
 
   const onlineNodes = data.nodes.filter((n) => n.status === 'online').length
@@ -122,7 +127,7 @@ function AdminDashboard() {
       <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">节点状态</h3>
         {data.nodes.length === 0 ? (
-          <p className="text-sm text-zinc-500">尚无节点。前往节点页添加。</p>
+          <p className="text-sm text-zinc-400">尚无节点。前往节点页添加。</p>
         ) : (
           <div className="space-y-2">
             {data.nodes.map((n) => (
@@ -135,14 +140,14 @@ function AdminDashboard() {
       <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">
           最近错误
-          <span className="ml-2 text-[11px] font-normal text-zinc-500">来自审计日志的失败操作记录</span>
+          <span className="ml-2 text-[11px] font-normal text-zinc-400">来自审计日志的失败操作记录</span>
         </h3>
         {recentErrors === 'loading' ? (
-          <p className="text-sm text-zinc-500">加载中…</p>
+          <p className="text-sm text-zinc-400">加载中…</p>
         ) : recentErrors === 'unavailable' ? (
-          <p className="text-sm text-zinc-500">暂无数据</p>
+          <p className="text-sm text-zinc-400">暂无数据</p>
         ) : recentErrors.length === 0 ? (
-          <p className="text-sm text-zinc-500">最近无错误。</p>
+          <p className="text-sm text-zinc-400">最近无错误。</p>
         ) : (
           <div className="space-y-2">
             {recentErrors.map((e) => (
@@ -169,7 +174,7 @@ export function Stat({ label, value, hint, accent }: { label: string; value: num
     <div className={`relative rounded-2xl border border-white/10 bg-gradient-to-br ${ACCENT[accent]} to-zinc-900/40 p-4 ring-1 ring-inset`}>
       <div className="text-xs text-zinc-400">{label}</div>
       <div className="mt-1 text-2xl font-semibold tracking-tight">{value}</div>
-      <div className="mt-1 text-[11px] text-zinc-500">{hint}</div>
+      <div className="mt-1 text-[11px] text-zinc-400">{hint}</div>
     </div>
   )
 }
@@ -190,7 +195,7 @@ function ErrorRow({ entry }: { entry: AuditLogEntry }) {
           {entry.error_message ?? '(无消息)'}
         </div>
       </div>
-      <div className="text-[11px] text-zinc-500 shrink-0">{shortTime(entry.created_at)}</div>
+      <div className="text-[11px] text-zinc-400 shrink-0">{shortTime(entry.created_at)}</div>
     </div>
   )
 }
@@ -208,7 +213,7 @@ function NodeRow({ node }: { node: NodeView }) {
         <span className={`inline-block h-2 w-2 rounded-full shadow ${dot}`} aria-hidden />
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{node.name}</div>
-          <div className="text-[11px] text-zinc-500 truncate">{node.region || '—'} · {node.public_ip || '未填'}</div>
+          <div className="text-[11px] text-zinc-400 truncate">{node.region || '—'} · {node.public_ip || '未填'}</div>
         </div>
       </div>
       <div className="flex items-center gap-4 text-[11px] text-zinc-400 shrink-0">

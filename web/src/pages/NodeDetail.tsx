@@ -12,7 +12,7 @@ import {
   type NodeView,
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
-import { Modal, StatusDot } from '../lib/ui'
+import { ErrorBox, Modal, PageLoading, StatusDot } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -123,14 +123,12 @@ export default function NodeDetail() {
     }
   }, [nodeId])
 
-  if (state.loading) return <div className="text-zinc-400">加载中…</div>
+  if (state.loading) return <PageLoading />
   if (state.error)
     return (
       <div className="space-y-4">
         <Link to="/nodes" className="text-xs text-zinc-400 hover:text-zinc-200">← 返回节点列表</Link>
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {state.error}
-        </div>
+        <ErrorBox message={state.error} onRetry={() => setRefreshTick((n) => n + 1)} />
       </div>
     )
   if (!state.node || !state.stats) return null
@@ -208,17 +206,17 @@ export default function NodeDetail() {
             <Row k="最后心跳" v={node.last_seen_at ? shortTime(node.last_seen_at) : '从未上线'} />
             <Row k="创建" v={shortTime(node.created_at)} />
           </dl>
-          <div className="text-[11px] text-zinc-500 mt-2">
+          <div className="text-[11px] text-zinc-400 mt-2">
             Agent 接入凭据在创建节点时一次性显示；
             凭据遗失或泄露时，点右上角「轮换凭据」重新签发(旧证书随即吊销)。
           </div>
           {/* P7:已授权使用本节点的用户(在「用户」页编辑授权)。 */}
           <div className="mt-3 pt-3 border-t border-white/5">
-            <div className="text-[11px] text-zinc-500 mb-1.5">已授权用户</div>
+            <div className="text-[11px] text-zinc-400 mb-1.5">已授权用户</div>
             {grantedUsers == null ? (
-              <span className="text-[12px] text-zinc-500">—</span>
+              <span className="text-[12px] text-zinc-400">—</span>
             ) : grantedUsers.length === 0 ? (
-              <span className="text-[12px] text-zinc-500">无（普通用户默认不可用本节点）</span>
+              <span className="text-[12px] text-zinc-400">无（普通用户默认不可用本节点）</span>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {grantedUsers.map((u) => (
@@ -437,7 +435,7 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-      <div className="text-[11px] text-zinc-500">{label}</div>
+      <div className="text-[11px] text-zinc-400">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
   )
@@ -472,7 +470,7 @@ function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: () 
   return (
     <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-1">协议阻断</h3>
-      <p className="text-[11px] text-zinc-500 mb-3">
+      <p className="text-[11px] text-zinc-400 mb-3">
         对普通 TCP 转发的首包做被动指纹识别，命中即断连，防止转发被滥用为开放代理。默认全关。
       </p>
       <div className="space-y-2">
@@ -490,7 +488,7 @@ function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: () 
             />
             <span className="min-w-0">
               <span className="text-sm text-zinc-200">阻断 {label}</span>
-              <span className="block text-[11px] text-zinc-500">{hint}</span>
+              <span className="block text-[11px] text-zinc-400">{hint}</span>
             </span>
           </label>
         ))}

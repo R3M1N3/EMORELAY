@@ -12,7 +12,7 @@ import {
   type UpdateUserRequest,
   type UserDetail,
 } from '../lib/api'
-import { Modal, fieldInputCls, fieldLabelCls, PasswordInput } from '../lib/ui'
+import { ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls, PasswordInput } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { bytesToGbString, gbToBytes, quotaPercent, quotaTone } from '../lib/quota'
 
@@ -95,11 +95,7 @@ export default function Users() {
         </button>
       </div>
 
-      {list.error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {list.error}
-        </div>
-      )}
+      {list.error && <ErrorBox message={list.error} onRetry={() => void reload()} />}
 
       {/* 服务端搜索:替换原「搜索当前页」本地过滤。 */}
       <form
@@ -115,6 +111,7 @@ export default function Users() {
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          aria-label="搜索用户名"
           placeholder="搜索用户名"
           className={`${fieldInputCls} max-w-sm`}
         />
@@ -125,27 +122,27 @@ export default function Users() {
 
       <section className="glass-card rise overflow-hidden">
         {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+          <TableSkeleton cols={9} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">
+          <div className="p-6 text-sm text-zinc-400">
             {search.trim() ? '没有匹配的用户。' : '尚无用户。'}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">用户名</th>
-                  <th className="px-4 py-2.5 text-left font-medium">角色</th>
-                  <th className="px-4 py-2.5 text-right font-medium">规则数</th>
-                  <th className="px-4 py-2.5 text-right font-medium">累计流量</th>
-                  <th className="px-4 py-2.5 text-left font-medium">到期</th>
-                  <th className="px-4 py-2.5 text-left font-medium" title="约每 5 分钟由后台刷新">
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">用户名</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">角色</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">规则数</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">累计流量</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">到期</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium" title="约每 5 分钟由后台刷新">
                     30d 用量
                   </th>
-                  <th className="px-4 py-2.5 text-left font-medium">创建于</th>
-                  <th className="px-4 py-2.5 text-left font-medium">更新于</th>
-                  <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">创建于</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">更新于</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -246,7 +243,7 @@ function UserRow({
     <tr className="hover:bg-white/[0.02]">
       <td className="px-4 py-3 align-top">
         <div className="font-medium text-zinc-100">{user.username}</div>
-        <div className="text-[11px] text-zinc-500 mt-0.5">ID #{user.id}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{user.id}</div>
       </td>
       <td className="px-4 py-3 align-top">
         <span
@@ -306,17 +303,24 @@ const TONE_CLS = {
 function QuotaBar({ used, limit }: { used: number; limit: number | null }) {
   const percent = quotaPercent(used, limit)
   if (percent == null) {
-    return <span className="text-[12px] text-zinc-500">{formatBytes(used)} / 不限</span>
+    return <span className="text-[12px] text-zinc-400">{formatBytes(used)} / 不限</span>
   }
   return (
     <div>
-      <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+      <div
+        className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden"
+        role="progressbar"
+        aria-valuenow={Math.round(percent)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`30 天用量 ${percent.toFixed(0)}%`}
+      >
         <div
           className={`h-full rounded-full ${TONE_CLS[quotaTone(percent)]}`}
           style={{ width: `${percent}%` }}
         />
       </div>
-      <div className="text-[11px] text-zinc-500 mt-1">
+      <div className="text-[11px] text-zinc-400 mt-1">
         {formatBytes(used)} / {formatBytes(limit as number)}（{percent.toFixed(0)}%）
       </div>
     </div>
@@ -358,11 +362,11 @@ function GrantPicker({
     <div>
       <label className={fieldLabelCls}>
         {label}
-        <span className="ml-1 text-zinc-500 font-normal">({chosen.size})</span>
+        <span className="ml-1 text-zinc-400 font-normal">({chosen.size})</span>
       </label>
       <div className="max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 space-y-0.5">
         {options.length === 0 ? (
-          <div className="px-1 py-1 text-[12px] text-zinc-500">{empty}</div>
+          <div className="px-1 py-1 text-[12px] text-zinc-400">{empty}</div>
         ) : (
           options.map((o) => (
             <label
@@ -636,8 +640,9 @@ function UserForm({
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div>
-        <label className={fieldLabelCls}>用户名 *</label>
+        <label htmlFor="user-username" className={fieldLabelCls}>用户名 *</label>
         <input
+          id="user-username"
           value={form.username}
           onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
           required
@@ -648,15 +653,16 @@ function UserForm({
           placeholder="3-32 字符,无空白"
         />
         {mode === 'edit' && (
-          <p className="text-[11px] text-zinc-500 mt-1">用户名不可改;新增用户即可指定。</p>
+          <p className="text-[11px] text-zinc-400 mt-1">用户名不可改;新增用户即可指定。</p>
         )}
       </div>
 
       <div>
-        <label className={fieldLabelCls}>
-          密码 {mode === 'create' ? '*' : <span className="text-zinc-500">(留空即不改)</span>}
+        <label htmlFor="user-password" className={fieldLabelCls}>
+          密码 {mode === 'create' ? '*' : <span className="text-zinc-400">(留空即不改)</span>}
         </label>
         <PasswordInput
+          id="user-password"
           value={form.password}
           onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
           required={mode === 'create'}
@@ -667,8 +673,9 @@ function UserForm({
       </div>
 
       <div>
-        <label className={fieldLabelCls}>角色 *</label>
+        <label htmlFor="user-role" className={fieldLabelCls}>角色 *</label>
         <select
+          id="user-role"
           value={form.role}
           onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as 'admin' | 'user' }))}
           className={fieldInputCls}
@@ -676,25 +683,27 @@ function UserForm({
           <option value="user">user (普通用户)</option>
           <option value="admin">admin (管理员)</option>
         </select>
-        <p className="text-[11px] text-zinc-500 mt-1">
+        <p className="text-[11px] text-zinc-400 mt-1">
           系统至少保留一个 admin;删除最后一个 admin 或将其降级会被拒绝。
         </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>到期时间（本地时区）</label>
+          <label htmlFor="user-expires" className={fieldLabelCls}>到期时间（本地时区）</label>
           <input
+            id="user-expires"
             type="datetime-local"
             value={form.expires_at}
             onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
             className={fieldInputCls}
           />
-          <p className="text-[11px] text-zinc-500 mt-1">留空 = 永不到期。到期后规则自动停用、登录被拒。</p>
+          <p className="text-[11px] text-zinc-400 mt-1">留空 = 永不到期。到期后规则自动停用、登录被拒。</p>
         </div>
         <div>
-          <label className={fieldLabelCls}>30 天用量上限 (GB)</label>
+          <label htmlFor="user-traffic" className={fieldLabelCls}>30 天用量上限 (GB)</label>
           <input
+            id="user-traffic"
             type="number"
             min={0}
             step="0.5"
@@ -703,11 +712,12 @@ function UserForm({
             className={fieldInputCls}
             placeholder="留空 = 不限"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">超限后该用户全部规则自动停用。重置方式见下。</p>
+          <p className="text-[11px] text-zinc-400 mt-1">超限后该用户全部规则自动停用。重置方式见下。</p>
         </div>
         <div>
-          <label className={fieldLabelCls}>用量重置方式</label>
+          <label htmlFor="user-reset" className={fieldLabelCls}>用量重置方式</label>
           <select
+            id="user-reset"
             value={form.quota_reset_day}
             onChange={(e) => setForm((f) => ({ ...f, quota_reset_day: e.target.value }))}
             className={fieldInputCls}
@@ -719,13 +729,14 @@ function UserForm({
               </option>
             ))}
           </select>
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             滚动窗口按最近 30 天统计；月度则每月固定日 0 点清零（月末容错）。
           </p>
         </div>
         <div>
-          <label className={fieldLabelCls}>转发规则数上限</label>
+          <label htmlFor="user-fwdquota" className={fieldLabelCls}>转发规则数上限</label>
           <input
+            id="user-fwdquota"
             type="number"
             min={0}
             step={1}
@@ -734,7 +745,7 @@ function UserForm({
             className={fieldInputCls}
             placeholder="留空 = 不限"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">该用户最多可创建的转发规则数;留空/0 = 不限。</p>
+          <p className="text-[11px] text-zinc-400 mt-1">该用户最多可创建的转发规则数;留空/0 = 不限。</p>
         </div>
       </div>
 
@@ -772,7 +783,7 @@ function UserForm({
               })
             }
           />
-          <p className="col-span-2 text-[11px] text-zinc-500 -mt-1">
+          <p className="col-span-2 text-[11px] text-zinc-400 -mt-1">
             默认拒绝:未勾选的节点/隧道该用户不可见、不可建规则。撤销授权不影响已建规则(保留运行,仅禁止新建)。
           </p>
           {grantedTunnels.size > 0 && (
@@ -804,7 +815,7 @@ function UserForm({
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {error}
         </div>
       )}

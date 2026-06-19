@@ -10,7 +10,7 @@ import {
   type GrantedUser,
   type TunnelDetailView,
 } from '../lib/api'
-import { StatusDot } from '../lib/ui'
+import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { DiagnosePanel } from '../components/DiagnosePanel'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -113,14 +113,12 @@ export default function TunnelDetail() {
     }
   }
 
-  if (state.loading) return <div className="text-zinc-400">加载中…</div>
+  if (state.loading) return <PageLoading />
   if (state.error)
     return (
       <div className="space-y-4">
         <Link to="/tunnels" className="text-xs text-zinc-400 hover:text-zinc-200">← 返回隧道列表</Link>
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {state.error}
-        </div>
+        <ErrorBox message={state.error} onRetry={() => setRefreshTick((n) => n + 1)} />
       </div>
     )
   if (!state.detail) return null
@@ -178,12 +176,12 @@ export default function TunnelDetail() {
         <h3 className="px-5 py-3 text-sm font-medium text-zinc-200 border-b border-white/5">节点链</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+            <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium">序号</th>
-                <th className="px-4 py-2.5 text-left font-medium">角色</th>
-                <th className="px-4 py-2.5 text-left font-medium">节点</th>
-                <th className="px-4 py-2.5 text-left font-medium">中继端口</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">序号</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">角色</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">节点</th>
+                <th scope="col" className="px-4 py-2.5 text-left font-medium">中继端口</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -210,9 +208,9 @@ export default function TunnelDetail() {
       <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">已授权用户</h3>
         {grantedUsers == null ? (
-          <span className="text-[12px] text-zinc-500">—</span>
+          <span className="text-[12px] text-zinc-400">—</span>
         ) : grantedUsers.length === 0 ? (
-          <span className="text-[12px] text-zinc-500">无（普通用户默认不可用本隧道）</span>
+          <span className="text-[12px] text-zinc-400">无（普通用户默认不可用本隧道）</span>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {grantedUsers.map((u) => (
@@ -231,19 +229,19 @@ export default function TunnelDetail() {
       <section className="glass-card rise overflow-hidden">
         <h3 className="px-5 py-3 text-sm font-medium text-zinc-200 border-b border-white/5">
           关联规则
-          <span className="ml-2 text-xs text-zinc-500">({detail.rules_count})</span>
+          <span className="ml-2 text-xs text-zinc-400">({detail.rules_count})</span>
         </h3>
         {detail.rules.length === 0 ? (
-          <div className="px-5 py-4 text-sm text-zinc-500">暂无关联规则</div>
+          <div className="px-5 py-4 text-sm text-zinc-400">暂无关联规则</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                  <th className="px-4 py-2.5 text-left font-medium">协议</th>
-                  <th className="px-4 py-2.5 text-left font-medium">监听端口</th>
-                  <th className="px-4 py-2.5 text-left font-medium">状态</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">协议</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">监听端口</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">状态</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -263,7 +261,7 @@ export default function TunnelDetail() {
                       {r.enabled ? (
                         <span className="text-emerald-400">启用</span>
                       ) : (
-                        <span className="text-zinc-500">停用</span>
+                        <span className="text-zinc-400">停用</span>
                       )}
                     </td>
                   </tr>

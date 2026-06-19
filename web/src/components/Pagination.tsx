@@ -31,7 +31,7 @@ export function Pagination({
       <div className="flex items-center gap-2">
         {onChangePageSize && (
           <label className="flex items-center gap-1.5">
-            <span className="text-zinc-500">每页</span>
+            <span className="text-zinc-400">每页</span>
             <select
               value={pageSize}
               onChange={(e) => onChangePageSize(Number(e.target.value))}

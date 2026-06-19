@@ -67,6 +67,15 @@ select optgroup {
   color: #e4e9f5;
 }
 
+/* Tailwind v4 起原生 button 默认 cursor 改为 default(对齐浏览器);此处把所有可点元素恢复手型,
+   与 .btn-accent 已有的 cursor:pointer 对齐,避免二级按钮(编辑/删除/分页/复制等)悬停显示箭头。 */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 /* 自定义类必须进 @layer components:未分层声明会压过 Tailwind 分层工具类
    (曾导致 glass-card 的 position:relative 击败 fixed/sticky,小屏 drawer 布局损坏)。 */
 @layer components {

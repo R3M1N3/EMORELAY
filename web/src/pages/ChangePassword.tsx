@@ -50,8 +50,9 @@ export default function ChangePassword() {
           </p>
         </div>
 
-        <label className="block text-xs font-medium text-zinc-300 mb-1.5">当前密码</label>
+        <label htmlFor="cp-old" className="block text-xs font-medium text-zinc-300 mb-1.5">当前密码</label>
         <PasswordInput
+          id="cp-old"
           autoComplete="current-password"
           value={oldPassword}
           onChange={(e) => setOldPassword(e.target.value)}
@@ -59,8 +60,9 @@ export default function ChangePassword() {
           placeholder="••••••••"
         />
 
-        <label className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">新密码</label>
+        <label htmlFor="cp-new" className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">新密码</label>
         <PasswordInput
+          id="cp-new"
           autoComplete="new-password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
@@ -68,8 +70,9 @@ export default function ChangePassword() {
           placeholder="至少 8 个字符"
         />
 
-        <label className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">确认新密码</label>
+        <label htmlFor="cp-confirm" className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">确认新密码</label>
         <PasswordInput
+          id="cp-confirm"
           autoComplete="new-password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
@@ -77,11 +80,11 @@ export default function ChangePassword() {
           placeholder="再次输入新密码"
         />
         {confirm !== '' && confirm !== newPassword && (
-          <p className="mt-1.5 text-[11px] text-red-300">两次输入的新密码不一致</p>
+          <p aria-live="polite" className="mt-1.5 text-[11px] text-red-300">两次输入的新密码不一致</p>
         )}
 
         {error && (
-          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <div role="alert" className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {error}
           </div>
         )}
@@ -92,7 +95,7 @@ export default function ChangePassword() {
         <button
           type="button"
           onClick={logout}
-          className="mt-3 w-full text-xs text-zinc-500 hover:text-zinc-300"
+          className="mt-3 w-full text-xs text-zinc-400 hover:text-zinc-300"
         >
           退出登录
         </button>

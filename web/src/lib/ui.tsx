@@ -193,3 +193,63 @@ export function StatusDot({ kind }: { kind: 'online' | 'offline' | 'unknown' | '
       : 'bg-amber-400'
   return <span className={`inline-block h-2 w-2 rounded-full shadow ${color}`} aria-hidden />
 }
+
+// 页面级错误条:role="alert" 让读屏即时播报;可选「重试」按钮触发重新拉取
+// (避免干等 15-30s 的静默自动刷新)。列表/详情/概览的整页错误态统一用它。
+export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+    >
+      <span>{message}</span>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 rounded-md bg-red-500/20 hover:bg-red-500/30 ring-1 ring-inset ring-red-400/30 px-2.5 py-1 text-xs font-medium text-red-100"
+        >
+          重试
+        </button>
+      )}
+    </div>
+  )
+}
+
+// 骨架屏基元:脉冲占位块,纯装饰对 AT 隐藏(reduced-motion 下脉冲自动近乎静止)。
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`animate-pulse rounded bg-white/10 ${className}`} aria-hidden />
+}
+
+// 表格首载骨架:列表页表格用,替代「加载中…」纯文字,减少数据到位时的布局跳动。
+// 容器 role="status" + sr-only 文案,保留读屏的「加载中」反馈。
+export function TableSkeleton({ rows = 6, cols = 4 }: { rows?: number; cols?: number }) {
+  return (
+    <div role="status" className="p-4 space-y-3">
+      <span className="sr-only">加载中…</span>
+      {Array.from({ length: rows }).map((_, r) => (
+        <div key={r} className="flex gap-4" aria-hidden>
+          {Array.from({ length: cols }).map((_, c) => (
+            <div key={c} className="h-4 flex-1 animate-pulse rounded bg-white/10" />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// 整页首载骨架:概览/详情/设置等卡片型页面用。标题条 + 卡片网格 + 大块。
+export function PageLoading() {
+  return (
+    <div role="status" className="space-y-6">
+      <span className="sr-only">加载中…</span>
+      <Skeleton className="h-7 w-40" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-24 rounded-2xl" />
+        ))}
+      </div>
+      <Skeleton className="h-40 rounded-2xl" />
+    </div>
+  )
+}

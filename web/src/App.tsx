@@ -133,7 +133,7 @@ function ProtectedShell() {
             <div className="text-sm font-bold tracking-[0.14em] bg-gradient-to-r from-white via-accent-hi to-white bg-clip-text text-transparent">
               EMORELAY
             </div>
-            <div className="text-[11px] text-zinc-500 mt-0.5">流量转发面板</div>
+            <div className="text-[11px] text-zinc-400 mt-0.5">流量转发面板</div>
           </div>
           <button
             onClick={() => setDrawerOpen(false)}
@@ -148,7 +148,7 @@ function ProtectedShell() {
             <NavItem key={n.to} to={n.to} label={n.label} onClick={() => setDrawerOpen(false)} />
           ))}
         </nav>
-        <div className="mt-auto pt-4 border-t border-white/5 text-[11px] text-zinc-500 md:hidden">
+        <div className="mt-auto pt-4 border-t border-white/5 text-[11px] text-zinc-400 md:hidden">
           <div className="truncate">{user.username} · {user.role}</div>
         </div>
       </aside>
@@ -170,13 +170,15 @@ function ProtectedShell() {
             aria-label="打开导航"
             className="md:hidden rounded-md bg-white/5 hover:bg-white/10 px-2 py-1 text-zinc-200"
           >
-            ☰
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+              <path d="M3 6h18M3 12h18M3 18h18" />
+            </svg>
           </button>
           <CurrentRoute />
           <div className="ml-auto flex items-center gap-3 text-[12px]">
             <span className="hidden sm:inline text-zinc-400 truncate max-w-[12rem]">
               {user.username}{' '}
-              <span className="ml-1 text-[10px] uppercase text-zinc-500">{user.role}</span>
+              <span className="ml-1 text-[10px] uppercase text-zinc-400">{user.role}</span>
             </span>
             <button
               onClick={logout}
@@ -188,6 +190,9 @@ function ProtectedShell() {
         </header>
 
         <main ref={mainRef} className="flex-1 min-w-0 py-6 md:py-8 overflow-auto">
+          {/* 受保护壳层的页面级 h1(视觉隐藏):各页可见标题是 h2、分区是 h3,
+              这里补一个 h1 使无障碍层级为 h1→h2→h3,读屏「按标题导航」有顶层锚点。 */}
+          <h1 className="sr-only">EMORELAY 流量转发管理面板</h1>
           <Outlet />
         </main>
       </div>
@@ -235,7 +240,7 @@ function NavItem({ to, label, hint, onClick }: { to: string; label: string; hint
             />
           )}
           <span>{label}</span>
-          {hint && <span className="text-[10px] uppercase text-zinc-600">{hint}</span>}
+          {hint && <span className="text-[10px] uppercase text-zinc-400">{hint}</span>}
         </>
       )}
     </NavLink>

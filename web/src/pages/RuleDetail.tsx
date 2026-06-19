@@ -13,7 +13,7 @@ import { Sparkline } from '../components/Sparkline'
 import { CopyButton } from '../components/CopyButton'
 import { DiagnosePanel } from '../components/DiagnosePanel'
 import { formatHostPort } from '../lib/format-addr'
-import { StatusDot } from '../lib/ui'
+import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 interface State {
@@ -68,14 +68,12 @@ export default function RuleDetail() {
     }
   }, [ruleId, refreshTick])
 
-  if (state.loading) return <div className="text-zinc-400">加载中…</div>
+  if (state.loading) return <PageLoading />
   if (state.error)
     return (
       <div className="space-y-4">
         <Link to="/rules" className="text-xs text-zinc-400 hover:text-zinc-200">← 返回规则列表</Link>
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {state.error}
-        </div>
+        <ErrorBox message={state.error} onRetry={() => setRefreshTick((n) => n + 1)} />
       </div>
     )
   if (!state.rule || !state.stats) return null
@@ -197,12 +195,12 @@ function SeriesCard({
       <div className="space-y-2">
         {rx.length > 0 && (
           <div>
-            {rxLabel && <div className="text-[11px] text-zinc-500 mb-1">↓ {rxLabel}</div>}
+            {rxLabel && <div className="text-[11px] text-zinc-400 mb-1">↓ {rxLabel}</div>}
             <Sparkline values={rx} colorClass="stroke-accent" fillClass="fill-accent/10" formatValue={format} />
           </div>
         )}
         <div>
-          {txLabel && <div className="text-[11px] text-zinc-500 mb-1">↑ {txLabel}</div>}
+          {txLabel && <div className="text-[11px] text-zinc-400 mb-1">↑ {txLabel}</div>}
           <Sparkline values={tx} colorClass={txColor} fillClass={txFill ?? 'fill-emerald-500/10'} formatValue={format} />
         </div>
       </div>
@@ -213,7 +211,7 @@ function SeriesCard({
 function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
   if (logs.length === 0)
     return (
-      <section className="glass-card rise p-5 text-sm text-zinc-500">
+      <section className="glass-card rise p-5 text-sm text-zinc-400">
         暂无操作历史。
       </section>
     )
@@ -224,12 +222,12 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+          <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
             <tr>
-              <th className="px-4 py-2 text-left font-medium">时间</th>
-              <th className="px-4 py-2 text-left font-medium">操作</th>
-              <th className="px-4 py-2 text-left font-medium">结果</th>
-              <th className="px-4 py-2 text-left font-medium">错误</th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">时间</th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">操作</th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">结果</th>
+              <th scope="col" className="px-4 py-2 text-left font-medium">错误</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -250,7 +248,7 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
                     {l.result}
                   </span>
                 </td>
-                <td className="px-4 py-2 align-top text-[11px] text-zinc-500 max-w-[20rem] truncate">
+                <td className="px-4 py-2 align-top text-[11px] text-zinc-400 max-w-[20rem] truncate">
                   {l.error_message ?? ''}
                 </td>
               </tr>
@@ -277,7 +275,7 @@ function Row({ k, v, mono, copy }: { k: string; v: string; mono?: boolean; copy?
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-      <div className="text-[11px] text-zinc-500">{label}</div>
+      <div className="text-[11px] text-zinc-400">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
   )

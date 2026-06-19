@@ -22,7 +22,7 @@ import {
   type UpdateRuleRequest,
   type UserDetail,
 } from '../lib/api'
-import { Modal, StatusDot, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
 import { formatHostPort } from '../lib/format-addr'
@@ -363,8 +363,9 @@ export default function Rules() {
 
       <div className="flex flex-wrap gap-3 items-end">
         <div className="min-w-[160px]">
-          <label className={fieldLabelCls}>节点</label>
+          <label htmlFor="rules-f-node" className={fieldLabelCls}>节点</label>
           <select
+            id="rules-f-node"
             value={filters.node_id}
             onChange={(e) => {
               setFilters((f) => ({ ...f, node_id: e.target.value }))
@@ -381,8 +382,9 @@ export default function Rules() {
           </select>
         </div>
         <div className="min-w-[140px]">
-          <label className={fieldLabelCls}>协议</label>
+          <label htmlFor="rules-f-protocol" className={fieldLabelCls}>协议</label>
           <select
+            id="rules-f-protocol"
             value={filters.protocol}
             onChange={(e) => {
               setFilters((f) => ({ ...f, protocol: e.target.value }))
@@ -406,8 +408,9 @@ export default function Rules() {
           className="flex-1 min-w-[220px] flex items-end gap-2"
         >
           <div className="flex-1">
-            <label className={fieldLabelCls}>搜索</label>
+            <label htmlFor="rules-f-search" className={fieldLabelCls}>搜索</label>
             <input
+              id="rules-f-search"
               value={filters.search}
               onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
               placeholder="规则名 / 端口 / 目标主机"
@@ -423,17 +426,13 @@ export default function Rules() {
         </form>
       </div>
 
-      {list.error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {list.error}
-        </div>
-      )}
+      {list.error && <ErrorBox message={list.error} onRetry={() => void reload()} />}
 
       <section className="glass-card rise overflow-hidden">
         {list.loading ? (
-          <div className="p-6 text-sm text-zinc-400">加载中…</div>
+          <TableSkeleton cols={8} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500">
+          <div className="p-6 text-sm text-zinc-400">
             {filters.node_id || filters.protocol || filters.search
               ? '当前筛选条件下没有规则。'
               : !isAdmin && nodeList.length === 0 && tunnelList.length === 0
@@ -443,16 +442,16 @@ export default function Rules() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-white/[0.03]">
+              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                  {isAdmin && <th className="px-4 py-2.5 text-left font-medium">归属</th>}
-                  <th className="px-4 py-2.5 text-left font-medium">节点 / 协议</th>
-                  <th className="px-4 py-2.5 text-left font-medium">监听</th>
-                  <th className="px-4 py-2.5 text-left font-medium">目标</th>
-                  <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                  <th className="px-4 py-2.5 text-left font-medium">流量 / 连接</th>
-                  <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
+                  {isAdmin && <th scope="col" className="px-4 py-2.5 text-left font-medium">归属</th>}
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">节点 / 协议</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">监听</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">目标</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">状态</th>
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium">流量 / 连接</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -573,7 +572,7 @@ export default function Rules() {
                 {s === 'skip' ? '跳过 (skip)' : '覆盖 (overwrite)'}
               </label>
             ))}
-            {refreshing && <span className="text-zinc-500 text-xs">刷新中…</span>}
+            {refreshing && <span className="text-zinc-400 text-xs">刷新中…</span>}
           </div>
           {/* P9: 导入目标——按文件内节点名映射,或全部映射到指定节点。 */}
           <div className="flex items-center gap-2 mb-3 text-sm">
@@ -593,18 +592,18 @@ export default function Rules() {
             </select>
           </div>
           {/* 归属按用户名跨实例回填,落空场景必须显式告知。 */}
-          <p className="mb-3 text-[11px] text-zinc-500">
+          <p className="mb-3 text-[11px] text-zinc-400">
             归属按文件内用户名匹配回填（规则计入被回填用户的流量配额）；本实例不存在该用户（或老版本导出文件）时，规则归当前操作者并计入其配额。
           </p>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
               {/* sticky 表头必须近实底:Modal 底色变透明后,半透明表头滚动时会与行文字叠影。 */}
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-950 sticky top-0">
+              <thead className="text-[11px] uppercase text-zinc-400 bg-zinc-950 sticky top-0">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">#</th>
-                  <th className="px-3 py-2 text-left font-medium">规则</th>
-                  <th className="px-3 py-2 text-left font-medium">动作</th>
-                  <th className="px-3 py-2 text-left font-medium">说明</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">#</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">规则</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">动作</th>
+                  <th scope="col" className="px-3 py-2 text-left font-medium">说明</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -618,10 +617,10 @@ export default function Rules() {
                         : 'text-emerald-300'
                   return (
                     <tr key={it.index}>
-                      <td className="px-3 py-2 text-zinc-500">{it.index + 1}</td>
+                      <td className="px-3 py-2 text-zinc-400">{it.index + 1}</td>
                       <td className="px-3 py-2 text-zinc-200">
                         {src?.name ?? '—'}
-                        <span className="text-[11px] text-zinc-500 ml-1.5 font-mono">
+                        <span className="text-[11px] text-zinc-400 ml-1.5 font-mono">
                           {src
                             ? `${
                                 // 选了导入目标时显示实际落点节点,避免与文件内 node_name 误导。
@@ -701,7 +700,7 @@ function RuleRow({
         >
           {rule.name}
         </Link>
-        <div className="text-[11px] text-zinc-500 mt-0.5">ID #{rule.id}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{rule.id}</div>
         {grantRevoked && (
           <div
             className="mt-1 inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300"
@@ -718,7 +717,7 @@ function RuleRow({
       )}
       <td className="px-4 py-3 align-top text-zinc-300">
         <div>{node?.name ?? `节点 #${rule.node_id}`}</div>
-        <div className="text-[11px] text-zinc-500 mt-0.5">
+        <div className="text-[11px] text-zinc-400 mt-0.5">
           {protoLabel}
           {rule.bandwidth_mbps != null && ` · ${rule.bandwidth_mbps} Mbps`}
         </div>
@@ -747,7 +746,7 @@ function RuleRow({
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>↓ {formatBytes(rule.rx_bytes)}</div>
         <div>↑ {formatBytes(rule.tx_bytes)}</div>
-        <div className="text-[11px] text-zinc-500 mt-0.5">连接 {rule.connection_count}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">连接 {rule.connection_count}</div>
       </td>
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
         <button
@@ -1064,8 +1063,9 @@ export function RuleForm({
           </select>
         </div>
         <div>
-          <label className={fieldLabelCls}>协议 *</label>
+          <label htmlFor="rule-protocol" className={fieldLabelCls}>协议 *</label>
           <select
+            id="rule-protocol"
             value={form.protocol}
             onChange={(e) => set('protocol', e.target.value as RuleFormState['protocol'])}
             disabled={mode === 'edit'}
@@ -1102,7 +1102,7 @@ export function RuleForm({
               </option>
             ))}
           </select>
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             选择隧道后，规则将落在隧道入口节点，流量经隧道链转发至目标。
           </p>
         </div>
@@ -1132,7 +1132,7 @@ export function RuleForm({
                 </option>
               )}
           </select>
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             {mode === 'edit'
               ? '归属创建后不可修改(可删除后以新归属重建)。'
               : userList.length >= 100
@@ -1156,8 +1156,9 @@ export function RuleForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={fieldLabelCls}>监听 IP</label>
+          <label htmlFor="rule-listen-ip" className={fieldLabelCls}>监听 IP</label>
           <input
+            id="rule-listen-ip"
             value={form.listen_ip}
             onChange={(e) => set('listen_ip', e.target.value)}
             className={fieldInputCls}
@@ -1165,15 +1166,16 @@ export function RuleForm({
           />
         </div>
         <div>
-          <label className={fieldLabelCls}>
+          <label htmlFor="rule-listen-port" className={fieldLabelCls}>
             监听端口
             {selectedNode && (
-              <span className="ml-1 text-zinc-500 font-normal">
+              <span className="ml-1 text-zinc-400 font-normal">
                 {selectedNode.port_pool_min}-{selectedNode.port_pool_max}
               </span>
             )}
           </label>
           <input
+            id="rule-listen-port"
             type="number"
             min={1}
             max={65535}
@@ -1211,7 +1213,7 @@ export function RuleForm({
           />
           {form.target_host.trim() !== '' &&
             !isValidTargetHostShape(form.target_host.trim()) && (
-              <p className="text-[11px] text-red-300 mt-1">
+              <p aria-live="polite" className="text-[11px] text-red-300 mt-1">
                 不是合法 IP 或域名（如 1.2.3.4 / backend.example.com）
               </p>
             )}
@@ -1245,7 +1247,7 @@ export function RuleForm({
             className={`${fieldInputCls} font-mono`}
             placeholder={'每行一个 host:端口\n2.2.2.2:443\nbackend2.example.com:8080'}
           />
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             留空 = 单目标。主目标(上方) + 额外目标组成负载池;IPv6 用 [::1]:端口。
           </p>
           {form.extra_targets.trim() !== '' && (
@@ -1270,8 +1272,9 @@ export function RuleForm({
       {isAdmin && (
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={fieldLabelCls}>限速配置</label>
+            <label htmlFor="rule-bw" className={fieldLabelCls}>限速配置</label>
             <select
+              id="rule-bw"
               value={form.bandwidth_profile_id}
               onChange={(e) => set('bandwidth_profile_id', e.target.value)}
               className={fieldInputCls}
@@ -1283,13 +1286,14 @@ export function RuleForm({
                 </option>
               ))}
             </select>
-            <p className="text-[11px] text-zinc-500 mt-1">
+            <p className="text-[11px] text-zinc-400 mt-1">
               在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
             </p>
           </div>
           <div>
-            <label className={fieldLabelCls}>并发连接上限</label>
+            <label htmlFor="rule-maxconn" className={fieldLabelCls}>并发连接上限</label>
             <input
+              id="rule-maxconn"
               type="number"
               min={1}
               value={form.max_connections}
@@ -1297,7 +1301,7 @@ export function RuleForm({
               className={fieldInputCls}
               placeholder="留空 = 不限"
             />
-            <p className="text-[11px] text-zinc-500 mt-1">
+            <p className="text-[11px] text-zinc-400 mt-1">
               仅 TCP 生效;达到上限时新连接被直接断开。
             </p>
           </div>
@@ -1311,7 +1315,7 @@ export function RuleForm({
               />
               向上游发送 PROXY protocol v1
             </label>
-            <p className="text-[11px] text-zinc-500 mt-1">
+            <p className="text-[11px] text-zinc-400 mt-1">
               仅非隧道 TCP;让上游(如 nginx)拿到真实客户端 IP(需上游启用 proxy_protocol)。
             </p>
           </div>
@@ -1319,7 +1323,7 @@ export function RuleForm({
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           {error}
         </div>
       )}

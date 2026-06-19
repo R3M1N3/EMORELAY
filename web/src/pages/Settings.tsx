@@ -6,7 +6,7 @@ import {
   type AuditLogEntry,
   type SecurityInfo,
 } from '../lib/api'
-import { fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { ErrorBox, PageLoading, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
 import { applyAccent } from '../lib/use-theme'
 
@@ -147,13 +147,8 @@ export default function Settings() {
     setState((p) => ({ ...p, form: { ...p.form, [k]: v } }))
   }
 
-  if (state.loading) return <div className="text-zinc-400">加载中…</div>
-  if (state.loadError)
-    return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-        {state.loadError}
-      </div>
-    )
+  if (state.loading) return <PageLoading />
+  if (state.loadError) return <ErrorBox message={state.loadError} />
 
   return (
     <div className="space-y-6">
@@ -166,15 +161,16 @@ export default function Settings() {
 
       <form onSubmit={onSubmit} className="glass-card rise p-5 space-y-4 max-w-2xl">
         <div>
-          <label className={fieldLabelCls}>Agent 上报端点</label>
+          <label htmlFor="set-endpoint" className={fieldLabelCls}>Agent 上报端点</label>
           <input
+            id="set-endpoint"
             type="text"
             value={state.form.agent_control_endpoint}
             onChange={(e) => set('agent_control_endpoint', e.target.value)}
             className={fieldInputCls}
             placeholder="https://relay.example.com:50051"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             Agent 默认 gRPC 连入地址。新建节点的「安装命令」会嵌入这个值；
             生产建议用 https。留空表示未配置（节点详情页的安装命令按钮会禁用）。
             <span className="text-amber-400/90">
@@ -185,22 +181,24 @@ export default function Settings() {
         </div>
 
         <div>
-          <label className={fieldLabelCls}>保留端口 (reserved_ports)</label>
+          <label htmlFor="set-reserved" className={fieldLabelCls}>保留端口 (reserved_ports)</label>
           <textarea
+            id="set-reserved"
             value={state.form.reserved_ports}
             onChange={(e) => set('reserved_ports', e.target.value)}
             rows={2}
             className={`${fieldInputCls} font-mono text-xs`}
             placeholder="[22, 80, 443, 3306, 5432]"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             JSON 整数数组。任何规则的 listen_port 命中将被拒绝创建。
           </p>
         </div>
 
         <div>
-          <label className={fieldLabelCls}>统计保留天数 (stats_retention_days)</label>
+          <label htmlFor="set-retention" className={fieldLabelCls}>统计保留天数 (stats_retention_days)</label>
           <input
+            id="set-retention"
             type="number"
             min={1}
             value={state.form.stats_retention_days}
@@ -208,7 +206,7 @@ export default function Settings() {
             className={fieldInputCls}
             placeholder="30"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             node_stats / rule_stats 分钟桶保留天数（默认 30），超期数据由后台每小时自动清理；
             不清理审计日志。
             <span className="text-amber-400/90">
@@ -218,15 +216,16 @@ export default function Settings() {
         </div>
 
         <div>
-          <label className={fieldLabelCls}>通知 Webhook URL (notify_webhook_url)</label>
+          <label htmlFor="set-webhook" className={fieldLabelCls}>通知 Webhook URL (notify_webhook_url)</label>
           <input
+            id="set-webhook"
             type="text"
             value={state.form.notify_webhook_url}
             onChange={(e) => set('notify_webhook_url', e.target.value)}
             className={fieldInputCls}
             placeholder="https://example.com/hook（留空 = 关闭通知）"
           />
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             节点掉线/恢复、用户超额/到期时 POST JSON{' '}
             <code className="text-zinc-400">{'{event, occurred_at, data}'}</code> 到此地址。
             事件：node.offline / node.online / user.quota_exceeded / user.expired。
@@ -235,7 +234,7 @@ export default function Settings() {
         </div>
 
         <div>
-          <label className={fieldLabelCls}>全局强调色 (ui_accent_color)</label>
+          <label htmlFor="set-accent" className={fieldLabelCls}>全局强调色 (ui_accent_color)</label>
           <div className="flex items-center gap-3">
             <input
               type="color"
@@ -245,6 +244,7 @@ export default function Settings() {
               className="h-9 w-12 cursor-pointer rounded-lg border border-white/10 bg-white/[0.04] p-1"
             />
             <input
+              id="set-accent"
               type="text"
               value={state.form.ui_accent_color}
               onChange={(e) => set('ui_accent_color', e.target.value.trim())}
@@ -261,7 +261,7 @@ export default function Settings() {
               </button>
             )}
           </div>
-          <p className="text-[11px] text-zinc-500 mt-1">
+          <p className="text-[11px] text-zinc-400 mt-1">
             #rrggbb 格式。保存后全站配色（按钮/导航/背景极光）随之联动，
             所有已登录客户端最迟 30 秒内自动跟进，无需刷新。
             建议选用较亮的颜色，深色会降低暗底上的文字对比度。
@@ -269,7 +269,7 @@ export default function Settings() {
         </div>
 
         {state.saveError && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {state.saveError}
           </div>
         )}
@@ -289,24 +289,24 @@ export default function Settings() {
       <section className="glass-card rise overflow-hidden">
         <div className="px-5 py-3 border-b border-white/5">
           <h3 className="text-sm font-medium text-zinc-200">最近审计日志</h3>
-          <p className="text-[11px] text-zinc-500">最近 50 条操作记录</p>
+          <p className="text-[11px] text-zinc-400">最近 50 条操作记录</p>
         </div>
         {logs.loading ? (
           <div className="p-5 text-sm text-zinc-400">加载中…</div>
         ) : logs.error ? (
           <div className="p-5 text-sm text-red-300">{logs.error}</div>
         ) : logs.items.length === 0 ? (
-          <div className="p-5 text-sm text-zinc-500">暂无记录。</div>
+          <div className="p-5 text-sm text-zinc-400">暂无记录。</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-500 bg-zinc-900/80">
+              <thead className="text-[11px] uppercase text-zinc-400 bg-zinc-900/80">
                 <tr>
-                  <th className="px-4 py-2 text-left font-medium">时间</th>
-                  <th className="px-4 py-2 text-left font-medium">操作</th>
-                  <th className="px-4 py-2 text-left font-medium">对象</th>
-                  <th className="px-4 py-2 text-left font-medium">结果</th>
-                  <th className="px-4 py-2 text-left font-medium">详情</th>
+                  <th scope="col" className="px-4 py-2 text-left font-medium">时间</th>
+                  <th scope="col" className="px-4 py-2 text-left font-medium">操作</th>
+                  <th scope="col" className="px-4 py-2 text-left font-medium">对象</th>
+                  <th scope="col" className="px-4 py-2 text-left font-medium">结果</th>
+                  <th scope="col" className="px-4 py-2 text-left font-medium">详情</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -333,7 +333,7 @@ export default function Settings() {
                         {l.result}
                       </span>
                     </td>
-                    <td className="px-4 py-2 align-top text-[11px] text-zinc-500 max-w-[18rem] truncate">
+                    <td className="px-4 py-2 align-top text-[11px] text-zinc-400 max-w-[18rem] truncate">
                       {l.error_message ?? l.payload ?? ''}
                     </td>
                   </tr>
@@ -392,16 +392,16 @@ function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
       <h3 className="text-sm font-medium text-zinc-200 mb-3">安全状态</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
-          <div className="text-[11px] text-zinc-500">JWT 密钥</div>
+          <div className="text-[11px] text-zinc-400">JWT 密钥</div>
           <div className={`text-sm mt-0.5 ${jwtStatus.cls}`}>{jwtStatus.text}</div>
-          <div className="text-[11px] text-zinc-500 mt-0.5">
+          <div className="text-[11px] text-zinc-400 mt-0.5">
             长度 {data.jwt_secret_length} 字节 · 过期 {data.jwt_expiry_hours} 小时
           </div>
         </div>
         <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
-          <div className="text-[11px] text-zinc-500">Agent 鉴权方式</div>
+          <div className="text-[11px] text-zinc-400">Agent 鉴权方式</div>
           <div className={`text-sm mt-0.5 ${tlsStatus.cls}`}>{tlsStatus.text}</div>
-          <div className="text-[11px] text-zinc-500 mt-0.5">{tlsStatus.hint}</div>
+          <div className="text-[11px] text-zinc-400 mt-0.5">{tlsStatus.hint}</div>
         </div>
       </div>
     </section>
