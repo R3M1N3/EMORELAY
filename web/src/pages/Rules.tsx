@@ -25,6 +25,7 @@ import {
 import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
+import { DiagnosePanel } from '../components/DiagnosePanel'
 import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -55,6 +56,7 @@ export default function Rules() {
   const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
+  const [diagnosing, setDiagnosing] = useState<RuleView | null>(null)
   const [importing, setImporting] = useState<{
     items: RuleExportItem[]
     report: ImportReport
@@ -493,6 +495,7 @@ export default function Rules() {
                     onDelete={() => setConfirming(r)}
                     onToggle={() => doToggle(r)}
                     onRestart={() => doRestart(r)}
+                    onDiagnose={() => setDiagnosing(r)}
                   />
                 ))}
               </tbody>
@@ -562,6 +565,16 @@ export default function Rules() {
               {busy ? '删除中…' : '确认删除'}
             </button>
           </div>
+        </Modal>
+      )}
+
+      {diagnosing && (
+        <Modal
+          title={`链路测延时 · ${diagnosing.name}`}
+          onClose={() => setDiagnosing(null)}
+          size="md"
+        >
+          <DiagnosePanel autoRun run={() => rules.diagnose(diagnosing.id)} />
         </Modal>
       )}
 
@@ -689,6 +702,7 @@ function RuleRow({
   onDelete,
   onToggle,
   onRestart,
+  onDiagnose,
 }: {
   rule: RuleView
   node: NodeView | undefined
@@ -703,6 +717,7 @@ function RuleRow({
   onDelete: () => void
   onToggle: () => void
   onRestart: () => void
+  onDiagnose: () => void
 }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
   // 入口地址 = 节点展示地址/public_ip + 监听端口;node 缺失(已删/未授权)回落绑定地址。
@@ -767,9 +782,16 @@ function RuleRow({
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
         <button
           type="button"
+          onClick={onDiagnose}
+          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs"
+        >
+          测延时
+        </button>
+        <button
+          type="button"
           onClick={onToggle}
           disabled={acting}
-          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
+          className="ml-1.5 rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
         >
           {rule.enabled ? '禁用' : '启用'}
         </button>

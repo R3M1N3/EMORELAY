@@ -1,15 +1,22 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, type DiagnoseResponse, type SegmentResult } from '../lib/api'
 import { useToast } from '../lib/use-toast'
 
 // 逐段诊断面板:点击触发 → 对链路每段下发探测 → 渲染可达性/延迟/丢失。
 // run 由调用方注入(rules.diagnose / tunnels.diagnose),组件不关心是规则还是隧道。
-export function DiagnosePanel({ run }: { run: () => Promise<DiagnoseResponse> }) {
+export function DiagnosePanel({
+  run,
+  autoRun = false,
+}: {
+  run: () => Promise<DiagnoseResponse>
+  /** 挂载时自动探测一次(列表页弹窗用);详情页不传,沿用手动「开始诊断」。 */
+  autoRun?: boolean
+}) {
   const toast = useToast()
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<DiagnoseResponse | null>(null)
 
-  async function onRun() {
+  const onRun = useCallback(async () => {
     setLoading(true)
     try {
       setResult(await run())
@@ -18,7 +25,17 @@ export function DiagnosePanel({ run }: { run: () => Promise<DiagnoseResponse> })
     } finally {
       setLoading(false)
     }
-  }
+  }, [run, toast])
+
+  // 挂载自动探测一次:autoRanRef 守一次性,避免 Modal 父组件重渲染导致重复探测。
+  // (run 每次渲染是新闭包→onRun 变化→本 effect 重跑,但 ref 守卫确保只真正探测一次。)
+  const autoRanRef = useRef(false)
+  useEffect(() => {
+    if (autoRun && !autoRanRef.current) {
+      autoRanRef.current = true
+      void onRun()
+    }
+  }, [autoRun, onRun])
 
   return (
     <section className="glass-card rise p-5">
@@ -57,8 +74,19 @@ function quality(s: SegmentResult): { dot: string; text: string } {
   return { dot: 'bg-emerald-400', text: '通畅' }
 }
 
+// 延迟质量分级(普通 emoji,Windows 正常显示):把裸 ms 翻译成用户秒懂的好坏。
+function latencyQuality(ms: number): { emoji: string; label: string; cls: string } {
+  if (ms < 30) return { emoji: '🚀', label: '优秀', cls: 'text-emerald-300' }
+  if (ms < 50) return { emoji: '✨', label: '很好', cls: 'text-emerald-300' }
+  if (ms < 100) return { emoji: '👍', label: '良好', cls: 'text-lime-300' }
+  if (ms < 150) return { emoji: '😐', label: '一般', cls: 'text-amber-300' }
+  if (ms < 200) return { emoji: '😟', label: '较差', cls: 'text-orange-300' }
+  return { emoji: '😵', label: '很差', cls: 'text-red-300' }
+}
+
 function SegmentRow({ seg }: { seg: SegmentResult }) {
   const q = quality(seg)
+  const lq = seg.dispatched && seg.reachable ? latencyQuality(seg.avg_latency_ms) : null
   return (
     <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
       <div className="flex items-center justify-between gap-2">
@@ -70,9 +98,11 @@ function SegmentRow({ seg }: { seg: SegmentResult }) {
       </div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
         <span className="font-mono">{seg.source_node_name} → {seg.target}</span>
-        {seg.dispatched && seg.reachable && (
+        {lq && (
           <>
-            <span>延迟 {seg.avg_latency_ms.toFixed(1)} ms</span>
+            <span className={lq.cls}>
+              {lq.emoji} {lq.label} · {seg.avg_latency_ms.toFixed(1)} ms
+            </span>
             <span>丢失 {seg.loss_pct.toFixed(0)}%</span>
           </>
         )}
