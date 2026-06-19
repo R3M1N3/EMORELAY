@@ -28,6 +28,9 @@ export default function Tunnels() {
   const [showCreate, setShowCreate] = useState(false)
   const [confirming, setConfirming] = useState<TunnelView | null>(null)
   const [busy, setBusy] = useState(false)
+  // 重启是破坏性操作(瞬断隧道上所有规则转发):加确认弹窗 + 在途防连点。
+  const [restartConfirm, setRestartConfirm] = useState<TunnelView | null>(null)
+  const [restarting, setRestarting] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [nodeList, setNodeList] = useState<NodeView[]>([])
@@ -72,11 +75,15 @@ export default function Tunnels() {
   }, [page, pageSize])
 
   async function doRestart(t: TunnelView) {
+    setRestarting(true)
     try {
       await tunnels.restart(t.id)
+      setRestartConfirm(null)
       toast.success(`隧道 ${t.name} 已下发重启`)
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : '重启失败')
+    } finally {
+      setRestarting(false)
     }
   }
 
@@ -174,7 +181,7 @@ export default function Tunnels() {
                       <td className="px-4 py-3 align-top text-right">
                         <button
                           type="button"
-                          onClick={() => doRestart(t)}
+                          onClick={() => setRestartConfirm(t)}
                           className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs"
                         >
                           重启
@@ -250,6 +257,32 @@ export default function Tunnels() {
               className="rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
             >
               {busy ? '删除中…' : '确认删除'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {restartConfirm && (
+        <Modal title="重启隧道" onClose={() => !restarting && setRestartConfirm(null)} size="sm">
+          <p className="text-sm text-zinc-300">
+            重启隧道 <span className="text-white font-medium">{restartConfirm.name}</span> 会瞬断其上所有规则的转发，确认继续？
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setRestartConfirm(null)}
+              disabled={restarting}
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => doRestart(restartConfirm)}
+              disabled={restarting}
+              className="btn-accent disabled:opacity-50"
+            >
+              {restarting ? '重启中…' : '确认重启'}
             </button>
           </div>
         </Modal>
@@ -433,6 +466,7 @@ function TunnelForm({
                 type="button"
                 onClick={() => moveUp(i)}
                 disabled={i === 0}
+                aria-label={`上移第 ${i + 1} 跳`}
                 className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-40 px-2 py-1.5 text-xs"
               >
                 ↑
@@ -441,6 +475,7 @@ function TunnelForm({
                 type="button"
                 onClick={() => moveDown(i)}
                 disabled={i === chain.length - 1}
+                aria-label={`下移第 ${i + 1} 跳`}
                 className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-40 px-2 py-1.5 text-xs"
               >
                 ↓

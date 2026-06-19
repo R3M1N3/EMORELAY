@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/use-auth'
 import { ApiError } from '../lib/api'
-import { Backdrop, fieldInputCls } from '../lib/ui'
+import { Backdrop, fieldInputCls, PasswordInput } from '../lib/ui'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -63,13 +63,11 @@ export default function Login() {
         />
 
         <label className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">密码</label>
-        <input
-          type="password"
+        <PasswordInput
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
-          className={fieldInputCls}
           placeholder="••••••••"
         />
 

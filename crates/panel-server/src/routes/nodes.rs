@@ -193,15 +193,14 @@ pub async fn list(
     let offset = page.saturating_sub(1).saturating_mul(page_size);
 
     // 非 admin:只返回被授权的节点(默认拒绝),供自助建规则选节点;响应净化敏感字段。
-    // 授权节点数有限,逐个取即可,不分页(前端建规则下拉需要全部授权节点)。
+    // 不分页(前端建规则下拉需要全部授权节点),一次 IN 查询取回,替代逐条 find_by_id。
     if !auth.is_admin() {
         let ids = grant::granted_node_ids(&state.pool, auth.0.sub).await?;
-        let mut items = Vec::new();
-        for nid in &ids {
-            if let Some(n) = Node::find_by_id(&state.pool, *nid).await? {
-                items.push(NodeView::from(n).sanitize_for_user());
-            }
-        }
+        let items: Vec<NodeView> = Node::list_by_ids(&state.pool, &ids)
+            .await?
+            .into_iter()
+            .map(|n| NodeView::from(n).sanitize_for_user())
+            .collect();
         let total = items.len() as i64;
         return Ok(Json(NodeListResponse { items, total, page, page_size }));
     }

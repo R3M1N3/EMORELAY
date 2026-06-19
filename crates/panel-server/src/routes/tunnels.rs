@@ -110,26 +110,29 @@ pub async fn list(
         let c = Tunnel::count(&state.pool).await?;
         (t, c)
     } else {
+        // 一次 IN 查询取回全部授权隧道,替代逐条 find_by_id。
         let ids = grant::granted_tunnel_ids(&state.pool, auth.0.sub).await?;
-        let mut t = Vec::new();
-        for tid in &ids {
-            if let Some(tn) = Tunnel::find_by_id(&state.pool, *tid).await? {
-                t.push(tn);
-            }
-        }
+        let t = Tunnel::list_by_ids(&state.pool, &ids).await?;
         let c = t.len() as i64;
         (t, c)
     };
-    let mut items = Vec::with_capacity(tunnels.len());
-    for t in tunnels {
-        let hops = TunnelHop::list_for_tunnel(&state.pool, t.id).await?;
-        let rules_count = Tunnel::active_rule_refs(&state.pool, t.id).await?;
-        items.push(TunnelView {
-            id: t.id, name: t.name, transport: t.transport, status: t.status,
-            traffic_ratio: t.traffic_ratio, billing_mode: t.billing_mode,
-            hops_count: hops.len() as i64, rules_count, created_at: t.created_at, updated_at: t.updated_at,
-        });
-    }
+    // 批量取本页隧道的 hop 数 + 规则数(两次 IN+GROUP BY),替代逐隧道 2N 次子查询。
+    let tids: Vec<i64> = tunnels.iter().map(|t| t.id).collect();
+    let hops_count = Tunnel::hops_count_by_ids(&state.pool, &tids).await?;
+    let rules_count = Tunnel::rules_count_by_ids(&state.pool, &tids).await?;
+    let items = tunnels
+        .into_iter()
+        .map(|t| {
+            let hops = hops_count.get(&t.id).copied().unwrap_or(0);
+            let rules = rules_count.get(&t.id).copied().unwrap_or(0);
+            TunnelView {
+                id: t.id, name: t.name, transport: t.transport, status: t.status,
+                traffic_ratio: t.traffic_ratio, billing_mode: t.billing_mode,
+                hops_count: hops, rules_count: rules,
+                created_at: t.created_at, updated_at: t.updated_at,
+            }
+        })
+        .collect();
     Ok(Json(TunnelListResponse { items, total, page, page_size }))
 }
 

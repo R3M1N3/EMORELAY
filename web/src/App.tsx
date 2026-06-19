@@ -1,22 +1,25 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import Login from './pages/Login'
-import ChangePassword from './pages/ChangePassword'
 import Dashboard from './pages/Dashboard'
-import Nodes from './pages/Nodes'
-import Rules from './pages/Rules'
-import Users from './pages/Users'
-import BandwidthProfiles from './pages/BandwidthProfiles'
-import Settings from './pages/Settings'
-import RuleDetail from './pages/RuleDetail'
-import NodeDetail from './pages/NodeDetail'
-import Tunnels from './pages/Tunnels'
-import TunnelDetail from './pages/TunnelDetail'
 import { AuthProvider } from './lib/auth'
 import { useAuth } from './lib/use-auth'
 import { ToastProvider } from './lib/toast'
 import { Backdrop, ForbiddenCard } from './lib/ui'
 import { useThemeSync } from './lib/use-theme'
+
+// 路由级懒加载:首屏只下载 Login + Dashboard(未登录/登录后的两个落地页),其余按需切 chunk——
+// 尤其把 Rules/Users 两个巨型表单与 5 个 admin-only 页移出首屏,普通用户不再下载进不去的管理页。
+const ChangePassword = lazy(() => import('./pages/ChangePassword'))
+const Nodes = lazy(() => import('./pages/Nodes'))
+const Rules = lazy(() => import('./pages/Rules'))
+const Users = lazy(() => import('./pages/Users'))
+const BandwidthProfiles = lazy(() => import('./pages/BandwidthProfiles'))
+const Settings = lazy(() => import('./pages/Settings'))
+const RuleDetail = lazy(() => import('./pages/RuleDetail'))
+const NodeDetail = lazy(() => import('./pages/NodeDetail'))
+const Tunnels = lazy(() => import('./pages/Tunnels'))
+const TunnelDetail = lazy(() => import('./pages/TunnelDetail'))
 
 export default function App() {
   // 全局强调色:启动拉取 + 30s 轮询,管理员改色后所有客户端(含登录页)自动跟进。
@@ -25,27 +28,34 @@ export default function App() {
     <ToastProvider>
       <AuthProvider>
         <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/change-password" element={<ForcePasswordChangeRoute />} />
-            <Route path="/" element={<ProtectedShell />}>
-              <Route index element={<Dashboard />} />
-              <Route path="nodes" element={<AdminRoute><Nodes /></AdminRoute>} />
-              <Route path="nodes/:id" element={<AdminRoute><NodeDetail /></AdminRoute>} />
-              <Route path="rules" element={<Rules />} />
-              <Route path="rules/:id" element={<RuleDetail />} />
-              <Route path="tunnels" element={<AdminRoute><Tunnels /></AdminRoute>} />
-              <Route path="tunnels/:id" element={<AdminRoute><TunnelDetail /></AdminRoute>} />
-              <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
-              <Route path="bandwidth-profiles" element={<AdminRoute><BandwidthProfiles /></AdminRoute>} />
-              <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/change-password" element={<ForcePasswordChangeRoute />} />
+              <Route path="/" element={<ProtectedShell />}>
+                <Route index element={<Dashboard />} />
+                <Route path="nodes" element={<AdminRoute><Nodes /></AdminRoute>} />
+                <Route path="nodes/:id" element={<AdminRoute><NodeDetail /></AdminRoute>} />
+                <Route path="rules" element={<Rules />} />
+                <Route path="rules/:id" element={<RuleDetail />} />
+                <Route path="tunnels" element={<AdminRoute><Tunnels /></AdminRoute>} />
+                <Route path="tunnels/:id" element={<AdminRoute><TunnelDetail /></AdminRoute>} />
+                <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
+                <Route path="bandwidth-profiles" element={<AdminRoute><BandwidthProfiles /></AdminRoute>} />
+                <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
+              </Route>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </BrowserRouter>
       </AuthProvider>
     </ToastProvider>
   )
+}
+
+// 懒加载路由切换时的占位:落在受保护页内容区或全屏改密页,中性居中提示,避免白屏。
+function RouteFallback() {
+  return <div className="grid place-items-center py-24 text-zinc-400 text-sm">加载中…</div>
 }
 
 // 强制改密路由:仅当已登录且 mustChangePassword 时展示改密页;

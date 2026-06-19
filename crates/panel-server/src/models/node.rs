@@ -87,6 +87,22 @@ impl Node {
             .await
     }
 
+    /// 按 id 批量取节点(非 admin 授权列表用):一次 IN 查询替代逐条 find_by_id。id DESC 稳定排序。
+    pub async fn list_by_ids(pool: &SqlitePool, ids: &[i64]) -> sqlx::Result<Vec<Self>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM nodes WHERE id IN ({placeholders}) AND deleted_at IS NULL ORDER BY id DESC"
+        );
+        let mut q = sqlx::query_as::<_, Node>(&sql);
+        for id in ids {
+            q = q.bind(id);
+        }
+        q.fetch_all(pool).await
+    }
+
     /// 规则导入按 node_name 映射跨实例节点用。
     pub async fn find_by_name(pool: &SqlitePool, name: &str) -> sqlx::Result<Option<Self>> {
         let sql = format!(

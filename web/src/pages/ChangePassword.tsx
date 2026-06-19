@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useAuth } from '../lib/use-auth'
 import { useToast } from '../lib/use-toast'
 import { ApiError, auth as authApi } from '../lib/api'
-import { Backdrop, fieldInputCls } from '../lib/ui'
+import { Backdrop, PasswordInput } from '../lib/ui'
 
 // 首登强制改密页(对标 flux change-password):无侧栏布局,改成功前出不去。
 // 由 App 路由守卫保证:mustChangePassword 为 true 时全站受保护路由都跳到这里。
@@ -51,37 +51,34 @@ export default function ChangePassword() {
         </div>
 
         <label className="block text-xs font-medium text-zinc-300 mb-1.5">当前密码</label>
-        <input
-          type="password"
+        <PasswordInput
           autoComplete="current-password"
           value={oldPassword}
           onChange={(e) => setOldPassword(e.target.value)}
           required
-          className={fieldInputCls}
           placeholder="••••••••"
         />
 
         <label className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">新密码</label>
-        <input
-          type="password"
+        <PasswordInput
           autoComplete="new-password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           required
-          className={fieldInputCls}
           placeholder="至少 8 个字符"
         />
 
         <label className="block text-xs font-medium text-zinc-300 mt-4 mb-1.5">确认新密码</label>
-        <input
-          type="password"
+        <PasswordInput
           autoComplete="new-password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           required
-          className={fieldInputCls}
           placeholder="再次输入新密码"
         />
+        {confirm !== '' && confirm !== newPassword && (
+          <p className="mt-1.5 text-[11px] text-red-300">两次输入的新密码不一致</p>
+        )}
 
         {error && (
           <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">

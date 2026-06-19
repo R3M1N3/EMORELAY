@@ -1193,6 +1193,19 @@ export function RuleForm({
             required
             value={form.target_host}
             onChange={(e) => set('target_host', e.target.value)}
+            onPaste={(e) => {
+              // 粘贴形如 host:port(单冒号,非 IPv6)时自动拆到地址+端口两框,省手动二次编辑。
+              // IPv6(含 []/多冒号)与无端口纯地址一律走默认粘贴,不干预。
+              const text = e.clipboardData.getData('text').trim()
+              if (text.includes('[') || text.includes(']')) return
+              if ((text.match(/:/g) || []).length !== 1) return
+              const [host, portStr] = text.split(':')
+              const port = Number(portStr)
+              if (!host || !/^\d{1,5}$/.test(portStr) || port < 1 || port > 65535) return
+              e.preventDefault()
+              set('target_host', host)
+              set('target_port', portStr)
+            }}
             className={fieldInputCls}
             placeholder="1.2.3.4 或 backend.example.com"
           />

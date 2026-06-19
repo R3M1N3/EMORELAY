@@ -139,6 +139,8 @@ select optgroup {
 }
 .btn-accent:hover:not(:disabled) { filter: brightness(1.22); transform: translateY(-1px); }
 .btn-accent:disabled { opacity: 0.45; cursor: not-allowed; filter: saturate(0.4); }
+/* 键盘焦点环:主按钮用强调高亮色描边,确保 Tab 可见焦点(鼠标点击不触发 :focus-visible)。 */
+.btn-accent:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
 
 } /* @layer components */
 

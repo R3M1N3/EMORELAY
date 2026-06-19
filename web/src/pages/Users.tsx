@@ -12,7 +12,7 @@ import {
   type UpdateUserRequest,
   type UserDetail,
 } from '../lib/api'
-import { Modal, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { Modal, fieldInputCls, fieldLabelCls, PasswordInput } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { bytesToGbString, gbToBytes, quotaPercent, quotaTone } from '../lib/quota'
 
@@ -656,13 +656,11 @@ function UserForm({
         <label className={fieldLabelCls}>
           密码 {mode === 'create' ? '*' : <span className="text-zinc-500">(留空即不改)</span>}
         </label>
-        <input
-          type="password"
+        <PasswordInput
           value={form.password}
           onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
           required={mode === 'create'}
           minLength={mode === 'create' ? 8 : undefined}
-          className={fieldInputCls}
           placeholder={mode === 'create' ? '≥ 8 字符' : '留空不改'}
           autoComplete="new-password"
         />

@@ -156,6 +156,64 @@ impl Tunnel {
         .fetch_one(pool)
         .await
     }
+
+    /// 按 id 批量取隧道(非 admin 授权列表用):一次 IN 查询替代逐条 find_by_id。id DESC 稳定排序。
+    pub async fn list_by_ids(pool: &SqlitePool, ids: &[i64]) -> sqlx::Result<Vec<Self>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT {TUNNEL_COLS} FROM tunnels WHERE id IN ({placeholders}) AND deleted_at IS NULL ORDER BY id DESC"
+        );
+        let mut q = sqlx::query_as::<_, Self>(&sql);
+        for id in ids {
+            q = q.bind(id);
+        }
+        q.fetch_all(pool).await
+    }
+
+    /// 批量取多个隧道的 hop 数(一次 IN+GROUP BY),替代列表逐条 TunnelHop::list_for_tunnel。
+    /// 返回 tunnel_id → 数量;0 跳隧道不在 map 中,调用方 unwrap_or(0)。
+    pub async fn hops_count_by_ids(
+        pool: &SqlitePool,
+        ids: &[i64],
+    ) -> sqlx::Result<std::collections::HashMap<i64, i64>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT tunnel_id, COUNT(*) FROM tunnel_hops \
+             WHERE tunnel_id IN ({placeholders}) GROUP BY tunnel_id"
+        );
+        let mut q = sqlx::query_as::<_, (i64, i64)>(&sql);
+        for id in ids {
+            q = q.bind(id);
+        }
+        Ok(q.fetch_all(pool).await?.into_iter().collect())
+    }
+
+    /// 批量取多个隧道引用的活跃规则数(一次 IN+GROUP BY),替代列表逐条 active_rule_refs。
+    /// 返回 tunnel_id → 数量;无关联规则的隧道不在 map 中,调用方 unwrap_or(0)。
+    pub async fn rules_count_by_ids(
+        pool: &SqlitePool,
+        ids: &[i64],
+    ) -> sqlx::Result<std::collections::HashMap<i64, i64>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT tunnel_id, COUNT(*) FROM forward_rules \
+             WHERE tunnel_id IN ({placeholders}) AND deleted_at IS NULL GROUP BY tunnel_id"
+        );
+        let mut q = sqlx::query_as::<_, (i64, i64)>(&sql);
+        for id in ids {
+            q = q.bind(id);
+        }
+        Ok(q.fetch_all(pool).await?.into_iter().collect())
+    }
 }
 
 impl TunnelHop {
