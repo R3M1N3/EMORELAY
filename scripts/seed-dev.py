@@ -18,6 +18,13 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+# Windows GBK 控制台无法编码 ✅ 等非 GBK 字符(末尾 print 会抛 UnicodeEncodeError,但数据已 commit);
+# 统一把 stdout 切到 UTF-8(errors=replace 兜底,piped/重定向亦安全)。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 API = "http://localhost:8080"
 DB = Path(r"C:\Users\EMOPAO\Desktop\relay\data\emorelay.db")
 ADMIN_USER = "admin"
@@ -78,27 +85,29 @@ def main():
         "username": "bob", "password": "bob12345", "role": "user",
         "granted_node_ids": node_ids,
     }, token=admin_token)
-    alice_token = login("alice", "alice12345")
-    bob_token = login("bob", "bob12345")
-    print(f"  alice(#{alice['id']}) / bob(#{bob['id']}) created + 全节点授权 + token 拿到")
+    print(f"  alice(#{alice['id']}) / bob(#{bob['id']}) created + 全节点授权")
 
     print("=== 4. create rules ===")
-    # (node_idx, name, protocol, listen_port, target_host, target_port, owner_token)
+    # (node_idx, name, protocol, listen_port, target_host, target_port, owner_user_id)
+    # 新建用户默认 must_change_password=1,其登录 token 受限(仅 me/改密),无法建规则;
+    # 故用户归属规则统一由 admin token 带 user_id 创建(admin 不受限,且用户已授权全节点)。
     rules_def = [
-        (0, "game-jp-route",   "tcp",     20001, "game-us.example.com",   443,   admin_token),
-        (0, "voice-hk-route",  "udp",     20002, "voice-us.example.com",  8888,  admin_token),
-        (1, "alice-web-proxy", "tcp_udp", 20003, "203.0.113.45",          443,   alice_token),
-        (1, "bob-ssh-jump",    "tcp",     20004, "198.51.100.22",         22,    bob_token),
-        (2, "game-sg-route",   "tcp",     30001, "game-eu.example.com",   25565, admin_token),
-        (2, "alice-stream",    "udp",     30002, "stream-eu.example.com", 1935,  alice_token),
+        (0, "game-jp-route",   "tcp",     20001, "game-us.example.com",   443,   None),
+        (0, "voice-hk-route",  "udp",     20002, "voice-us.example.com",  8888,  None),
+        (1, "alice-web-proxy", "tcp_udp", 20003, "203.0.113.45",          443,   alice["id"]),
+        (1, "bob-ssh-jump",    "tcp",     20004, "198.51.100.22",         22,    bob["id"]),
+        (2, "game-sg-route",   "tcp",     30001, "game-eu.example.com",   25565, None),
+        (2, "alice-stream",    "udp",     30002, "stream-eu.example.com", 1935,  alice["id"]),
     ]
     rule_ids = []
-    for ni, name, proto, lp, th, tp, owner in rules_def:
+    for ni, name, proto, lp, th, tp, owner_id in rules_def:
         body = {
             "node_id": node_ids[ni], "name": name, "protocol": proto,
             "listen_port": lp, "target_host": th, "target_port": tp,
         }
-        resp = call("POST", "/api/rules", body, token=owner)
+        if owner_id is not None:
+            body["user_id"] = owner_id
+        resp = call("POST", "/api/rules", body, token=admin_token)
         rule_ids.append(resp["id"])
         print(f"  rule #{resp['id']} {name}  ({proto} {lp}→{th}:{tp})")
 
@@ -115,6 +124,9 @@ def main():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
     cur = conn.cursor()
+
+    # 新建用户默认 must_change_password=1(首登强制改密);dev 直接清掉,使 alice/bob 可登录自助页。
+    cur.execute("UPDATE users SET must_change_password=0 WHERE username IN ('alice','bob')")
 
     # nodes 表标在线 + 资源 + 累计流量
     for nid, (cpu, mem, load, rx, tx) in zip(node_ids, node_metrics):

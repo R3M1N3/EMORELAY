@@ -418,7 +418,7 @@ function SeriesCard({
   return (
     <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">{title}</h3>
-      <Sparkline values={values} colorClass={color} fillClass={fill} />
+      <Sparkline values={values} colorClass={color} fillClass={fill} label={title} />
     </section>
   )
 }

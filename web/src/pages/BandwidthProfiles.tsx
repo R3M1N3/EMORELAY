@@ -263,7 +263,7 @@ function ProfileForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form noValidate onSubmit={onSubmit} className="space-y-4">
       <div>
         <label htmlFor="bw-name" className={fieldLabelCls}>名称 *</label>
         <input

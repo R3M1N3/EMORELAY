@@ -196,12 +196,12 @@ function SeriesCard({
         {rx.length > 0 && (
           <div>
             {rxLabel && <div className="text-[11px] text-zinc-400 mb-1">↓ {rxLabel}</div>}
-            <Sparkline values={rx} colorClass="stroke-accent" fillClass="fill-accent/10" formatValue={format} />
+            <Sparkline values={rx} colorClass="stroke-accent" fillClass="fill-accent/10" formatValue={format} label={`${title} ${rxLabel}`} />
           </div>
         )}
         <div>
           {txLabel && <div className="text-[11px] text-zinc-400 mb-1">↑ {txLabel}</div>}
-          <Sparkline values={tx} colorClass={txColor} fillClass={txFill ?? 'fill-emerald-500/10'} formatValue={format} />
+          <Sparkline values={tx} colorClass={txColor} fillClass={txFill ?? 'fill-emerald-500/10'} formatValue={format} label={`${title} ${txLabel}`} />
         </div>
       </div>
     </section>

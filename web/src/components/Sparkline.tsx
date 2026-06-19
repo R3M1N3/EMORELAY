@@ -14,6 +14,8 @@ interface Props {
   emptyLabel?: string
   /** 峰值标注格式化(如 formatBytes);不传则不显示峰值。 */
   formatValue?: (n: number) => string
+  /** 无障碍标签:图本身的可访问名(配合父卡标题);不传用通用文案。 */
+  label?: string
 }
 
 export function Sparkline({
@@ -24,6 +26,7 @@ export function Sparkline({
   fillClass,
   emptyLabel = '尚无时序数据',
   formatValue,
+  label,
 }: Props) {
   if (values.length < 2) {
     return (
@@ -66,7 +69,8 @@ export function Sparkline({
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
-        aria-hidden
+        role="img"
+        aria-label={label ?? '数据时序折线图'}
         className="overflow-visible"
       >
         {areaPath && <path d={areaPath} className={`${fillClass} stroke-none`} />}

@@ -638,7 +638,7 @@ function UserForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form noValidate onSubmit={onSubmit} className="space-y-4">
       <div>
         <label htmlFor="user-username" className={fieldLabelCls}>用户名 *</label>
         <input

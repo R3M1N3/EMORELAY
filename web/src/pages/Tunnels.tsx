@@ -376,7 +376,7 @@ function TunnelForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form noValidate onSubmit={onSubmit} className="space-y-4">
       <div>
         <label htmlFor="tunnel-name" className={fieldLabelCls}>
           隧道名 *

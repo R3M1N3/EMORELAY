@@ -928,6 +928,11 @@ export function RuleForm({
     e.preventDefault()
     setError(null)
 
+    if (!form.name.trim()) {
+      setError('规则名不能为空')
+      return
+    }
+
     let listenPort: number | undefined
     if (form.listen_port.trim() !== '') {
       const parsed = parsePort(form.listen_port, '监听端口')
@@ -1037,7 +1042,7 @@ export function RuleForm({
   const selectedNode = nodeList.find((n) => String(n.id) === form.node_id)
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form noValidate onSubmit={onSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label htmlFor="rule-node" className={fieldLabelCls}>节点 *</label>

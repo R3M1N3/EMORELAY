@@ -547,6 +547,11 @@ function NodeForm({
     e.preventDefault()
     setError(null)
 
+    if (!form.name.trim()) {
+      setError('名称不能为空')
+      return
+    }
+
     const portMin = form.port_pool_min.trim() === '' ? undefined : Number(form.port_pool_min)
     const portMax = form.port_pool_max.trim() === '' ? undefined : Number(form.port_pool_max)
     if (
@@ -610,7 +615,7 @@ function NodeForm({
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form noValidate onSubmit={onSubmit} className="space-y-4">
       {mode === 'create' && !agentEndpointConfigured && (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
           尚未配置 Agent 上报端点，创建后将无法生成一键安装命令（凭据仍可手动保存）。
