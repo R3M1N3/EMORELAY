@@ -583,6 +583,8 @@ export const system = {
     api.patch<SettingsResponse>('/api/system/settings', { settings }),
   // 免鉴权:全局 UI 主题(强调色),登录页与普通用户共用。
   uiConfig: () => api.get<{ accent_color: string | null }>('/api/ui-config'),
+  // 免鉴权:面板版本号(设置页显示);后端 /api/health 返回 {status, version}。
+  health: () => api.get<{ status: string; version: string }>('/api/health'),
 }
 
 export const subscription = {
@@ -780,6 +782,49 @@ export function statusLabel(s: string): string {
     down: '中断',
   }
   return map[s] ?? s
+}
+
+// 审计日志 action 的中文别名(展示层;action 本身是写库的稳定英文标识符,不改)。
+// 未命中返回原值兜底,新增 action 不会因漏配而显示空白。
+export function actionLabel(action: string): string {
+  const map: Record<string, string> = {
+    'auth.login': '用户登录',
+    'auth.change_password': '修改密码',
+    'rule.create': '创建规则',
+    'rule.update': '更新规则',
+    'rule.delete': '删除规则',
+    'rule.enable': '启用规则',
+    'rule.disable': '禁用规则',
+    'rule.restart': '重启规则',
+    'rule.import': '导入规则',
+    'node.create': '创建节点',
+    'node.update': '更新节点',
+    'node.delete': '删除节点',
+    'node.upgrade_agent': '升级 Agent',
+    'node.credentials_revoked': '吊销节点凭据',
+    'node.mtls_credentials_issued': '签发节点凭据',
+    'node.online': '节点上线',
+    'node.offline': '节点离线',
+    'node.offline_detected': '检测到节点离线',
+    'agent.register': 'Agent 注册',
+    'user.create': '创建用户',
+    'user.update': '更新用户',
+    'user.delete': '删除用户',
+    'user.expired': '用户到期',
+    'user.expired_auto_disable_rules': '到期自动停用规则',
+    'user.quota_exceeded': '配额超限',
+    'user.quota_exceeded_auto_disable_rules': '超额自动停用规则',
+    'tunnel.create': '创建隧道',
+    'tunnel.update': '更新隧道',
+    'tunnel.delete': '删除隧道',
+    'tunnel.restart': '重启隧道',
+    'tunnel.creds_rotated': '隧道凭据轮换',
+    'bandwidth_profile.create': '创建限速档',
+    'bandwidth_profile.update': '更新限速档',
+    'bandwidth_profile.delete': '删除限速档',
+    'system.update_settings': '修改系统设置',
+  }
+  return map[action] ?? action
 }
 
 export function formatBytes(n: number): string {

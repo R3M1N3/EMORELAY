@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  actionLabel,
   formatBytes,
   nodes,
   rules,
@@ -210,8 +211,8 @@ function ErrorRow({ entry }: { entry: AuditLogEntry }) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-red-500/15 bg-red-500/5 px-3 py-2">
       <div className="min-w-0">
-        <div className="text-sm font-medium truncate text-red-200">
-          {entry.action}{' '}
+        <div className="text-sm font-medium truncate text-red-200" title={entry.action}>
+          {actionLabel(entry.action)}{' '}
           {target && <span className="ml-1 text-[11px] text-red-300/70">{target}</span>}
         </div>
         <div className="text-[11px] text-zinc-400 truncate">

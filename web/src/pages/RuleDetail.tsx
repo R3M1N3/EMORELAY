@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
+  actionLabel,
   formatBytes,
   nodes,
   rules,
@@ -253,7 +254,7 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
                 <td className="px-4 py-2 align-top text-[12px] text-zinc-400 font-mono whitespace-nowrap">
                   {shortTime(l.created_at)}
                 </td>
-                <td className="px-4 py-2 align-top text-[12px] text-zinc-200 font-mono">{l.action}</td>
+                <td className="px-4 py-2 align-top text-[12px] text-zinc-200" title={l.action}>{actionLabel(l.action)}</td>
                 <td className="px-4 py-2 align-top">
                   <span
                     className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] ${

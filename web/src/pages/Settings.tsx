@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
+  actionLabel,
   shortTime,
   system,
   type AuditLogEntry,
@@ -51,6 +52,9 @@ export default function Settings() {
     { items: [], loading: true, error: null },
   )
   const [security, setSecurity] = useState<SecurityInfo | 'loading' | 'error'>('loading')
+  const [version, setVersion] = useState<string | null>(null)
+  // 审计结果筛选:''=全部 / success / failure。失败登录(防爆破节流后)可单独筛出,不淹没正常操作。
+  const [auditResult, setAuditResult] = useState<'' | 'success' | 'failure'>('')
 
   useEffect(() => {
     let cancelled = false
@@ -63,8 +67,9 @@ export default function Settings() {
       .catch(() => {
         if (!cancelled) setSecurity('error')
       })
-    Promise.all([system.getSettings(), system.auditLogs({ page_size: 50 })])
-      .then(([s, l]) => {
+    system
+      .getSettings()
+      .then((s) => {
         if (cancelled) return
         const initial = s.settings
         setState((p) => ({
@@ -80,18 +85,44 @@ export default function Settings() {
           },
           loading: false,
         }))
-        setLogs({ items: l.items, loading: false, error: null })
       })
       .catch((e: unknown) => {
         if (cancelled) return
         const msg = e instanceof ApiError ? e.message : '加载失败'
         setState((p) => ({ ...p, loading: false, loadError: msg }))
-        setLogs({ items: [], loading: false, error: msg })
       })
+    // 面板版本号(设置页显示);失败静默不阻塞设置。
+    system
+      .health()
+      .then((h) => {
+        if (!cancelled) setVersion(h.version)
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
   }, [])
+
+  // 审计日志:随结果筛选重拉(20 条);失败登录与正常操作分离查看。
+  useEffect(() => {
+    let cancelled = false
+    system
+      .auditLogs({ page_size: 20, result: auditResult || undefined })
+      .then((l) => {
+        if (!cancelled) setLogs({ items: l.items, loading: false, error: null })
+      })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setLogs({
+            items: [],
+            loading: false,
+            error: e instanceof ApiError ? e.message : '加载失败',
+          })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [auditResult])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -154,12 +185,17 @@ export default function Settings() {
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold tracking-tight">系统设置</h2>
-        <p className="text-sm text-zinc-400 mt-1">安全状态 / 保留端口黑名单 / 全局默认配置</p>
+        <p className="text-sm text-zinc-400 mt-1">
+          安全状态 / 保留端口黑名单 / 全局默认配置
+          {version && <span className="ml-2 text-zinc-500">· 面板 v{version}</span>}
+        </p>
       </div>
 
       <SecurityCard data={security} />
 
-      <form onSubmit={onSubmit} className="glass-card rise p-5 space-y-4 max-w-2xl">
+      {/* 转发接入(表单首块)与审计日志并排:大屏左右两列,窄屏回落单列 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <form onSubmit={onSubmit} className="glass-card rise p-5 space-y-4">
         <h4 className="text-[11px] font-semibold uppercase tracking-wider text-accent/80">转发接入</h4>
         <div>
           <label htmlFor="set-endpoint" className={fieldLabelCls}>Agent 上报端点</label>
@@ -291,9 +327,21 @@ export default function Settings() {
       </form>
 
       <section className="glass-card rise overflow-hidden">
-        <div className="px-5 py-3 border-b border-white/5">
-          <h3 className="text-sm font-medium text-zinc-200">最近审计日志</h3>
-          <p className="text-[11px] text-zinc-400">最近 50 条操作记录</p>
+        <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-zinc-200">最近审计日志</h3>
+            <p className="text-[11px] text-zinc-400">最近 20 条操作记录</p>
+          </div>
+          <select
+            aria-label="按结果筛选审计日志"
+            value={auditResult}
+            onChange={(e) => setAuditResult(e.target.value as '' | 'success' | 'failure')}
+            className={`${fieldInputCls} max-w-[8rem] text-xs`}
+          >
+            <option value="">全部</option>
+            <option value="success">仅成功</option>
+            <option value="failure">仅失败</option>
+          </select>
         </div>
         {logs.loading ? (
           <div className="p-5 text-sm text-zinc-400">加载中…</div>
@@ -319,8 +367,8 @@ export default function Settings() {
                     <td className="px-4 py-2 align-top text-[12px] text-zinc-400 font-mono whitespace-nowrap">
                       {shortTime(l.created_at)}
                     </td>
-                    <td className="px-4 py-2 align-top text-[12px] text-zinc-200 font-mono">
-                      {l.action}
+                    <td className="px-4 py-2 align-top text-[12px] text-zinc-200" title={l.action}>
+                      {actionLabel(l.action)}
                     </td>
                     <td className="px-4 py-2 align-top text-[12px] text-zinc-400">
                       {l.target_type ?? '—'}
@@ -347,6 +395,7 @@ export default function Settings() {
           </div>
         )}
       </section>
+      </div>
     </div>
   )
 }
