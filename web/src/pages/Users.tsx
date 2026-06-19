@@ -12,7 +12,7 @@ import {
   type UpdateUserRequest,
   type UserDetail,
 } from '../lib/api'
-import { ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls, PasswordInput } from '../lib/ui'
+import { EmptyState, ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls, PasswordInput } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { bytesToGbString, gbToBytes, quotaPercent, quotaTone } from '../lib/quota'
 
@@ -124,9 +124,15 @@ export default function Users() {
         {list.loading ? (
           <TableSkeleton cols={9} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-400">
-            {search.trim() ? '没有匹配的用户。' : '尚无用户。'}
-          </div>
+          search.trim() ? (
+            <EmptyState title="没有匹配的用户" hint="换个用户名关键词试试。" />
+          ) : (
+            <EmptyState
+              title="尚无用户"
+              hint="创建普通用户并授权节点/隧道,他们即可自助管理自己的转发规则。"
+              action={<button type="button" onClick={() => setEditing({ mode: 'create' })} className="btn-accent">新增用户</button>}
+            />
+          )
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -285,7 +291,7 @@ function UserRow({
         <button
           type="button"
           onClick={onDelete}
-          className="ml-1.5 rounded-md bg-red-600/80 hover:bg-red-500 px-2.5 py-1 text-xs"
+          className="ml-1.5 rounded-md px-2.5 py-1 text-xs text-red-300/90 ring-1 ring-inset ring-red-500/25 hover:bg-red-500/15 hover:text-red-200"
         >
           删除
         </button>

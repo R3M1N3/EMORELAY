@@ -160,6 +160,7 @@ export default function Settings() {
       <SecurityCard data={security} />
 
       <form onSubmit={onSubmit} className="glass-card rise p-5 space-y-4 max-w-2xl">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-accent/80">转发接入</h4>
         <div>
           <label htmlFor="set-endpoint" className={fieldLabelCls}>Agent 上报端点</label>
           <input
@@ -180,6 +181,7 @@ export default function Settings() {
           </p>
         </div>
 
+        <h4 className="border-t border-white/5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-accent/80">端口与数据保留</h4>
         <div>
           <label htmlFor="set-reserved" className={fieldLabelCls}>保留端口 (reserved_ports)</label>
           <textarea
@@ -215,6 +217,7 @@ export default function Settings() {
           </p>
         </div>
 
+        <h4 className="border-t border-white/5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-accent/80">通知</h4>
         <div>
           <label htmlFor="set-webhook" className={fieldLabelCls}>通知 Webhook URL (notify_webhook_url)</label>
           <input
@@ -233,6 +236,7 @@ export default function Settings() {
           </p>
         </div>
 
+        <h4 className="border-t border-white/5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-accent/80">外观</h4>
         <div>
           <label htmlFor="set-accent" className={fieldLabelCls}>全局强调色 (ui_accent_color)</label>
           <div className="flex items-center gap-3">

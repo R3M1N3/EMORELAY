@@ -22,7 +22,7 @@ import {
   type UpdateRuleRequest,
   type UserDetail,
 } from '../lib/api'
-import { ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
 import { formatHostPort } from '../lib/format-addr'
@@ -432,13 +432,26 @@ export default function Rules() {
         {list.loading ? (
           <TableSkeleton cols={8} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-400">
-            {filters.node_id || filters.protocol || filters.search
-              ? '当前筛选条件下没有规则。'
-              : !isAdmin && nodeList.length === 0 && tunnelList.length === 0
-                ? '尚无规则。当前没有可用的节点或隧道，请联系管理员授权后再创建。'
-                : '尚无规则。点击右上角「新增规则」开始。'}
-          </div>
+          filters.node_id || filters.protocol || filters.search ? (
+            <EmptyState title="当前筛选条件下没有规则" hint="调整或清空筛选查看全部规则。" />
+          ) : !isAdmin && nodeList.length === 0 && tunnelList.length === 0 ? (
+            <EmptyState title="尚无可用资源" hint="当前没有可用的节点或隧道,请联系管理员授权后再创建规则。" />
+          ) : (
+            <EmptyState
+              title="尚无转发规则"
+              hint="创建一条 TCP/UDP 端口转发,把入口流量转到目标地址。"
+              action={
+                <button
+                  type="button"
+                  onClick={() => setEditing({ mode: 'create' })}
+                  disabled={nodeList.length === 0 && tunnelList.length === 0}
+                  className="btn-accent"
+                >
+                  新增规则
+                </button>
+              }
+            />
+          )
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -778,7 +791,7 @@ function RuleRow({
           type="button"
           onClick={onDelete}
           disabled={acting}
-          className="ml-1.5 rounded-md bg-red-600/80 hover:bg-red-500 disabled:opacity-60 px-2.5 py-1 text-xs"
+          className="ml-1.5 rounded-md px-2.5 py-1 text-xs text-red-300/90 ring-1 ring-inset ring-red-500/25 hover:bg-red-500/15 hover:text-red-200 disabled:opacity-60"
         >
           删除
         </button>

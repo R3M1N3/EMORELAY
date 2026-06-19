@@ -137,11 +137,33 @@ function AdminDashboard() {
         )}
       </section>
 
+      {data.rules.length > 0 && (
+        <section className="glass-card rise p-5">
+          <h3 className="text-sm font-medium text-zinc-200 mb-3">流量 Top 规则</h3>
+          <div className="space-y-2">
+            {[...data.rules]
+              .sort((a, b) => b.rx_bytes + b.tx_bytes - (a.rx_bytes + a.tx_bytes))
+              .slice(0, 5)
+              .map((r) => (
+                <div
+                  key={r.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm"
+                >
+                  <span className="truncate font-medium">{r.name}</span>
+                  <span className="shrink-0 text-[11px] text-zinc-400 tabular-nums">
+                    ↓{formatBytes(r.rx_bytes)} ↑{formatBytes(r.tx_bytes)}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
+
       <section className="glass-card rise p-5">
-        <h3 className="text-sm font-medium text-zinc-200 mb-3">
-          最近错误
-          <span className="ml-2 text-[11px] font-normal text-zinc-400">来自审计日志的失败操作记录</span>
-        </h3>
+        <div className="mb-3">
+          <h3 className="text-sm font-medium text-zinc-200">最近错误</h3>
+          <p className="mt-0.5 text-[11px] text-zinc-400">来自审计日志的失败操作记录</p>
+        </div>
         {recentErrors === 'loading' ? (
           <p className="text-sm text-zinc-400">加载中…</p>
         ) : recentErrors === 'unavailable' ? (

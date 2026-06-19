@@ -14,7 +14,7 @@ import {
   type NodeView,
   type UpdateNodeRequest,
 } from '../lib/api'
-import { ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -213,9 +213,15 @@ export default function Nodes() {
         {list.loading ? (
           <TableSkeleton cols={8} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-400">
-            {search.trim() ? '没有匹配的节点。' : '尚无节点。点击右上角「新增节点」开始。'}
-          </div>
+          search.trim() ? (
+            <EmptyState title="没有匹配的节点" hint="换个关键词,或清空搜索查看全部。" />
+          ) : (
+            <EmptyState
+              title="尚无节点"
+              hint="添加第一台转发节点,创建后会给出一键安装命令部署 Agent。"
+              action={<button type="button" onClick={() => setEditing({ mode: 'create' })} className="btn-accent">新增节点</button>}
+            />
+          )
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -459,7 +465,7 @@ function NodeRow({
         <button
           type="button"
           onClick={onDelete}
-          className="ml-1.5 rounded-md bg-red-600/80 hover:bg-red-500 px-2.5 py-1 text-xs"
+          className="ml-1.5 rounded-md px-2.5 py-1 text-xs text-red-300/90 ring-1 ring-inset ring-red-500/25 hover:bg-red-500/15 hover:text-red-200"
         >
           删除
         </button>

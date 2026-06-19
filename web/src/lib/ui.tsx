@@ -255,3 +255,31 @@ export function PageLoading() {
     </div>
   )
 }
+
+// 空状态:列表无数据时居中展示图标 + 文案 + 可选就地行动按钮,替代一行细灰字。
+export function EmptyState({
+  title,
+  hint,
+  action,
+}: {
+  title: string
+  hint?: string
+  action?: ReactNode
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white/[0.04] text-zinc-400 ring-1 ring-inset ring-white/10">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3 7l9-4 9 4-9 4-9-4Z" />
+          <path d="M3 7v10l9 4 9-4V7" />
+          <path d="M3 7l9 4 9-4" />
+        </svg>
+      </div>
+      <div>
+        <div className="text-sm font-medium text-zinc-200">{title}</div>
+        {hint && <p className="mx-auto mt-1 max-w-sm text-[12px] text-zinc-400">{hint}</p>}
+      </div>
+      {action && <div className="mt-1">{action}</div>}
+    </div>
+  )
+}

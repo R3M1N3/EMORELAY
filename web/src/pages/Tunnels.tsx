@@ -10,7 +10,7 @@ import {
   type NodeView,
   type TunnelView,
 } from '../lib/api'
-import { ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -130,9 +130,11 @@ export default function Tunnels() {
         {list.loading ? (
           <TableSkeleton cols={7} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-400">
-            尚无隧道。点击右上角「创建隧道」开始。
-          </div>
+          <EmptyState
+            title="尚无隧道"
+            hint="多跳隧道把流量经多个节点中继转发;至少选 2 个在线节点组链。"
+            action={<button type="button" onClick={() => setShowCreate(true)} className="btn-accent">创建隧道</button>}
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -185,7 +187,7 @@ export default function Tunnels() {
                         <button
                           type="button"
                           onClick={() => setConfirming(t)}
-                          className="ml-1.5 rounded-md bg-red-600/80 hover:bg-red-500 px-2.5 py-1 text-xs"
+                          className="ml-1.5 rounded-md px-2.5 py-1 text-xs text-red-300/90 ring-1 ring-inset ring-red-500/25 hover:bg-red-500/15 hover:text-red-200"
                         >
                           删除
                         </button>

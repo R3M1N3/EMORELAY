@@ -5,7 +5,7 @@ import {
   shortTime,
   type BandwidthProfileView,
 } from '../lib/api'
-import { ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { EmptyState, ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { useToast } from '../lib/use-toast'
 
@@ -91,7 +91,11 @@ export default function BandwidthProfiles() {
         {list.loading ? (
           <TableSkeleton cols={5} />
         ) : list.items.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-400">尚无限速配置。点击右上角「新增限速配置」。</div>
+          <EmptyState
+            title="尚无限速配置"
+            hint="创建可复用的带宽上限模板,应用到转发规则。"
+            action={<button type="button" onClick={() => setEditing({ mode: 'create' })} className="btn-accent">新增限速配置</button>}
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -131,7 +135,7 @@ export default function BandwidthProfiles() {
                       <button
                         type="button"
                         onClick={() => setConfirming(p)}
-                        className="ml-1.5 rounded-md bg-red-600/80 hover:bg-red-500 px-2.5 py-1 text-xs"
+                        className="ml-1.5 rounded-md px-2.5 py-1 text-xs text-red-300/90 ring-1 ring-inset ring-red-500/25 hover:bg-red-500/15 hover:text-red-200"
                       >
                         删除
                       </button>
