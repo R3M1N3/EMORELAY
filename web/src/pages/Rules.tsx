@@ -578,6 +578,7 @@ export default function Rules() {
           <div className="flex items-center gap-2 mb-3 text-sm">
             <span className="text-zinc-400 shrink-0">导入目标:</span>
             <select
+              aria-label="导入目标节点"
               value={importing.targetNodeId}
               disabled={refreshing}
               onChange={(e) => void rerunPreview(importing.strategy, e.target.value)}

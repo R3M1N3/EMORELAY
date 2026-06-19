@@ -71,7 +71,8 @@ select optgroup {
    与 .btn-accent 已有的 cursor:pointer 对齐,避免二级按钮(编辑/删除/分页/复制等)悬停显示箭头。 */
 @layer base {
   button:not(:disabled),
-  [role="button"]:not(:disabled) {
+  [role="button"]:not(:disabled),
+  select:not(:disabled) {
     cursor: pointer;
   }
 }

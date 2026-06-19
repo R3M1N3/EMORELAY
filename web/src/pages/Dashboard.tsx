@@ -211,6 +211,7 @@ function NodeRow({ node }: { node: NodeView }) {
     <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
       <div className="flex items-center gap-3 min-w-0">
         <span className={`inline-block h-2 w-2 rounded-full shadow ${dot}`} aria-hidden />
+        <span className="sr-only">{node.status === 'online' ? '在线' : node.status === 'offline' ? '离线' : '状态未知'}</span>
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{node.name}</div>
           <div className="text-[11px] text-zinc-400 truncate">{node.region || '—'} · {node.public_ip || '未填'}</div>

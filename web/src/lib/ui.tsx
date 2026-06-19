@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
 
 // 弹窗内可聚焦元素选择器:焦点陷阱与挂载聚焦共用。
 const FOCUSABLE_SELECTOR =
@@ -32,6 +32,7 @@ export function Modal({
   size?: 'sm' | 'md' | 'lg'
 }) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const titleId = useId()
   // onClose 存 ref(同 use-auto-refresh 惯例):keydown 调最新值,使主 effect 依赖 [] 仅在
   // 挂载/卸载各跑一次。否则调用点均传内联闭包,父组件在弹窗开启期重渲染(如删除置 busy)会令
   // effect 重挂——cleanup 把焦点甩回触发按钮、setup 再抢回容器,造成开启中夺焦/踢出输入光标。
@@ -102,11 +103,12 @@ export function Modal({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         tabIndex={-1}
         className={`relative w-full ${w} glass-card rise bg-zinc-950/85 shadow-2xl outline-none`}
       >
         <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-          <h3 className="text-sm font-medium text-zinc-100">{title}</h3>
+          <h3 id={titleId} className="text-sm font-medium text-zinc-100">{title}</h3>
           <button
             type="button"
             onClick={onClose}

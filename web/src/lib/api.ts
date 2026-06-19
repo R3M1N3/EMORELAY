@@ -43,7 +43,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 204) return undefined as T
 
   const text = await res.text()
-  const json = text ? (JSON.parse(text) as unknown) : null
+  let json: unknown = null
+  if (text) {
+    try {
+      json = JSON.parse(text)
+    } catch {
+      // 错误体可能非 JSON(extractor 拒绝 → text/plain;网关 5xx → HTML 页)。
+      // 不能让 JSON.parse 抛出盖掉真正的 HTTP 错误——失败时用原始文本兜底,保留可诊断信息。
+      if (!res.ok) {
+        if (res.status === 401) clearToken()
+        throw new ApiError(res.status, 'error', text.slice(0, 300) || res.statusText)
+      }
+      throw new ApiError(res.status, 'invalid_response', '服务器返回了无法解析的响应')
+    }
+  }
 
   if (!res.ok) {
     const err = (json as ErrorBody | null) ?? { error: 'unknown', message: res.statusText }
