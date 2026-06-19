@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
         node_events: Arc::new(tokio::sync::broadcast::channel(256).0),
         probe_waiters: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         probe_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        login_audit_throttle: Arc::new(panel_server::audit::LoginAuditThrottle::new()),
     };
 
     // P3a 存量迁移:活跃但无证书的节点(P1/P2 创建)自动签发 client cert。

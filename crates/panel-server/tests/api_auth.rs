@@ -127,3 +127,48 @@ async fn logout_is_no_op_ok() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
 }
+
+#[tokio::test]
+async fn repeated_login_failures_are_throttled_in_audit() {
+    let app = make_app().await.unwrap();
+    // 同一 IP 在 burst 额度内连发错误密码(均进 handler 返回 401)。
+    for _ in 0..5 {
+        let req = Request::post("/api/auth/login")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", "203.0.113.7")
+            .body(Body::from(
+                serde_json::to_vec(&json!({ "username": "admin", "password": "wrong" })).unwrap(),
+            ))
+            .unwrap();
+        let (status, _) = send(app.app.clone(), req).await.unwrap();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // 节流:同一 IP 同窗口内的多次失败登录应被去重为「一条」审计,防爆破刷屏。
+    let cnt: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM audit_logs \
+         WHERE action = 'auth.login' AND result = 'failure' AND actor_ip = '203.0.113.7'",
+    )
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(cnt, 1, "同一 IP 短窗口内的多次失败登录应被节流为一条审计");
+
+    // 不同 IP 独立:另一 IP 的首次失败应单独落一条。
+    let req = Request::post("/api/auth/login")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", "203.0.113.8")
+        .body(Body::from(
+            serde_json::to_vec(&json!({ "username": "admin", "password": "wrong" })).unwrap(),
+        ))
+        .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let cnt2: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM audit_logs \
+         WHERE action = 'auth.login' AND result = 'failure' AND actor_ip = '203.0.113.8'",
+    )
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(cnt2, 1, "不同 IP 各自独立记录首次失败");
+}

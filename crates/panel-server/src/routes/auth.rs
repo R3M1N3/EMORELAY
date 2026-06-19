@@ -1,5 +1,5 @@
 use crate::{
-    audit,
+    audit::{self, AuditDecision},
     auth::{
         extractor::{ActorIp, AuthUserAllowMcp},
         jwt::encode_jwt,
@@ -12,6 +12,7 @@ use crate::{
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::Instant;
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
@@ -53,6 +54,42 @@ pub struct MeView {
     pub must_change_password: bool,
 }
 
+/// 失败登录审计的统一写入口:经 per-IP 节流器去重后才落审计,防止(分布式)爆破把
+/// 审计表与「最近 N 条」视图刷满。节流不影响鉴权结果与 per-IP 登录限速层。
+///
+/// 约定:`user_id` 同时用作审计 actor_user_id 与 target_id,`username` 写入 payload;
+/// 当前三个调用方至多设其一(unknown_user 只有 username;其余只有 user_id)。
+async fn record_login_failure(
+    state: &AppState,
+    actor_ip: Option<&str>,
+    user_id: Option<i64>,
+    username: Option<&str>,
+    reason: &str,
+) {
+    let key = actor_ip.unwrap_or("<no-ip>");
+    if let AuditDecision::Record { prev_suppressed } =
+        state.login_audit_throttle.decide(key, Instant::now())
+    {
+        let msg = if prev_suppressed > 0 {
+            format!("{reason} (此前 60s 内另有 {prev_suppressed} 次失败未单独记录)")
+        } else {
+            reason.to_string()
+        };
+        audit::record_with_ip(
+            &state.pool,
+            user_id,
+            actor_ip,
+            "auth.login",
+            Some("user"),
+            user_id,
+            username,
+            false,
+            Some(&msg),
+        )
+        .await;
+    }
+}
+
 pub async fn login(
     State(state): State<AppState>,
     actor_ip: ActorIp,
@@ -67,16 +104,12 @@ pub async fn login(
             // 返回值与错误一起吞掉——dummy_hash() 由 hash_password 生成、OnceLock
             // 缓存，几乎不可能解析失败；即使失败也必须保持与真路径相同的时延。
             let _ = verify_password(&req.password, dummy_hash());
-            audit::record_with_ip(
-                &state.pool,
-                None,
+            record_login_failure(
+                &state,
                 actor_ip.as_option(),
-                "auth.login",
-                Some("user"),
                 None,
                 Some(&req.username),
-                false,
-                Some("unknown_user"),
+                "unknown_user",
             )
             .await;
             return Err(ApiError::Unauthorized);
@@ -86,16 +119,12 @@ pub async fn login(
     let ok = verify_password(&req.password, &user.password_hash)
         .map_err(ApiError::Internal)?;
     if !ok {
-        audit::record_with_ip(
-            &state.pool,
-            Some(user.id),
+        record_login_failure(
+            &state,
             actor_ip.as_option(),
-            "auth.login",
-            Some("user"),
             Some(user.id),
             None,
-            false,
-            Some("bad_password"),
+            "bad_password",
         )
         .await;
         return Err(ApiError::Unauthorized);
@@ -105,16 +134,12 @@ pub async fn login(
     if let Some(exp) = user.expires_at.as_deref() {
         let ts = crate::grpc::commands::parse_sqlite_datetime(exp);
         if ts > 0 && ts <= chrono::Utc::now().timestamp() {
-            audit::record_with_ip(
-                &state.pool,
-                Some(user.id),
+            record_login_failure(
+                &state,
                 actor_ip.as_option(),
-                "auth.login",
-                Some("user"),
                 Some(user.id),
                 None,
-                false,
-                Some("account_expired"),
+                "account_expired",
             )
             .await;
             return Err(ApiError::UnauthorizedMsg("account_expired".into()));

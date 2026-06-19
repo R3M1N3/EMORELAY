@@ -26,6 +26,9 @@ pub struct AppState {
     pub probe_waiters: Arc<Mutex<HashMap<String, oneshot::Sender<ProbeResult>>>>,
     /// probe_id 单调计数器(进程内唯一即可,配合 node_id 在 Agent 侧无歧义)。
     pub probe_seq: Arc<AtomicU64>,
+    /// 失败登录审计的进程内节流器:同 IP 短窗口内只落一条 auth.login 失败审计,
+    /// 防止(分布式)爆破把审计表与「最近 N 条」视图刷满。详见 [`crate::audit::LoginAuditThrottle`]。
+    pub login_audit_throttle: Arc<crate::audit::LoginAuditThrottle>,
 }
 
 impl AppState {
