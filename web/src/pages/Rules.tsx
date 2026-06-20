@@ -26,7 +26,7 @@ import { EmptyState, ErrorBox, Modal, StatusDot, TableSkeleton, fieldInputCls, f
 import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
 import { DiagnosePanel } from '../components/DiagnosePanel'
-import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
+import { formatHostPort, nodeEntryHost, ruleEntryDisplay } from '../lib/format-addr'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; rule: RuleView } | null
@@ -536,7 +536,7 @@ export default function Rules() {
         <Modal title="删除规则" onClose={() => !busy && setConfirming(null)} size="sm">
           <p className="text-sm text-zinc-300">
             将删除规则 <span className="text-white font-medium">{confirming.name}</span>
-            （入口 {formatHostPort(nodeEntryHost(nodesById.get(confirming.node_id)) || confirming.listen_ip, confirming.listen_port)}）。
+            （入口 {ruleEntryDisplay(nodeEntryHost(nodesById.get(confirming.node_id)), confirming.listen_port)}）。
             节点在线时对应端口将立即停止监听；若节点离线，规则将在其恢复后自动清理。
           </p>
           <p className="mt-2 text-[12px] text-amber-300/90">
@@ -723,8 +723,8 @@ function RuleRow({
   onDiagnose: () => void
 }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
-  // 入口地址 = 节点展示地址/public_ip + 监听端口;node 缺失(已删/未授权)回落绑定地址。
-  const entryHost = nodeEntryHost(node) || rule.listen_ip
+  // 入口地址 = 节点展示地址/public_ip;node 缺失(已删/未授权/超页)时为空,展示「节点不可用」而非误导的 0.0.0.0。
+  const entryHost = nodeEntryHost(node)
   return (
     <tr className={grantRevoked ? 'bg-amber-500/[0.06] hover:bg-amber-500/10' : 'hover:bg-white/[0.02]'}>
       <td className="px-4 py-3 align-top">
@@ -758,11 +758,13 @@ function RuleRow({
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
         <span className="inline-flex items-center gap-1">
-          {formatHostPort(entryHost, rule.listen_port)}
-          <CopyButton
-            value={formatHostPort(entryHost, rule.listen_port)}
-            label="复制入口地址"
-          />
+          {ruleEntryDisplay(entryHost, rule.listen_port)}
+          {entryHost && (
+            <CopyButton
+              value={formatHostPort(entryHost, rule.listen_port)}
+              label="复制入口地址"
+            />
+          )}
         </span>
         {tunnelName != null && (
           <div className="mt-0.5 text-[10px] text-sky-300/80 font-sans">隧道 {tunnelName}</div>
@@ -780,7 +782,7 @@ function RuleRow({
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>↓ {formatBytes(rule.rx_bytes)}</div>
         <div>↑ {formatBytes(rule.tx_bytes)}</div>
-        <div className="text-[11px] text-zinc-400 mt-0.5">连接 {rule.connection_count}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">累计连接 {rule.connection_count}</div>
       </td>
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
         <button

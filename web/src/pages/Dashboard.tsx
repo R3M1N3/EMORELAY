@@ -242,9 +242,16 @@ function NodeRow({ node }: { node: NodeView }) {
         </div>
       </div>
       <div className="flex items-center gap-4 text-[11px] text-zinc-400 shrink-0">
-        <span>CPU {node.cpu_usage.toFixed(1)}%</span>
-        <span>MEM {node.memory_usage.toFixed(1)}%</span>
-        <span>LOAD {node.load_average.toFixed(2)}</span>
+        {/* 离线节点资源是掉线前陈旧采样,不当现值展示。 */}
+        {node.status === 'online' ? (
+          <>
+            <span>CPU {node.cpu_usage.toFixed(1)}%</span>
+            <span>MEM {node.memory_usage.toFixed(1)}%</span>
+            <span>LOAD {node.load_average.toFixed(2)}</span>
+          </>
+        ) : (
+          <span className="text-zinc-500">离线</span>
+        )}
       </div>
     </div>
   )

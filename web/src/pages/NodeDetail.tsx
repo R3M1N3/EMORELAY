@@ -247,11 +247,16 @@ export default function NodeDetail() {
         />
 
         <section className="glass-card rise p-5">
-          <h3 className="text-sm font-medium text-zinc-200 mb-3">当前资源</h3>
+          <h3 className="text-sm font-medium text-zinc-200 mb-3">
+            当前资源
+            {node.status !== 'online' && (
+              <span className="ml-2 text-[11px] font-normal text-zinc-500">节点离线,实时资源不可用(下方累计为最后值)</span>
+            )}
+          </h3>
           <div className="grid grid-cols-3 gap-3 text-sm">
-            <Stat label="CPU" value={`${stats.current.cpu_usage.toFixed(1)}%`} />
-            <Stat label="MEM" value={`${stats.current.memory_usage.toFixed(1)}%`} />
-            <Stat label="LOAD" value={stats.current.load_average.toFixed(2)} />
+            <Stat label="CPU" value={node.status === 'online' ? `${stats.current.cpu_usage.toFixed(1)}%` : '—'} />
+            <Stat label="MEM" value={node.status === 'online' ? `${stats.current.memory_usage.toFixed(1)}%` : '—'} />
+            <Stat label="LOAD" value={node.status === 'online' ? stats.current.load_average.toFixed(2) : '—'} />
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm mt-3">
             <Stat label="累计 ↓ rx" value={formatBytes(stats.current.rx_bytes_total)} />

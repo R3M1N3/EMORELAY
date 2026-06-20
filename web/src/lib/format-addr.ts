@@ -20,3 +20,9 @@ export function nodeEntryHost(
   if (disp) return disp
   return node.public_ip?.trim() ?? ''
 }
+
+// 规则入口地址的展示串:有节点地址 → host:port;节点不可用(已删/未授权/未加载)→ 明确提示,
+// 而非回落到 listen_ip(=0.0.0.0 绑定地址)那种会误导用户的占位值。host 传 nodeEntryHost 的结果。
+export function ruleEntryDisplay(host: string, listenPort: number): string {
+  return host ? formatHostPort(host, listenPort) : `节点不可用 · 端口 ${listenPort}`
+}

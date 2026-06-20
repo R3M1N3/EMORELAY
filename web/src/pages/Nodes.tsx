@@ -455,14 +455,19 @@ function NodeRow({
         )}
       </td>
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300 min-w-[8rem]">
-        <div className="space-y-1.5">
-          <UsageGauge label="CPU" pct={node.cpu_usage} />
-          <UsageGauge label="MEM" pct={node.memory_usage} />
-          <div className="flex justify-between text-[11px] text-zinc-400">
-            <span>LOAD</span>
-            <span>{node.load_average.toFixed(2)}</span>
+        {/* 离线节点的 cpu/mem/load 是掉线前的陈旧采样(sweeper 不清零),不当现值展示。 */}
+        {node.status === 'online' ? (
+          <div className="space-y-1.5">
+            <UsageGauge label="CPU" pct={node.cpu_usage} />
+            <UsageGauge label="MEM" pct={node.memory_usage} />
+            <div className="flex justify-between text-[11px] text-zinc-400">
+              <span>LOAD</span>
+              <span>{node.load_average.toFixed(2)}</span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <span className="text-[11px] text-zinc-500">离线 · 无实时资源</span>
+        )}
       </td>
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>↓ {formatBytes(node.rx_bytes_total)}</div>

@@ -14,7 +14,7 @@ import {
 import { Stat } from './Dashboard'
 import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { CopyButton } from '../components/CopyButton'
-import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
+import { nodeEntryHost, ruleEntryDisplay } from '../lib/format-addr'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 import { useToast } from '../lib/use-toast'
 import { expiryWarning, expiryWarningKey } from '../lib/expiry-warning'
@@ -194,10 +194,7 @@ export default function UserDashboard() {
                     </Link>
                     <div className="text-[11px] text-zinc-400 truncate">
                       {r.protocol.toUpperCase()} ·{' '}
-                      {formatHostPort(
-                        nodeEntryHost(nodesById.get(r.node_id)) || r.listen_ip,
-                        r.listen_port,
-                      )}{' '}
+                      {ruleEntryDisplay(nodeEntryHost(nodesById.get(r.node_id)), r.listen_port)}{' '}
                       → {r.target_host}:{r.target_port}
                     </div>
                   </div>

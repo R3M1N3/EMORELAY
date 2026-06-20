@@ -14,7 +14,7 @@ import {
 import { Sparkline } from '../components/Sparkline'
 import { CopyButton } from '../components/CopyButton'
 import { DiagnosePanel } from '../components/DiagnosePanel'
-import { formatHostPort, nodeEntryHost } from '../lib/format-addr'
+import { formatHostPort, nodeEntryHost, ruleEntryDisplay } from '../lib/format-addr'
 import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -22,7 +22,7 @@ interface State {
   rule: RuleView | null
   stats: RuleStatsResponse | null
   logs: RuleLogEntry[]
-  /** 规则入口地址主机(节点展示地址/public_ip);null = 未取到,回落 listen_ip */
+  /** 规则入口地址主机(节点展示地址/public_ip);null = 未取到,展示「节点不可用」 */
   entryHost: string | null
   loading: boolean
   error: string | null
@@ -56,12 +56,12 @@ export default function RuleDetail() {
       ? Promise.all([rules.get(ruleId), rules.stats(ruleId), rules.logs(ruleId)]).then(
           async ([rule, stats, logs]) => {
             // 入口地址要用节点展示地址/public_ip,而非 rule.listen_ip(=0.0.0.0 绑定地址)。
-            // 单独拉节点,失败不致命(回落 listen_ip)。
+            // 单独拉节点,失败不致命(entryHost 留 null,展示「节点不可用」)。
             let entryHost: string | null = null
             try {
               entryHost = nodeEntryHost(await nodes.get(rule.node_id)) || null
             } catch {
-              /* 忽略:回落 listen_ip */
+              /* 忽略:entryHost 留 null,展示「节点不可用」 */
             }
             return { rule, stats, logs, entryHost }
           },
@@ -154,8 +154,8 @@ export default function RuleDetail() {
 
 function ConfigCard({ rule, entryHost }: { rule: RuleView; entryHost: string | null }) {
   const protoLabel = rule.protocol === 'tcp_udp' ? 'TCP+UDP' : rule.protocol.toUpperCase()
-  // 入口地址用节点展示地址/public_ip;未取到回落 listen_ip。
-  const entry = formatHostPort(entryHost ?? rule.listen_ip, rule.listen_port)
+  // 入口地址用节点展示地址/public_ip;未取到(真删/无权)显「节点不可用」而非误导的 0.0.0.0。
+  const entry = ruleEntryDisplay(entryHost ?? '', rule.listen_port)
   return (
     <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-3">配置</h3>
