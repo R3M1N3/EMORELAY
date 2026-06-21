@@ -145,6 +145,37 @@ async fn delete_tunnel_blocked_by_rule_reference() {
 }
 
 #[tokio::test]
+async fn soft_deleted_tunnel_frees_inter_port_for_recreation() {
+    // 回归:软删隧道后其 tunnel_hops 残留会永久占住 (node_id, inter_port) 唯一索引;
+    // 而端口分配查询排除软删隧道认为可复用 → 同链路重建隧道撞残留 hop 报 400。
+    let app = common::make_app().await.unwrap();
+    let nodes = seed_online_nodes(&app, 2).await;
+    // 建隧道 A,记录 exit hop 分配到的 inter_port。
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "ta", "transport": "tcp", "node_ids": nodes.clone() }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "create A: {body}");
+    let tid_a = body["id"].as_i64().unwrap();
+    let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid_a}"), &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let port_a = body["hops"][1]["inter_port"].as_i64().unwrap();
+    // 删隧道 A。
+    let req = common::auth_req(Method::DELETE, &format!("/api/tunnels/{tid_a}"), &app.admin_token, None).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "delete A: {body}");
+    // 建隧道 B(相同链路)应成功,且复用 A 释放的同一 inter_port(否则撞残留 hop 报 400)。
+    let req = common::auth_req(Method::POST, "/api/tunnels", &app.admin_token,
+        Some(json!({ "name": "tb", "transport": "tcp", "node_ids": nodes }))).unwrap();
+    let (s, body) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(s, StatusCode::OK, "recreate B after delete A must succeed (freed inter_port): {body}");
+    let tid_b = body["id"].as_i64().unwrap();
+    let req = common::auth_req(Method::GET, &format!("/api/tunnels/{tid_b}"), &app.admin_token, None).unwrap();
+    let (_, body) = common::send(app.app.clone(), req).await.unwrap();
+    let port_b = body["hops"][1]["inter_port"].as_i64().unwrap();
+    assert_eq!(port_b, port_a, "B 应复用 A 释放的同一 inter_port,证明软删确实释放了端口槽位");
+}
+
+#[tokio::test]
 async fn patch_only_name_and_requires_admin() {
     let app = common::make_app().await.unwrap();
     let nodes = seed_online_nodes(&app, 2).await;

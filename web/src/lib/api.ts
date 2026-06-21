@@ -423,6 +423,11 @@ export interface SystemOverview {
   online_nodes: number
   total_rules: number
   enabled_rules: number
+  /** 全部活跃规则当前连接数之和(权威 SUM,概览「总连接数」用) */
+  total_connections: number
+  /** 全部活跃规则转发累计流量(规则口径 SUM,概览「总转发流量」用;区别于下方节点网卡口径) */
+  rule_rx_bytes_total: number
+  rule_tx_bytes_total: number
   rx_bytes_total: number
   tx_bytes_total: number
   /** 过去 24h 规则转发流量(rule_stats 口径,区别于节点网卡流量) */

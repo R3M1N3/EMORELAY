@@ -214,3 +214,26 @@ async fn overview_includes_24h_forward_traffic() {
     assert_eq!(body["rx_bytes_24h"], 100, "{body}");
     assert_eq!(body["tx_bytes_24h"], 200, "{body}");
 }
+
+#[tokio::test]
+async fn overview_reports_total_connections() {
+    // 概览「总连接数」须用权威 SUM(connection_count),不受前端列表分页(100)封顶影响。
+    let app = make_app().await.unwrap();
+    sqlx::query("INSERT INTO nodes (name, agent_token_hash) VALUES ('cn', 'x')")
+        .execute(&app.state.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO forward_rules (user_id, node_id, name, protocol, listen_ip, listen_port, target_host, target_port, connection_count, rx_bytes, tx_bytes) \
+         VALUES (?, 1, 'r1', 'tcp', '0.0.0.0', 21010, '1.2.3.4', 443, 3, 1000, 2000), \
+                (?, 1, 'r2', 'tcp', '0.0.0.0', 21011, '1.2.3.4', 443, 5, 4000, 8000)",
+    )
+    .bind(app.admin_user_id).bind(app.admin_user_id)
+    .execute(&app.state.pool).await.unwrap();
+
+    let req = auth_req(Method::GET, "/api/system/overview", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total_connections"], 8, "{body}");
+    // 规则转发累计(规则口径,非节点网卡)权威全量,供「总转发流量」卡用。
+    assert_eq!(body["rule_rx_bytes_total"], 5000, "{body}");
+    assert_eq!(body["rule_tx_bytes_total"], 10000, "{body}");
+}

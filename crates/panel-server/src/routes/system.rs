@@ -20,6 +20,12 @@ pub struct SystemOverview {
     pub online_nodes: i64,
     pub total_rules: i64,
     pub enabled_rules: i64,
+    /// 全部活跃规则当前连接数之和(权威 SUM,前端概览「总连接数」用,避免列表分页封顶失真)。
+    pub total_connections: i64,
+    /// 全部活跃规则转发累计流量之和(SUM forward_rules.rx/tx_bytes,规则口径;前端「总转发流量」
+    /// 卡用,与节点网卡口径 rx_bytes_total 区分,避免列表分页封顶失真)。
+    pub rule_rx_bytes_total: i64,
+    pub rule_tx_bytes_total: i64,
     pub rx_bytes_total: i64,
     pub tx_bytes_total: i64,
     /// 过去 24h 规则转发流量(rule_stats 聚合)。注意与 nodes 表的网卡口径区分:
@@ -45,12 +51,14 @@ pub async fn overview(
     .fetch_one(&state.pool)
     .await?;
 
-    let (total_rules, enabled_rules): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(enabled), 0) \
-         FROM forward_rules WHERE deleted_at IS NULL",
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let (total_rules, enabled_rules, total_connections, rule_rx, rule_tx): (i64, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(SUM(enabled), 0), COALESCE(SUM(connection_count), 0), \
+                    COALESCE(SUM(rx_bytes), 0), COALESCE(SUM(tx_bytes), 0) \
+             FROM forward_rules WHERE deleted_at IS NULL",
+        )
+        .fetch_one(&state.pool)
+        .await?;
 
     let (rx_24h, tx_24h): (i64, i64) = sqlx::query_as(
         "SELECT COALESCE(SUM(rx_bytes), 0), COALESCE(SUM(tx_bytes), 0) \
@@ -64,6 +72,9 @@ pub async fn overview(
         online_nodes,
         total_rules,
         enabled_rules,
+        total_connections,
+        rule_rx_bytes_total: rule_rx,
+        rule_tx_bytes_total: rule_tx,
         rx_bytes_total: rx,
         tx_bytes_total: tx,
         rx_bytes_24h: rx_24h,

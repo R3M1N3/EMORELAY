@@ -9,6 +9,7 @@ import {
   type AuditLogEntry,
   type NodeView,
   type RuleView,
+  type SystemOverview,
   ApiError,
 } from '../lib/api'
 import { useAuth } from '../lib/use-auth'
@@ -17,7 +18,7 @@ import { RegionBadge } from '../components/RegionBadge'
 import UserDashboard from './UserDashboard'
 import { ErrorBox, PageLoading } from '../lib/ui'
 
-type Last24h = { rx: number; tx: number } | 'unavailable' | null
+type Ov = SystemOverview | 'unavailable' | null
 type RecentErrors = AuditLogEntry[] | 'loading' | 'unavailable'
 
 interface Overview {
@@ -36,7 +37,7 @@ export default function Dashboard() {
 
 function AdminDashboard() {
   const [data, setData] = useState<Overview>({ nodes: [], rules: [], loading: true, error: null })
-  const [last24h, setLast24h] = useState<Last24h>(null)
+  const [ov, setOv] = useState<Ov>(null)
   const [recentErrors, setRecentErrors] = useState<RecentErrors>('loading')
   // 30s 静默刷新:节点在线状态/流量卡片不再要求手动 F5。
   const [refreshTick, setRefreshTick] = useState(0)
@@ -53,15 +54,16 @@ function AdminDashboard() {
       .catch(() => {
         if (!cancelled) setRecentErrors('unavailable')
       })
-    // 24h 卡片改用 overview 的 rule_stats 聚合(转发流量口径),
-    // 不再逐节点拉 node_stats(那是网卡口径,曾与「总流量」卡片相差数百倍)。
+    // 概览统计卡用 overview 的权威全量(节点/规则/连接/规则转发累计 + 24h),避免
+    // nodes/rules 列表 100 行分页封顶导致规模 > 100 时少算;流量统一规则口径,不混用
+    // 节点网卡(曾相差数百倍)。失败/加载中回退本页 ≤100 列表聚合(降级不空白)。
     system
       .overview()
       .then((o) => {
-        if (!cancelled) setLast24h({ rx: o.rx_bytes_24h, tx: o.tx_bytes_24h })
+        if (!cancelled) setOv(o)
       })
       .catch(() => {
-        if (!cancelled) setLast24h('unavailable')
+        if (!cancelled) setOv('unavailable')
       })
     Promise.all([nodes.list({ page_size: 100 }), rules.list({ page_size: 100 })])
       .then(([n, r]) => {
@@ -92,24 +94,24 @@ function AdminDashboard() {
       />
     )
 
+  // overview 拉到则用其权威全量;失败/加载中回退本页 ≤100 列表聚合(降级不空白)。
+  const ov0 = ov && typeof ov === 'object' ? ov : null
   const onlineNodes = data.nodes.filter((n) => n.status === 'online').length
   const totalRx = data.rules.reduce((s, r) => s + r.rx_bytes, 0)
   const totalTx = data.rules.reduce((s, r) => s + r.tx_bytes, 0)
   const totalConn = data.rules.reduce((s, r) => s + r.connection_count, 0)
   const enabledRules = data.rules.filter((r) => r.enabled).length
 
-  const today =
-    last24h && typeof last24h === 'object'
-      ? `${formatBytes(last24h.rx + last24h.tx)}`
-      : last24h === 'unavailable'
-      ? '—'
-      : '…'
-  const todayHint =
-    last24h && typeof last24h === 'object'
-      ? `↓${formatBytes(last24h.rx)} ↑${formatBytes(last24h.tx)} · 仅规则转发字节`
-      : last24h === 'unavailable'
-      ? '暂无数据'
-      : '聚合中'
+  const today = ov0
+    ? `${formatBytes(ov0.rx_bytes_24h + ov0.tx_bytes_24h)}`
+    : ov === 'unavailable'
+    ? '—'
+    : '…'
+  const todayHint = ov0
+    ? `↓${formatBytes(ov0.rx_bytes_24h)} ↑${formatBytes(ov0.tx_bytes_24h)} · 仅规则转发字节`
+    : ov === 'unavailable'
+    ? '暂无数据'
+    : '聚合中'
 
   return (
     <div className="space-y-6">
@@ -119,10 +121,10 @@ function AdminDashboard() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <Stat label="总节点数" value={data.nodes.length} hint={`${onlineNodes} 在线`} accent="indigo" />
-        <Stat label="转发规则" value={data.rules.length} hint={`${enabledRules} 启用`} accent="violet" />
-        <Stat label="总连接数" value={totalConn} hint="累计" accent="emerald" />
-        <Stat label="总转发流量" value={formatBytes(totalRx + totalTx)} hint={`规则转发累计 ↓${formatBytes(totalRx)} ↑${formatBytes(totalTx)}`} accent="amber" />
+        <Stat label="总节点数" value={ov0 ? ov0.total_nodes : data.nodes.length} hint={`${ov0 ? ov0.online_nodes : onlineNodes} 在线`} accent="indigo" />
+        <Stat label="转发规则" value={ov0 ? ov0.total_rules : data.rules.length} hint={`${ov0 ? ov0.enabled_rules : enabledRules} 启用`} accent="violet" />
+        <Stat label="总连接数" value={ov0 ? ov0.total_connections : totalConn} hint="累计" accent="emerald" />
+        <Stat label="总转发流量" value={formatBytes(ov0 ? ov0.rule_rx_bytes_total + ov0.rule_tx_bytes_total : totalRx + totalTx)} hint={`规则转发累计 ↓${formatBytes(ov0 ? ov0.rule_rx_bytes_total : totalRx)} ↑${formatBytes(ov0 ? ov0.rule_tx_bytes_total : totalTx)}`} accent="amber" />
         <Stat label="24h 转发流量" value={today} hint={todayHint} accent="sky" />
       </div>
 

@@ -103,13 +103,24 @@ impl Tunnel {
     }
 
     pub async fn soft_delete(pool: &SqlitePool, id: i64) -> sqlx::Result<u64> {
+        let mut tx = pool.begin().await?;
         let res = sqlx::query(
             "UPDATE tunnels SET deleted_at = datetime('now'), updated_at = datetime('now') \
              WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        // tunnel_hops 无 deleted_at 列,残留行会让 idx_tunnel_hops_node_inter_port 永久占住
+        // (node_id, inter_port);而端口分配查询排除软删隧道认为可复用 → 同端口重建隧道撞
+        // 唯一索引报 400。隧道已软删,hop 拓扑无独立保留价值,故同事务物理删除释放端口槽位。
+        if res.rows_affected() > 0 {
+            sqlx::query("DELETE FROM tunnel_hops WHERE tunnel_id = ?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(res.rows_affected())
     }
 
