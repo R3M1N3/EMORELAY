@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   ApiError,
   actionLabel,
@@ -7,7 +7,7 @@ import {
   type AuditLogEntry,
   type SecurityInfo,
 } from '../lib/api'
-import { ErrorBox, PageLoading, fieldInputCls, fieldLabelCls } from '../lib/ui'
+import { ErrorBox, PageLoading, TableSkeleton, fieldInputCls, fieldLabelCls } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
 import { applyAccent } from '../lib/use-theme'
 
@@ -104,25 +104,23 @@ export default function Settings() {
   }, [])
 
   // 审计日志:随结果筛选重拉(20 条);失败登录与正常操作分离查看。
-  useEffect(() => {
-    let cancelled = false
+  // 抽成 loadLogs 供错误态「重试」复用(与全站列表错误态一致)。
+  const loadLogs = useCallback(() => {
     system
       .auditLogs({ page_size: 20, result: auditResult || undefined })
-      .then((l) => {
-        if (!cancelled) setLogs({ items: l.items, loading: false, error: null })
-      })
-      .catch((e: unknown) => {
-        if (!cancelled)
-          setLogs({
-            items: [],
-            loading: false,
-            error: e instanceof ApiError ? e.message : '加载失败',
-          })
-      })
-    return () => {
-      cancelled = true
-    }
+      .then((l) => setLogs({ items: l.items, loading: false, error: null }))
+      .catch((e: unknown) =>
+        setLogs({
+          items: [],
+          loading: false,
+          error: e instanceof ApiError ? e.message : '加载失败',
+        }),
+      )
   }, [auditResult])
+
+  useEffect(() => {
+    loadLogs()
+  }, [loadLogs])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -344,9 +342,17 @@ export default function Settings() {
           </select>
         </div>
         {logs.loading ? (
-          <div className="p-5 text-sm text-zinc-400">加载中…</div>
+          <TableSkeleton rows={5} cols={5} />
         ) : logs.error ? (
-          <div className="p-5 text-sm text-red-300">{logs.error}</div>
+          <div className="p-4">
+            <ErrorBox
+              message={logs.error}
+              onRetry={() => {
+                setLogs((s) => ({ ...s, loading: true, error: null }))
+                loadLogs()
+              }}
+            />
+          </div>
         ) : logs.items.length === 0 ? (
           <div className="p-5 text-sm text-zinc-400">暂无记录。</div>
         ) : (

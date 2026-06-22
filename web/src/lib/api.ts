@@ -13,6 +13,17 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
+// 401(token 过期 / 被吊销 / 另端登出):清 token 并广播全局信号。api 层无 React 上下文,
+// 用 window 事件;AuthProvider 监听后登出 + 提示 + 路由守卫跳登录,修复「会话中途失效却
+// 静默卡在受保护页报奇怪错误」。登录页自身的 401(用户名/密码错)由监听端按「当前有无会话」
+// 过滤,不会误报。
+function notifyUnauthorized(): void {
+  clearToken()
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('emorelay:unauthorized'))
+  }
+}
+
 export class ApiError extends Error {
   status: number
   code: string
@@ -51,7 +62,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       // 错误体可能非 JSON(extractor 拒绝 → text/plain;网关 5xx → HTML 页)。
       // 不能让 JSON.parse 抛出盖掉真正的 HTTP 错误——失败时用原始文本兜底,保留可诊断信息。
       if (!res.ok) {
-        if (res.status === 401) clearToken()
+        if (res.status === 401) notifyUnauthorized()
         throw new ApiError(res.status, 'error', text.slice(0, 300) || res.statusText)
       }
       throw new ApiError(res.status, 'invalid_response', '服务器返回了无法解析的响应')
@@ -60,7 +71,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     const err = (json as ErrorBody | null) ?? { error: 'unknown', message: res.statusText }
-    if (res.status === 401) clearToken()
+    if (res.status === 401) notifyUnauthorized()
     throw new ApiError(res.status, err.error, err.message)
   }
   return json as T
@@ -622,13 +633,25 @@ export function renderInstallCommand(opts: {
 }
 
 export const rules = {
-  list: (q: { page?: number; page_size?: number; node_id?: number; protocol?: string; search?: string } = {}) => {
+  list: (
+    q: {
+      page?: number
+      page_size?: number
+      node_id?: number
+      protocol?: string
+      search?: string
+      user_id?: number
+      enabled?: boolean
+    } = {},
+  ) => {
     const sp = new URLSearchParams()
     if (q.page) sp.set('page', String(q.page))
     if (q.page_size) sp.set('page_size', String(q.page_size))
     if (q.node_id) sp.set('node_id', String(q.node_id))
     if (q.protocol) sp.set('protocol', q.protocol)
     if (q.search) sp.set('search', q.search)
+    if (q.user_id) sp.set('user_id', String(q.user_id))
+    if (q.enabled !== undefined) sp.set('enabled', String(q.enabled))
     return api.get<RuleListResponse>(`/api/rules?${sp.toString()}`)
   },
   get: (id: number) => api.get<RuleView>(`/api/rules/${id}`),
@@ -653,7 +676,7 @@ export const rules = {
     })
     if (!res.ok) {
       const err = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
-      if (res.status === 401) clearToken()
+      if (res.status === 401) notifyUnauthorized()
       throw new ApiError(res.status, err?.error ?? 'unknown', err?.message ?? res.statusText)
     }
     const blob = await res.blob()
@@ -842,4 +865,9 @@ export function formatBytes(n: number): string {
     i++
   }
   return `${v.toFixed(2)} ${units[i]}`
+}
+
+// 计数类大数字千分位分隔(连接数等):「18048 → 18,048」,提升可读性。字节量走 formatBytes。
+export function formatCount(n: number): string {
+  return n.toLocaleString('en-US')
 }

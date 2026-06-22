@@ -75,6 +75,17 @@ select optgroup {
   select:not(:disabled) {
     cursor: pointer;
   }
+  /* 键盘焦点环全局兜底:此前仅 .btn-accent 有 :focus-visible,二级按钮(规则行操作/复制/
+     分页/登出/导出等)Tab 上去无可见焦点(WCAG 2.4.7 Focus Visible 不达标)。统一用强调
+     高亮描边,鼠标点击不触发(:focus-visible 仅键盘聚焦)。input/select 另有 focus ring 不受影响。 */
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  a:focus-visible,
+  select:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid var(--accent-hi);
+    outline-offset: 2px;
+  }
 }
 
 /* 自定义类必须进 @layer components:未分层声明会压过 Tailwind 分层工具类

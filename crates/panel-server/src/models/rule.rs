@@ -63,6 +63,8 @@ impl Rule {
         protocol: Option<&str>,
         search: Option<&str>,
         restrict_user_id: Option<i64>,
+        user_id: Option<i64>,
+        enabled: Option<bool>,
     ) -> sqlx::Result<Vec<Self>> {
         let order = if order_desc { "DESC" } else { "ASC" };
         let mut where_parts = vec!["deleted_at IS NULL".to_string()];
@@ -79,6 +81,12 @@ impl Rule {
         }
         if restrict_user_id.is_some() {
             where_parts.push("user_id = ?".into());
+        }
+        if user_id.is_some() {
+            where_parts.push("user_id = ?".into());
+        }
+        if enabled.is_some() {
+            where_parts.push("enabled = ?".into());
         }
         let sql = format!(
             "SELECT {RULE_COLUMNS} FROM forward_rules WHERE {} ORDER BY {sort_field} {order} LIMIT ? OFFSET ?",
@@ -99,6 +107,12 @@ impl Rule {
         if let Some(uid) = restrict_user_id {
             q = q.bind(uid);
         }
+        if let Some(uid) = user_id {
+            q = q.bind(uid);
+        }
+        if let Some(en) = enabled {
+            q = q.bind(en);
+        }
         q.bind(limit).bind(offset).fetch_all(pool).await
     }
 
@@ -108,6 +122,8 @@ impl Rule {
         protocol: Option<&str>,
         search: Option<&str>,
         restrict_user_id: Option<i64>,
+        user_id: Option<i64>,
+        enabled: Option<bool>,
     ) -> sqlx::Result<i64> {
         let mut where_parts = vec!["deleted_at IS NULL".to_string()];
         if node_id.is_some() {
@@ -123,6 +139,12 @@ impl Rule {
         }
         if restrict_user_id.is_some() {
             where_parts.push("user_id = ?".into());
+        }
+        if user_id.is_some() {
+            where_parts.push("user_id = ?".into());
+        }
+        if enabled.is_some() {
+            where_parts.push("enabled = ?".into());
         }
         let sql = format!(
             "SELECT COUNT(*) FROM forward_rules WHERE {}",
@@ -142,6 +164,12 @@ impl Rule {
         }
         if let Some(uid) = restrict_user_id {
             q = q.bind(uid);
+        }
+        if let Some(uid) = user_id {
+            q = q.bind(uid);
+        }
+        if let Some(en) = enabled {
+            q = q.bind(en);
         }
         q.fetch_one(pool).await
     }

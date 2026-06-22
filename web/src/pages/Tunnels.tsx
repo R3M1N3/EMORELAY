@@ -165,7 +165,7 @@ export default function Tunnels() {
                       <td className="px-4 py-3 align-top text-zinc-300 uppercase text-xs">
                         {t.transport}
                       </td>
-                      <td className="px-4 py-3 align-top">
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5 text-xs text-zinc-300">
                           <StatusDot kind={tunnelStatusKind(t.status)} />
                           {statusLabel(t.status)}

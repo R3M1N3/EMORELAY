@@ -61,7 +61,7 @@ describe('AdminDashboard 概览统计卡', () => {
     // 否则规模 > 100 时严重少算。
     expect(await screen.findByText('150')).toBeInTheDocument() // 总节点数
     expect(screen.getByText('300')).toBeInTheDocument() // 转发规则
-    expect(screen.getByText('4242')).toBeInTheDocument() // 总连接数
+    expect(screen.getByText('4,242')).toBeInTheDocument() // 总连接数(formatCount 千分位)
     expect(screen.getByText('120 在线')).toBeInTheDocument() // 在线数 hint
     expect(screen.getByText('280 启用')).toBeInTheDocument() // 启用数 hint
     // 总转发流量用规则口径权威累计(5e9+3e9),而非 list reduce 的 2 B。

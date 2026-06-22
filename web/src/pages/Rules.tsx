@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useToast } from '../lib/use-toast'
 import { useAuth } from '../lib/use-auth'
 import {
   ApiError,
   bandwidthProfiles,
   formatBytes,
+  formatCount,
   nodes,
   rules,
   tunnels,
@@ -35,6 +36,8 @@ interface Filters {
   node_id: string
   protocol: string
   search: string
+  user_id: string
+  enabled: string
 }
 
 interface ListState {
@@ -53,7 +56,15 @@ export default function Rules() {
   const [profileList, setProfileList] = useState<BandwidthProfileView[]>([])
   const [tunnelList, setTunnelList] = useState<TunnelView[]>([])
   const [userList, setUserList] = useState<UserDetail[]>([])
-  const [filters, setFilters] = useState<Filters>({ node_id: '', protocol: '', search: '' })
+  const [searchParams] = useSearchParams()
+  // 支持从 URL query 预填筛选:用户行/节点详情/隧道详情「查看规则」跳转 → /rules?user_id=2 / ?node_id=3。
+  const [filters, setFilters] = useState<Filters>(() => ({
+    node_id: searchParams.get('node_id') ?? '',
+    protocol: searchParams.get('protocol') ?? '',
+    search: searchParams.get('search') ?? '',
+    user_id: searchParams.get('user_id') ?? '',
+    enabled: searchParams.get('enabled') ?? '',
+  }))
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<RuleView | null>(null)
   const [diagnosing, setDiagnosing] = useState<RuleView | null>(null)
@@ -87,6 +98,8 @@ export default function Rules() {
         node_id: filters.node_id ? Number(filters.node_id) : undefined,
         protocol: filters.protocol || undefined,
         search: filters.search.trim() || undefined,
+        user_id: filters.user_id ? Number(filters.user_id) : undefined,
+        enabled: filters.enabled ? filters.enabled === 'true' : undefined,
       })
       setList({ items: r.items, total: r.total, loading: false, error: null })
     } catch (e) {
@@ -178,6 +191,8 @@ export default function Rules() {
         node_id: filters.node_id ? Number(filters.node_id) : undefined,
         protocol: filters.protocol || undefined,
         search: filters.search.trim() || undefined,
+        user_id: filters.user_id ? Number(filters.user_id) : undefined,
+        enabled: filters.enabled ? filters.enabled === 'true' : undefined,
       })
       .then((r) => {
         if (!cancelled) setList({ items: r.items, total: r.total, loading: false, error: null })
@@ -192,7 +207,7 @@ export default function Rules() {
     }
     // search 不进 deps —— 输入框打字不触发请求；用户点「搜索」按钮显式 reload。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.node_id, filters.protocol, page, pageSize])
+  }, [filters.node_id, filters.protocol, filters.user_id, filters.enabled, page, pageSize])
 
   async function doDelete(rule: RuleView) {
     setBusy(true)
@@ -392,6 +407,43 @@ export default function Rules() {
             <option value="tcp_udp">TCP+UDP</option>
           </select>
         </div>
+        <div className="min-w-[120px]">
+          <label htmlFor="rules-f-status" className={fieldLabelCls}>状态</label>
+          <select
+            id="rules-f-status"
+            value={filters.enabled}
+            onChange={(e) => {
+              setFilters((f) => ({ ...f, enabled: e.target.value }))
+              setPage(1)
+            }}
+            className={fieldInputCls}
+          >
+            <option value="">全部</option>
+            <option value="true">启用</option>
+            <option value="false">禁用</option>
+          </select>
+        </div>
+        {isAdmin && (
+          <div className="min-w-[150px]">
+            <label htmlFor="rules-f-user" className={fieldLabelCls}>归属用户</label>
+            <select
+              id="rules-f-user"
+              value={filters.user_id}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, user_id: e.target.value }))
+                setPage(1)
+              }}
+              className={fieldInputCls}
+            >
+              <option value="">全部</option>
+              {userList.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.username}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -540,7 +592,7 @@ export default function Rules() {
             节点在线时对应端口将立即停止监听；若节点离线，规则将在其恢复后自动清理。
           </p>
           <p className="mt-2 text-[12px] text-amber-300/90">
-            将一并清除该规则累计统计：↓{formatBytes(confirming.rx_bytes)} ↑{formatBytes(confirming.tx_bytes)} · 连接 {confirming.connection_count}
+            将一并清除该规则累计统计：↓{formatBytes(confirming.rx_bytes)} ↑{formatBytes(confirming.tx_bytes)} · 连接 {formatCount(confirming.connection_count)}
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button
@@ -749,7 +801,7 @@ function RuleRow({
           {rule.user_name ?? '—'}
         </td>
       )}
-      <td className="px-4 py-3 align-top text-zinc-300">
+      <td className="px-4 py-3 align-top text-zinc-300 whitespace-nowrap">
         <div>{node?.name ?? `节点 #${rule.node_id}`}</div>
         <div className="text-[11px] text-zinc-400 mt-0.5">
           {protoLabel}
@@ -772,8 +824,13 @@ function RuleRow({
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
         {rule.target_host}:{rule.target_port}
+        {rule.extra_targets.length > 0 && (
+          <div className="text-[10px] text-amber-300/80 font-sans mt-0.5">
+            +{rule.extra_targets.length} 个目标负载
+          </div>
+        )}
       </td>
-      <td className="px-4 py-3 align-top">
+      <td className="px-4 py-3 align-top whitespace-nowrap">
         <span className="inline-flex items-center gap-1.5 text-xs text-zinc-300">
           <StatusDot kind={rule.enabled ? 'on' : 'off'} />
           {rule.enabled ? '启用' : '禁用'}
@@ -782,7 +839,7 @@ function RuleRow({
       <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
         <div>↓ {formatBytes(rule.rx_bytes)}</div>
         <div>↑ {formatBytes(rule.tx_bytes)}</div>
-        <div className="text-[11px] text-zinc-400 mt-0.5">累计连接 {rule.connection_count}</div>
+        <div className="text-[11px] text-zinc-400 mt-0.5">累计连接 {formatCount(rule.connection_count)}</div>
       </td>
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
         <button

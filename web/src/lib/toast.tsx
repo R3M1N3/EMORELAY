@@ -47,23 +47,28 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [push],
   )
 
+  const renderToast = (it: ToastItem) => (
+    <div
+      key={it.id}
+      className={`rounded-lg border px-3 py-2 text-sm backdrop-blur shadow-lg
+        animate-[slide-in_0.18s_ease-out] ${kindCls(it.kind)}`}
+    >
+      {it.message}
+    </div>
+  )
+
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div
-        className="fixed top-3 right-3 z-50 flex flex-col gap-2 max-w-sm"
-        role="status"
-        aria-live="polite"
-      >
-        {items.map((it) => (
-          <div
-            key={it.id}
-            className={`rounded-lg border px-3 py-2 text-sm backdrop-blur shadow-lg
-              animate-[slide-in_0.18s_ease-out] ${kindCls(it.kind)}`}
-          >
-            {it.message}
-          </div>
-        ))}
+      <div className="fixed top-3 right-3 z-50 flex flex-col gap-2 max-w-sm">
+        {/* 错误用 assertive 抢播：删除/重启等破坏性操作失败需即时知晓,不被 polite 队列延迟或吞掉;
+            成功/信息保持 polite 不打扰。拆两个 live region 实现分级(WCAG / 读屏可靠性)。 */}
+        <div role="alert" aria-live="assertive" className="flex flex-col gap-2 empty:hidden">
+          {items.filter((it) => it.kind === 'error').map(renderToast)}
+        </div>
+        <div role="status" aria-live="polite" className="flex flex-col gap-2 empty:hidden">
+          {items.filter((it) => it.kind !== 'error').map(renderToast)}
+        </div>
       </div>
     </ToastContext.Provider>
   )

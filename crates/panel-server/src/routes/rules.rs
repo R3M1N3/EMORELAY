@@ -103,6 +103,8 @@ pub struct ListQuery {
     pub node_id: Option<i64>,
     pub protocol: Option<String>,
     pub search: Option<String>,
+    pub user_id: Option<i64>,
+    pub enabled: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -288,6 +290,8 @@ pub async fn list(
         q.protocol.as_deref(),
         q.search.as_deref(),
         restrict_user_id,
+        q.user_id,
+        q.enabled,
     )
     .await?;
     let total = Rule::count_filtered(
@@ -296,6 +300,8 @@ pub async fn list(
         q.protocol.as_deref(),
         q.search.as_deref(),
         restrict_user_id,
+        q.user_id,
+        q.enabled,
     )
     .await?;
 

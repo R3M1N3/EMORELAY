@@ -4,6 +4,7 @@ import {
   ApiError,
   actionLabel,
   formatBytes,
+  formatCount,
   nodes,
   rules,
   shortTime,
@@ -165,6 +166,16 @@ function ConfigCard({ rule, entryHost }: { rule: RuleView; entryHost: string | n
         <Row k="目标" v={formatHostPort(rule.target_host, rule.target_port)} mono />
         <Row k="隧道" v={rule.tunnel_id != null ? `隧道 #${rule.tunnel_id}（流量经隧道链转发）` : '直连'} />
         <Row k="限速" v={rule.bandwidth_mbps != null ? `${rule.bandwidth_mbps} Mbps` : '不限'} />
+        <Row k="并发上限" v={rule.max_connections != null ? `${formatCount(rule.max_connections)} 连接` : '不限'} />
+        {rule.send_proxy_protocol && <Row k="PROXY" v="已开启 (v1，透传真实客户端 IP)" />}
+        {rule.extra_targets.length > 0 && (
+          <Row
+            k="额外目标"
+            v={`${rule.extra_targets.length} 个 · ${
+              { fifo: '主备故障转移', round: '轮询', rand: '随机', hash: 'IP 哈希' }[rule.lb_strategy]
+            }`}
+          />
+        )}
         <Row k="归属" v={rule.user_name ?? `用户 #${rule.user_id}`} />
         <Row k="创建" v={shortTime(rule.created_at)} />
         <Row k="更新" v={shortTime(rule.updated_at)} />
@@ -181,7 +192,7 @@ function TrafficCard({ stats }: { stats: RuleStatsResponse }) {
       <div className="grid grid-cols-3 gap-3 text-sm">
         <Stat label="下行 (rx)" value={formatBytes(current.rx_bytes)} />
         <Stat label="上行 (tx)" value={formatBytes(current.tx_bytes)} />
-        <Stat label="连接" value={current.connection_count.toString()} />
+        <Stat label="连接" value={formatCount(current.connection_count)} />
       </div>
     </section>
   )

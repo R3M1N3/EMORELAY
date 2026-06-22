@@ -10,7 +10,7 @@ import {
   type GrantedUser,
   type TunnelDetailView,
 } from '../lib/api'
-import { ErrorBox, PageLoading, StatusDot } from '../lib/ui'
+import { ErrorBox, Modal, PageLoading, StatusDot } from '../lib/ui'
 import { DiagnosePanel } from '../components/DiagnosePanel'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -46,6 +46,10 @@ export default function TunnelDetail() {
     error: null,
   })
   const [restarting, setRestarting] = useState(false)
+  // 重启是破坏性操作(瞬断隧道上所有规则转发):与列表页一致,加二次确认弹窗。
+  const [restartConfirm, setRestartConfirm] = useState(false)
+  // 导出走一次 fetch+blob,规则量大/网络慢时有可感知延迟:进行中态 + 防连点。
+  const [exporting, setExporting] = useState(false)
   // P7:该隧道被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
   const [grantedUsers, setGrantedUsers] = useState<GrantedUser[] | null>(null)
   // 15s 静默刷新 hop 心跳聚合状态(隧道 up/degraded/down 变化较快)。
@@ -105,6 +109,7 @@ export default function TunnelDetail() {
     setRestarting(true)
     try {
       await tunnels.restart(tunnelId)
+      setRestartConfirm(false)
       toast.success('隧道重启指令已下发')
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : '重启失败')
@@ -148,21 +153,25 @@ export default function TunnelDetail() {
           {/* P9: 导出本隧道关联规则(隧道规则导入时需手动重建关联,文件中含 tunnel_name 供识别)。 */}
           <button
             type="button"
+            disabled={exporting}
             onClick={async () => {
+              setExporting(true)
               try {
                 await rules.exportDownload({ tunnel_id: tunnelId })
                 toast.success('已导出。注意:隧道关联无法随导入自动重建,导入后需手动重新关联隧道')
               } catch (e) {
                 toast.error(e instanceof ApiError ? e.message : '导出失败')
+              } finally {
+                setExporting(false)
               }
             }}
-            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-2 text-sm"
           >
-            导出规则
+            {exporting ? '导出中…' : '导出规则'}
           </button>
           <button
             type="button"
-            onClick={doRestart}
+            onClick={() => setRestartConfirm(true)}
             disabled={restarting}
             className="rounded-lg bg-amber-600/80 hover:bg-amber-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-2 text-sm font-medium"
           >
@@ -273,6 +282,32 @@ export default function TunnelDetail() {
       </section>
 
       <DiagnosePanel run={() => tunnels.diagnose(detail.id)} />
+
+      {restartConfirm && (
+        <Modal title="重启隧道" onClose={() => !restarting && setRestartConfirm(false)} size="sm">
+          <p className="text-sm text-zinc-300">
+            重启隧道 <span className="text-white font-medium">{detail.name}</span> 会瞬断其上所有规则的转发，确认继续？
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setRestartConfirm(false)}
+              disabled={restarting}
+              className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-3 py-1.5 text-sm"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={doRestart}
+              disabled={restarting}
+              className="rounded-lg bg-amber-600/80 hover:bg-amber-500 disabled:bg-zinc-700 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-medium"
+            >
+              {restarting ? '重启中…' : '确认重启'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

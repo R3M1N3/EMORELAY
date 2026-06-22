@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import {
   ApiError,
   formatBytes,
@@ -15,6 +16,7 @@ import {
 import { EmptyState, ErrorBox, Modal, TableSkeleton, fieldInputCls, fieldLabelCls, PasswordInput } from '../lib/ui'
 import { Pagination } from '../components/Pagination'
 import { bytesToGbString, gbToBytes, quotaPercent, quotaTone } from '../lib/quota'
+import { useToast } from '../lib/use-toast'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; user: UserDetail } | null
 
@@ -26,6 +28,7 @@ interface ListState {
 }
 
 export default function Users() {
+  const toast = useToast()
   const [list, setList] = useState<ListState>({ items: [], total: 0, loading: true, error: null })
   const [editing, setEditing] = useState<Editing>(null)
   const [confirming, setConfirming] = useState<UserDetail | null>(null)
@@ -69,6 +72,7 @@ export default function Users() {
     setBusy(true)
     try {
       await users.del(user.id)
+      toast.success('用户已删除')
       setConfirming(null)
       await reload()
     } catch (e) {
@@ -188,6 +192,7 @@ export default function Users() {
             initial={editing.mode === 'edit' ? editing.user : undefined}
             onCancel={() => setEditing(null)}
             onSuccess={async () => {
+              toast.success(editing.mode === 'create' ? '用户已创建' : '用户已保存')
               setEditing(null)
               await reload()
             }}
@@ -288,6 +293,12 @@ function UserRow({
         >
           编辑
         </button>
+        <Link
+          to={`/rules?user_id=${user.id}`}
+          className="ml-1.5 rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2.5 py-1 text-xs"
+        >
+          规则
+        </Link>
         <button
           type="button"
           onClick={onDelete}

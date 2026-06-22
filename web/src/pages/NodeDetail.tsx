@@ -45,6 +45,7 @@ export default function NodeDetail() {
   const [confirmingUpgrade, setConfirmingUpgrade] = useState(false)
   const [upgrading, setUpgrading] = useState(false)
   const [revoking, setRevoking] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [revokedCreds, setRevokedCreds] = useState<RevokedCreds | null>(null)
   // P7:该节点被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
   const [grantedUsers, setGrantedUsers] = useState<GrantedUser[] | null>(null)
@@ -162,6 +163,12 @@ export default function NodeDetail() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <Link
+            to={`/rules?node_id=${node.id}`}
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+          >
+            查看规则
+          </Link>
           {/* P10b: 一键升级 Agent(下载/校验/原子替换/exec 重启,节点须在线)。 */}
           <button
             type="button"
@@ -174,17 +181,21 @@ export default function NodeDetail() {
           {/* P9: 导出本节点全部规则(跨实例迁移/备份用)。 */}
           <button
             type="button"
+            disabled={exporting}
             onClick={async () => {
+              setExporting(true)
               try {
                 await rules.exportDownload({ node_id: nodeId })
                 toast.success('已导出本节点规则')
               } catch (e) {
                 toast.error(e instanceof ApiError ? e.message : '导出失败')
+              } finally {
+                setExporting(false)
               }
             }}
-            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-2 text-sm"
           >
-            导出规则
+            {exporting ? '导出中…' : '导出规则'}
           </button>
           <button
             type="button"
