@@ -856,6 +856,8 @@ export function actionLabel(action: string): string {
 }
 
 export function formatBytes(n: number): string {
+  // 防御:后端字段缺失/版本错配时入参可能为 undefined/NaN,兜底避免显示 NaN 或崩。
+  if (!Number.isFinite(n)) return '0 B'
   if (n < 1024) return `${n} B`
   const units = ['KB', 'MB', 'GB', 'TB']
   let v = n / 1024
@@ -869,5 +871,7 @@ export function formatBytes(n: number): string {
 
 // 计数类大数字千分位分隔(连接数等):「18048 → 18,048」,提升可读性。字节量走 formatBytes。
 export function formatCount(n: number): string {
+  // 防御:同 formatBytes,非有限数兜底为 '0',杜绝 undefined.toLocaleString() 整页崩。
+  if (!Number.isFinite(n)) return '0'
   return n.toLocaleString('en-US')
 }
