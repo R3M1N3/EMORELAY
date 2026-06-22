@@ -145,9 +145,9 @@ export default function Users() {
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">用户名</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">角色</th>
                   <th scope="col" className="px-4 py-2.5 text-right font-medium">规则数</th>
-                  <th scope="col" className="px-4 py-2.5 text-right font-medium">累计流量</th>
+                  <th scope="col" className="px-4 py-2.5 text-right font-medium" title="该用户名下所有规则的历史累计转发流量(自创建起,不随窗口清零)">累计流量</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">到期</th>
-                  <th scope="col" className="px-4 py-2.5 text-left font-medium" title="约每 5 分钟由后台刷新">
+                  <th scope="col" className="px-4 py-2.5 text-left font-medium" title="滚动 30 天或月度计费窗口内的用量,用于配额判定(约每 5 分钟后台刷新);与左侧「累计流量」口径不同">
                     30d 用量
                   </th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">创建于</th>

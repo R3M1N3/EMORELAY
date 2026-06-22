@@ -142,47 +142,51 @@ function AdminDashboard() {
         )}
       </section>
 
-      {data.rules.length > 0 && (
-        <section className="glass-card rise p-5">
-          <h3 className="text-sm font-medium text-zinc-200 mb-3">流量 Top 规则</h3>
-          <div className="space-y-2">
-            {[...data.rules]
-              .sort((a, b) => b.rx_bytes + b.tx_bytes - (a.rx_bytes + a.tx_bytes))
-              .slice(0, 5)
-              .map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm"
-                >
-                  <span className="truncate font-medium">{r.name}</span>
-                  <span className="shrink-0 text-[11px] text-zinc-400 tabular-nums">
-                    ↓{formatBytes(r.rx_bytes)} ↑{formatBytes(r.tx_bytes)}
-                  </span>
-                </div>
-              ))}
-          </div>
-        </section>
-      )}
-
-      <section className="glass-card rise p-5">
-        <div className="mb-3">
-          <h3 className="text-sm font-medium text-zinc-200">最近错误</h3>
-          <p className="mt-0.5 text-[11px] text-zinc-400">来自审计日志的失败操作记录</p>
-        </div>
-        {recentErrors === 'loading' ? (
-          <p className="text-sm text-zinc-400">加载中…</p>
-        ) : recentErrors === 'unavailable' ? (
-          <p className="text-sm text-zinc-400">暂无数据</p>
-        ) : recentErrors.length === 0 ? (
-          <p className="text-sm text-zinc-400">最近无错误。</p>
-        ) : (
-          <div className="space-y-2">
-            {recentErrors.map((e) => (
-              <ErrorRow key={e.id} entry={e} />
-            ))}
-          </div>
+      {/* C3: 宽屏下「流量 Top 规则」与「最近错误」并排两栏,消除右半幅纵向留白;
+          节点状态保持全宽(NodeRow 横向信息多)。窄屏(<xl)仍纵向堆叠。 */}
+      <div className="grid gap-6 xl:grid-cols-2 items-start">
+        {data.rules.length > 0 && (
+          <section className="glass-card rise p-5">
+            <h3 className="text-sm font-medium text-zinc-200 mb-3">流量 Top 规则</h3>
+            <div className="space-y-2">
+              {[...data.rules]
+                .sort((a, b) => b.rx_bytes + b.tx_bytes - (a.rx_bytes + a.tx_bytes))
+                .slice(0, 5)
+                .map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm"
+                  >
+                    <span className="truncate font-medium">{r.name}</span>
+                    <span className="shrink-0 text-[11px] text-zinc-400 tabular-nums">
+                      ↓{formatBytes(r.rx_bytes)} ↑{formatBytes(r.tx_bytes)}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </section>
         )}
-      </section>
+
+        <section className="glass-card rise p-5">
+          <div className="mb-3">
+            <h3 className="text-sm font-medium text-zinc-200">最近错误</h3>
+            <p className="mt-0.5 text-[11px] text-zinc-400">来自审计日志的失败操作记录</p>
+          </div>
+          {recentErrors === 'loading' ? (
+            <p className="text-sm text-zinc-400">加载中…</p>
+          ) : recentErrors === 'unavailable' ? (
+            <p className="text-sm text-zinc-400">暂无数据</p>
+          ) : recentErrors.length === 0 ? (
+            <p className="text-sm text-zinc-400">最近无错误。</p>
+          ) : (
+            <div className="space-y-2">
+              {recentErrors.map((e) => (
+                <ErrorRow key={e.id} entry={e} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   )
 }
@@ -201,7 +205,7 @@ export function Stat({ label, value, hint, accent }: { label: string; value: num
     <div className={`relative rounded-2xl border border-white/10 bg-gradient-to-br ${ACCENT[accent]} to-zinc-900/40 p-4 ring-1 ring-inset`}>
       <div className="text-xs text-zinc-400">{label}</div>
       <div className="mt-1 text-2xl font-semibold tracking-tight">{value}</div>
-      <div className="mt-1 text-[11px] text-zinc-400">{hint}</div>
+      <div className="mt-1 text-[11px] text-zinc-400 leading-tight">{hint}</div>
     </div>
   )
 }

@@ -220,6 +220,7 @@ export default function NodeDetail() {
             />
             <Row k="gRPC 端点" v={node.grpc_endpoint || '—'} mono />
             <Row k="端口池" v={`${node.port_pool_min}–${node.port_pool_max}`} />
+            <Row k="Agent 版本" v={node.agent_version || '待上报'} mono={!!node.agent_version} />
             <Row k="最后心跳" v={node.last_seen_at ? shortTime(node.last_seen_at) : '从未上线'} />
             <Row k="创建" v={shortTime(node.created_at)} />
           </dl>
@@ -251,9 +252,11 @@ export default function NodeDetail() {
 
         <ProtocolBlockCard
           node={node}
-          onChanged={() => {
+          onChanged={(nextMask) => {
             toast.success('协议阻断设置已更新')
-            setRefreshTick((n) => n + 1)
+            // P3-11:局部更新该字段即可,不再 setRefreshTick 触发整页重拉——
+            // 连切开关时 toast 不被整页重渲染打断,卡片也不整体闪烁(30s 周期刷新仍会同步其余字段)。
+            setState((s) => (s.node ? { ...s, node: { ...s.node, block_protocols: nextMask } } : s))
           }}
         />
 
@@ -295,7 +298,7 @@ export default function NodeDetail() {
           </p>
           <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
             重启瞬间该节点全部存量连接会中断（规则随即自动恢复，已建立的连接不会回来）。
-            升级结果请稍后观察节点列表的 Agent 版本列。
+            升级结果请稍后观察本页「基本信息 · Agent 版本」(节点重启重连后自动刷新)。
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button
@@ -470,7 +473,7 @@ const PROTO_BITS: { bit: number; label: string; hint: string }[] = [
   { bit: 4, label: 'SOCKS', hint: '阻断 SOCKS4/5 握手' },
 ]
 
-function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: () => void }) {
+function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: (nextMask: number) => void }) {
   const toast = useToast()
   const [saving, setSaving] = useState(false)
   const mask = node.block_protocols
@@ -481,7 +484,9 @@ function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: () 
     const next = mask & bit ? mask & ~bit : mask | bit
     try {
       await nodes.update(node.id, { block_protocols: next })
-      onChanged()
+      // 乐观更新用本地按位算得的 next(与服务端落库值一致),不读 update 返回的完整 node:
+      // 本卡只关心 block_protocols,其余字段由父页 30s 周期刷新对账,避免整页重拉。
+      onChanged(next)
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : '更新失败')
     } finally {

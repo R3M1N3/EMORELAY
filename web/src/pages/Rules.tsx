@@ -81,6 +81,10 @@ export default function Rules() {
   const [refreshing, setRefreshing] = useState(false)
   const [actingId, setActingId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  // 批量启停:Set 跨页保留选中 id,但 UI 与操作只作用于「当前页可见且仍选中」的交集(所见即所选),
+  // 故无需在翻页/筛选时清空(也避免 effect 内同步 setState 触发 react-hooks/set-state-in-effect)。
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   // P7:用户视角的 nodes/tunnels 列表即「被授权集合」,加载成功后才能判定授权撤销。
@@ -88,6 +92,32 @@ export default function Rules() {
   const [tunnelsLoaded, setTunnelsLoaded] = useState(false)
 
   const nodesById = useMemo(() => new Map(nodeList.map((n) => [n.id, n])), [nodeList])
+
+  // 当前页可见且仍在选中集合中的规则(批量工具条与全选复选框以此为准)。
+  const visibleSelected = useMemo(
+    () => list.items.filter((r) => selected.has(r.id)),
+    [list.items, selected],
+  )
+  const allVisibleSelected = list.items.length > 0 && visibleSelected.length === list.items.length
+
+  function toggleSelectAll(checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const r of list.items) {
+        if (checked) next.add(r.id)
+        else next.delete(r.id)
+      }
+      return next
+    })
+  }
+  function toggleSelectOne(id: number, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
 
   async function reload(opts: { silent?: boolean } = {}) {
     if (!opts.silent) setList((s) => ({ ...s, loading: true, error: null }))
@@ -242,6 +272,38 @@ export default function Rules() {
       toast.error(msg)
     } finally {
       setActingId(null)
+    }
+  }
+
+  // 批量启用/禁用「当前页可见且仍选中」的规则。串行下发,避免一次性打爆 agent gRPC / 后端;
+  // 只对状态需要改变的规则发请求(已是目标态的跳过),逐条聚合失败。
+  async function doBulkToggle(enable: boolean) {
+    const targets = list.items.filter((r) => selected.has(r.id) && r.enabled !== enable)
+    if (targets.length === 0) {
+      toast.info(enable ? '所选规则均已是启用状态' : '所选规则均已是禁用状态')
+      return
+    }
+    setBulkBusy(true)
+    let ok = 0
+    const failed: string[] = []
+    for (const r of targets) {
+      try {
+        if (enable) await rules.enable(r.id)
+        else await rules.disable(r.id)
+        ok++
+      } catch {
+        failed.push(r.name)
+      }
+    }
+    setBulkBusy(false)
+    setSelected(new Set())
+    await reload()
+    const verb = enable ? '启用' : '禁用'
+    if (failed.length === 0) {
+      toast.success(`已${verb} ${ok} 条规则`)
+    } else {
+      const head = failed.slice(0, 3).join('、')
+      toast.error(`${verb}完成:${ok} 条成功,${failed.length} 条失败(${head}${failed.length > 3 ? ' 等' : ''})`)
     }
   }
 
@@ -474,9 +536,44 @@ export default function Rules() {
 
       {list.error && <ErrorBox message={list.error} onRetry={() => void reload()} />}
 
+      {visibleSelected.length > 0 && (
+        <div className="flex items-center gap-3 rounded-lg bg-accent/10 ring-1 ring-inset ring-accent/25 px-3 py-2 text-sm">
+          <span className="text-zinc-200">
+            已选 <span className="font-medium text-white">{visibleSelected.length}</span> 条
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void doBulkToggle(true)}
+              disabled={bulkBusy}
+              className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
+            >
+              批量启用
+            </button>
+            <button
+              type="button"
+              onClick={() => void doBulkToggle(false)}
+              disabled={bulkBusy}
+              className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 px-2.5 py-1 text-xs"
+            >
+              批量禁用
+            </button>
+          </div>
+          {bulkBusy && <span className="text-xs text-zinc-400">处理中…</span>}
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            disabled={bulkBusy}
+            className="ml-auto text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-60"
+          >
+            清除选择
+          </button>
+        </div>
+      )}
+
       <section className="glass-card rise overflow-hidden">
         {list.loading ? (
-          <TableSkeleton cols={8} />
+          <TableSkeleton cols={9} />
         ) : list.items.length === 0 ? (
           filters.node_id || filters.protocol || filters.search ? (
             <EmptyState title="当前筛选条件下没有规则" hint="调整或清空筛选查看全部规则。" />
@@ -503,6 +600,18 @@ export default function Rules() {
             <table className="w-full text-sm">
               <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
+                  <th scope="col" className="px-4 py-2.5 w-px">
+                    <input
+                      type="checkbox"
+                      aria-label="全选当前页规则"
+                      className="cursor-pointer align-middle"
+                      checked={allVisibleSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = visibleSelected.length > 0 && !allVisibleSelected
+                      }}
+                      onChange={(e) => toggleSelectAll(e.target.checked)}
+                    />
+                  </th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
                   {isAdmin && <th scope="col" className="px-4 py-2.5 text-left font-medium">归属</th>}
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">节点 / 协议</th>
@@ -518,6 +627,8 @@ export default function Rules() {
                   <RuleRow
                     key={r.id}
                     rule={r}
+                    selected={selected.has(r.id)}
+                    onSelectChange={(c) => toggleSelectOne(r.id, c)}
                     node={nodesById.get(r.node_id)}
                     tunnelName={
                       // P7 起用户也能拉到(被授权的)隧道列表;查不到名字时显示裸 id。
@@ -748,6 +859,8 @@ export default function Rules() {
 
 function RuleRow({
   rule,
+  selected,
+  onSelectChange,
   node,
   tunnelName,
   grantRevoked,
@@ -760,6 +873,9 @@ function RuleRow({
   onDiagnose,
 }: {
   rule: RuleView
+  /** 行多选(批量启停) */
+  selected: boolean
+  onSelectChange: (checked: boolean) => void
   node: NodeView | undefined
   /** 关联隧道名(null = 直连);列表页用 tunnelList 映射,无需逐行请求 */
   tunnelName: string | null
@@ -779,6 +895,15 @@ function RuleRow({
   const entryHost = nodeEntryHost(node)
   return (
     <tr className={grantRevoked ? 'bg-amber-500/[0.06] hover:bg-amber-500/10' : 'hover:bg-white/[0.02]'}>
+      <td className="px-4 py-3 align-top">
+        <input
+          type="checkbox"
+          aria-label={`选择规则 ${rule.name}`}
+          className="cursor-pointer align-middle"
+          checked={selected}
+          onChange={(e) => onSelectChange(e.target.checked)}
+        />
+      </td>
       <td className="px-4 py-3 align-top">
         <Link
           to={`/rules/${rule.id}`}
@@ -1268,6 +1393,9 @@ export function RuleForm({
   }
 
   const selectedNode = nodeList.find((n) => String(n.id) === form.node_id)
+  // P3-1:目标地址就地校验态——同时驱动错误文案、input 的 aria-invalid 与 aria-describedby 关联。
+  const targetHostInvalid =
+    form.target_host.trim() !== '' && !isValidTargetHostShape(form.target_host.trim())
 
   return (
     <form noValidate onSubmit={onSubmit} className="space-y-4">
@@ -1418,6 +1546,8 @@ export function RuleForm({
           <input
             id="rule-target-host"
             required
+            aria-invalid={targetHostInvalid}
+            aria-describedby={targetHostInvalid ? 'rule-target-host-err' : undefined}
             value={form.target_host}
             onChange={(e) => set('target_host', e.target.value)}
             onPaste={(e) => {
@@ -1436,12 +1566,11 @@ export function RuleForm({
             className={fieldInputCls}
             placeholder="1.2.3.4 或 backend.example.com"
           />
-          {form.target_host.trim() !== '' &&
-            !isValidTargetHostShape(form.target_host.trim()) && (
-              <p aria-live="polite" className="text-[11px] text-red-300 mt-1">
-                不是合法 IP 或域名（如 1.2.3.4 / backend.example.com）
-              </p>
-            )}
+          {targetHostInvalid && (
+            <p id="rule-target-host-err" aria-live="polite" className="text-[11px] text-red-300 mt-1">
+              不是合法 IP 或域名（如 1.2.3.4 / backend.example.com）
+            </p>
+          )}
         </div>
         <div>
           <label htmlFor="rule-target-port" className={fieldLabelCls}>目标端口 *</label>
