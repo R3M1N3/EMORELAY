@@ -421,3 +421,106 @@ async fn rule_list_includes_owner_username_for_admin() {
         .expect("rule present");
     assert_eq!(item["user_name"], "alice");
 }
+
+// ============ C1: 规则列表 user_id / enabled 筛选 + 越权回归 ============
+
+#[tokio::test]
+async fn admin_filter_by_user_id() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    let (bob_id, bob_token) = make_user_token(&app, "bob", "bob-password").await.unwrap();
+    common::grant_node(&app, alice_id, node_id).await;
+    common::grant_node(&app, bob_id, node_id).await;
+    let alice_rule = create_rule_as(&app, &alice_token, node_id, "alice-rule", 30071).await;
+    create_rule_as(&app, &bob_token, node_id, "bob-rule", 30072).await;
+
+    // admin 按 ?user_id=alice 筛选 → 只返回 alice 的规则。
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/rules?user_id={alice_id}"),
+        &app.admin_token,
+        None,
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "应只返回 alice 的规则: {body}");
+    assert_eq!(items[0]["id"], alice_rule);
+}
+
+#[tokio::test]
+async fn admin_filter_by_enabled() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let r_enabled = create_rule_as(&app, &app.admin_token, node_id, "r-enabled", 30081).await;
+    let r_disabled = create_rule_as(&app, &app.admin_token, node_id, "r-disabled", 30082).await;
+    // 禁用其中一条。
+    let req = auth_req(
+        Method::POST,
+        &format!("/api/rules/{r_disabled}/disable"),
+        &app.admin_token,
+        None,
+    )
+    .unwrap();
+    let (status, _) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    // ?enabled=true → 只启用的。
+    let req = auth_req(Method::GET, "/api/rules?enabled=true", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "enabled=true 应只 1 条: {body}");
+    assert_eq!(items[0]["id"], r_enabled);
+
+    // ?enabled=false → 只禁用的(验证 false 也能下发筛选,不被当作「不筛选」)。
+    let req = auth_req(Method::GET, "/api/rules?enabled=false", &app.admin_token, None).unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "enabled=false 应只 1 条: {body}");
+    assert_eq!(items[0]["id"], r_disabled);
+}
+
+#[tokio::test]
+async fn user_filter_user_id_cannot_escalate() {
+    let app = make_app().await.unwrap();
+    let node_id = make_node(&app).await;
+    let (alice_id, alice_token) = make_user_token(&app, "alice", "alice-password").await.unwrap();
+    let (bob_id, bob_token) = make_user_token(&app, "bob", "bob-password").await.unwrap();
+    common::grant_node(&app, alice_id, node_id).await;
+    common::grant_node(&app, bob_id, node_id).await;
+    create_rule_as(&app, &alice_token, node_id, "alice-rule", 30091).await;
+    let bob_rule = create_rule_as(&app, &bob_token, node_id, "bob-rule", 30092).await;
+
+    // 越权回归:bob 传 ?user_id=alice 试图越权看 alice 的规则。
+    // 后端 restrict_user_id(=bob) 与 filter user_id(=alice)两个 user_id=? 条件并存,
+    // 两值不等 → 空集,绝不泄露 alice 的规则。这是双 user_id 兜底的安全断言。
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/rules?user_id={alice_id}"),
+        &bob_token,
+        None,
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 0, "bob 用 ?user_id=alice 越权应得空集,不泄露: {body}");
+
+    // bob 传 ?user_id=自己 → 正常看到自己的(filter 与 restrict 一致)。
+    let req = auth_req(
+        Method::GET,
+        &format!("/api/rules?user_id={bob_id}"),
+        &bob_token,
+        None,
+    )
+    .unwrap();
+    let (status, body) = send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], bob_rule);
+}
