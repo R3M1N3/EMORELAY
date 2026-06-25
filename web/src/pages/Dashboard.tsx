@@ -102,6 +102,9 @@ function AdminDashboard() {
   const totalTx = data.rules.reduce((s, r) => s + r.tx_bytes, 0)
   const totalConn = data.rules.reduce((s, r) => s + r.connection_count, 0)
   const enabledRules = data.rules.filter((r) => r.enabled).length
+  // overview 有则用规则口径权威值,缺字段则回退本页 ≤100 聚合;提取避免 value/hint 重复同一回退表达式。
+  const ruleRx = ov0?.rule_rx_bytes_total ?? totalRx
+  const ruleTx = ov0?.rule_tx_bytes_total ?? totalTx
 
   const today = ov0
     ? `${formatBytes(ov0.rx_bytes_24h + ov0.tx_bytes_24h)}`
@@ -125,7 +128,7 @@ function AdminDashboard() {
         <Stat label="总节点数" value={ov0 ? ov0.total_nodes : data.nodes.length} hint={`${ov0 ? ov0.online_nodes : onlineNodes} 在线`} accent="indigo" />
         <Stat label="转发规则" value={ov0 ? ov0.total_rules : data.rules.length} hint={`${ov0 ? ov0.enabled_rules : enabledRules} 启用`} accent="violet" />
         <Stat label="总连接数" value={formatCount(ov0?.total_connections ?? totalConn)} hint="累计" accent="emerald" />
-        <Stat label="总转发流量" value={formatBytes((ov0?.rule_rx_bytes_total ?? totalRx) + (ov0?.rule_tx_bytes_total ?? totalTx))} hint={`规则转发累计 ↓${formatBytes(ov0?.rule_rx_bytes_total ?? totalRx)} ↑${formatBytes(ov0?.rule_tx_bytes_total ?? totalTx)}`} accent="amber" />
+        <Stat label="总转发流量" value={formatBytes(ruleRx + ruleTx)} hint={`规则转发累计 ↓${formatBytes(ruleRx)} ↑${formatBytes(ruleTx)}`} accent="amber" />
         <Stat label="24h 转发流量" value={today} hint={todayHint} accent="sky" />
       </div>
 
