@@ -44,3 +44,6 @@ agent-state.json
 /.claude/
 /CLAUDE.md
 /docs/
+
+# Subagent-driven 执行过程产物(ledger / task 报告,本地 scratch)
+/.superpowers/
