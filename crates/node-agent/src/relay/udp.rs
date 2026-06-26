@@ -154,6 +154,48 @@ async fn forward(
     counter: &Arc<RuleCounter>,
     bucket: &Option<Arc<TokenBucket>>,
 ) -> Result<()> {
+    forward_with_resolver(
+        rule_id,
+        listener,
+        client_addr,
+        data,
+        sessions,
+        max_sessions,
+        target_host,
+        target_port,
+        counter,
+        bucket,
+        |host| async move { crate::dns::resolve_target(&host).await },
+    )
+    .await
+}
+
+/// `forward` 的可注入 resolver 版本:生产用 `crate::dns::resolve_target`,测试可注入
+/// 慢/可控 resolver 以验证「建连期间不持 sessions 锁」与「并发首包去重」。
+///
+/// 锁策略(本次加固重点):DNS 解析 + connect(5s 超时)从前一版的「全程持 sessions 锁」
+/// 移到**锁外**执行——慢/不可达 DNS 不再独占 sessions 锁(sweep / stop / 其它 client 的
+/// 锁操作不被阻塞)。仅在两段**短临界区**内持锁:① 快路径(既有 session / 死 task 重建 / 上限判定),
+/// ② 新建好的 session 双检插入。语义保留:SSRF guard、5s 超时、`max_sessions` 上限、多目标
+/// 故障转移均不变,只是发生在锁外。
+#[allow(clippy::too_many_arguments)]
+async fn forward_with_resolver<F, Fut>(
+    rule_id: i64,
+    listener: &Arc<UdpSocket>,
+    client_addr: SocketAddr,
+    data: &[u8],
+    sessions: &Arc<Mutex<HashMap<SocketAddr, Session>>>,
+    max_sessions: usize,
+    target_host: &str,
+    target_port: u16,
+    counter: &Arc<RuleCounter>,
+    bucket: &Option<Arc<TokenBucket>>,
+    resolve: F,
+) -> Result<()>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<Vec<IpAddr>>>,
+{
     // 限速:配额不足直接丢包(UDP 语义,不阻塞事件循环)。
     if let Some(b) = bucket {
         if !b.try_acquire(data.len()) {
@@ -161,38 +203,41 @@ async fn forward(
             return Ok(());
         }
     }
-    let mut map = sessions.lock().await;
-    // I3:反向 task 已死(client 不可达等)的既有 session 先移除,落到下方重建逻辑恢复回程,
-    // 否则 last_seen 被持续刷新导致永不超时、回程永久中断。
-    if map
-        .get(&client_addr)
-        .is_some_and(|s| s.upstream_task.is_finished())
+
+    // —— 临界区 ①(短):既有 session 快路径 / 死 task 重建 / 上限判定。建连前持锁,不跨 await DNS。
     {
-        map.remove(&client_addr);
-    }
-    if let Some(s) = map.get_mut(&client_addr) {
-        s.last_seen = Instant::now();
-        s.upstream
-            .send(data)
-            .await
-            .context("upstream send (existing session)")?;
-        return Ok(());
-    }
+        let mut map = sessions.lock().await;
+        // I3:反向 task 已死(client 不可达等)的既有 session 先移除,落到下方重建逻辑恢复回程,
+        // 否则 last_seen 被持续刷新导致永不超时、回程永久中断。
+        if map
+            .get(&client_addr)
+            .is_some_and(|s| s.upstream_task.is_finished())
+        {
+            map.remove(&client_addr);
+        }
+        if let Some(s) = map.get_mut(&client_addr) {
+            s.last_seen = Instant::now();
+            s.upstream
+                .send(data)
+                .await
+                .context("upstream send (existing session)")?;
+            return Ok(());
+        }
 
-    // NAT 表上限:达上限丢弃新源的包,防伪造源耗尽 fd/端口/内存(既有 session 上面已返回)。
-    if map.len() >= max_sessions {
-        counter.error_count.fetch_add(1, Ordering::Relaxed);
-        warn!(rule_id, %client_addr, max = max_sessions, "udp sessions at cap; dropping new-session packet");
-        return Ok(());
-    }
+        // NAT 表上限:达上限丢弃新源的包,防伪造源耗尽 fd/端口/内存(既有 session 上面已返回)。
+        if map.len() >= max_sessions {
+            counter.error_count.fetch_add(1, Ordering::Relaxed);
+            warn!(rule_id, %client_addr, max = max_sessions, "udp sessions at cap; dropping new-session packet");
+            return Ok(());
+        }
+    } // 锁在此释放;下面的 DNS+connect 全程不持锁。
 
-    // 新 session：用临时端口的 upstream socket + connect 默认 peer。
-    // 域名目标的 connect 走阻塞 getaddrinfo,无上限时慢/不可达 DNS 会把本规则唯一的
-    // recv 循环连同 sweep 一起停摆(本段在主循环内 inline await)。与隧道 UDP 路径
-    // (tunnel/task.rs)一致套 5s 超时;超时按错误丢包(UDP 语义,不阻塞循环)。
+    // —— 锁外建连:用临时端口的 upstream socket + connect 默认 peer。
+    // 域名目标的 connect 走阻塞 getaddrinfo,慢/不可达 DNS 此前会独占 sessions 锁;现移到锁外。
+    // 与隧道 UDP 路径(tunnel/task.rs)一致套 5s 超时;超时按错误丢包(UDP 语义,不阻塞循环)。
     let upstream = match tokio::time::timeout(Duration::from_secs(5), async {
         // DNS 缓存解析(字面 IP 直通);取第一个通过 SSRF 校验且 connect 成功的地址。
-        let ips = crate::dns::resolve_target(target_host)
+        let ips = resolve(target_host.to_string())
             .await
             .with_context(|| format!("resolve upstream {target_host}"))?;
         let mut last: Option<anyhow::Error> = None;
@@ -233,9 +278,8 @@ async fn forward(
         .send(data)
         .await
         .context("upstream send (new session)")?;
-    counter.connection_count.fetch_add(1, Ordering::Relaxed);
 
-    // 反向 task：从 upstream 收响应写回原 client_addr。
+    // 反向 task：从 upstream 收响应写回原 client_addr。锁外先建好,稍后双检插入。
     let listener_clone = listener.clone();
     let upstream_clone = upstream.clone();
     let counter_clone = counter.clone();
@@ -268,6 +312,39 @@ async fn forward(
         }
     });
 
+    // —— 临界区 ②(短):双检插入。建连期间若有并发首包已为同 client 建好 session,
+    // 丢弃自己刚建好的(abort 反向 task,upstream Arc 随之 drop 释放 fd),复用既有 session 转发本包;
+    // 若既有 session 的反向 task 已死,则换上自己新建的(恢复回程)。否则插入自己。
+    // 注意:首包此前已发往上游成功,丢弃自己时该包不重发(UDP 语义可丢,且复用分支已成功投递过本包)。
+    let mut map = sessions.lock().await;
+    let existing_alive = map
+        .get(&client_addr)
+        .is_some_and(|s| !s.upstream_task.is_finished());
+    if existing_alive {
+        // 并发已建好且存活:丢弃自己,复用既有 session 转发本包。
+        upstream_task.abort();
+        if let Some(s) = map.get_mut(&client_addr) {
+            s.last_seen = Instant::now();
+            s.upstream
+                .send(data)
+                .await
+                .context("upstream send (existing session, dedup)")?;
+        }
+        return Ok(());
+    }
+    // 上限二次判定:① 判定后锁已释放,并发建连期间 map 可能涨到上限(生产为单循环串行不会发生,
+    // 但保持上限严格、不被「锁外建连」削弱)。已为死 session 占位的 key 是替换不增长,放行;
+    // 否则达上限则丢弃自己刚建好的(abort 释放 fd/端口),计一次 error。
+    let replacing_existing = map.contains_key(&client_addr);
+    if !replacing_existing && map.len() >= max_sessions {
+        upstream_task.abort();
+        counter.error_count.fetch_add(1, Ordering::Relaxed);
+        warn!(rule_id, %client_addr, max = max_sessions, "udp sessions at cap; dropping new-session packet");
+        return Ok(());
+    }
+    // 无存活既有 session:换上自己。若存在死 session,其 task 已结束、其 upstream 随旧 Session
+    // drop 释放,无需显式 abort。首包成功后才计一次新连接。
+    counter.connection_count.fetch_add(1, Ordering::Relaxed);
     map.insert(
         client_addr,
         Session {
@@ -577,5 +654,148 @@ mod tests {
         let s = snap.iter().find(|s| s.rule_id == 7).expect("stats");
         assert_eq!(s.connection_count, 2, "session 数应封顶在 max_sessions=2");
         assert!(s.error_count >= 1, "第 3 个新 session 被拒应计 error");
+    }
+
+    /// 建连期间(慢 DNS)不持 sessions 锁:client A 注入一个会阻塞 200ms 的 resolver 触发新建,
+    /// 在它仍卡在 DNS 时(锁应已释放),主线程去抢同一把 sessions 锁——若锁被建连段持有则抢锁
+    /// 会被拖到 A 完成(>=150ms);锁外建连下应几乎立即拿到锁(<100ms)。
+    /// 旧版「全程持锁」会让本断言 FAIL。
+    #[tokio::test]
+    async fn udp_slow_dns_does_not_hold_session_lock() {
+        let echo_port = spawn_udp_echo_server().await;
+        let listen_port = ephemeral_port();
+        let listener = Arc::new(UdpSocket::bind(("127.0.0.1", listen_port)).await.unwrap());
+        let sessions: Arc<Mutex<HashMap<SocketAddr, Session>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let stats = Arc::new(StatsCollector::new());
+        let counter = stats.ensure(7);
+        let client_a: SocketAddr = "127.0.0.1:40001".parse().unwrap();
+
+        // 慢 resolver:解析前阻塞 200ms,再返回回环地址(connect 到本地 echo 必成功)。
+        // target_host 用字面 IP 127.0.0.1:guard_resolved_target 对字面 IP 放行(由 panel 按角色校验),
+        // 不触发「域名解析到内网」拦截;注入 resolver 仅用于控制 DNS 耗时,验证锁不被持有。
+        let slow_resolve = |_host: String| async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok(vec!["127.0.0.1".parse::<IpAddr>().unwrap()])
+        };
+
+        let listener_a = listener.clone();
+        let sessions_a = sessions.clone();
+        let counter_a = counter.clone();
+        let connecting = tokio::spawn(async move {
+            forward_with_resolver(
+                7,
+                &listener_a,
+                client_a,
+                b"a",
+                &sessions_a,
+                MAX_UDP_SESSIONS,
+                "127.0.0.1",
+                echo_port,
+                &counter_a,
+                &None,
+                slow_resolve,
+            )
+            .await
+            .expect("forward A");
+        });
+
+        // 让 A 跑进锁外的慢 DNS。给足让 ① 临界区结束、进入 sleep。
+        tokio::time::sleep(Duration::from_millis(40)).await;
+
+        // 此刻 A 应正卡在锁外慢 DNS:抢同一把锁应几乎立即成功。
+        let start = Instant::now();
+        {
+            let _guard = sessions.lock().await;
+        }
+        let waited = start.elapsed();
+        assert!(
+            waited < Duration::from_millis(100),
+            "建连期间不应持 sessions 锁;抢锁耗时 {waited:?}(>=100ms 说明锁被建连段长期持有)"
+        );
+        assert!(
+            !connecting.is_finished(),
+            "A 应仍卡在慢 DNS(确认上面的快速抢锁发生在建连进行中,而非建连已完成之后)"
+        );
+
+        // 收尾:等 A 完成并清理它建好的 session(abort 反向 task 释放 fd)。
+        connecting.await.unwrap();
+        let removed = sessions.lock().await.remove(&client_a);
+        if let Some(s) = removed {
+            s.upstream_task.abort();
+        }
+    }
+
+    /// 并发同 client 首包去重(双检生效):两个 forward 对同一 client_addr 并发建连,
+    /// 最终 map 只保留一个 session,且只计一次 connection_count(另一个被锁内双检丢弃)。
+    #[tokio::test]
+    async fn udp_concurrent_first_packet_dedups() {
+        let echo_port = spawn_udp_echo_server().await;
+        let listen_port = ephemeral_port();
+        let listener = Arc::new(UdpSocket::bind(("127.0.0.1", listen_port)).await.unwrap());
+        let sessions: Arc<Mutex<HashMap<SocketAddr, Session>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let stats = Arc::new(StatsCollector::new());
+        let counter = stats.ensure(7);
+        let client: SocketAddr = "127.0.0.1:40002".parse().unwrap();
+
+        // 两路都注入相同的轻微延时 resolver,确保两者重叠在锁外建连、再竞争锁内双检。
+        // target_host 用字面 IP(同上,放行 SSRF guard;resolver 仅控制并发建连重叠时序)。
+        let mk_resolve = || {
+            |_host: String| async move {
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                Ok(vec!["127.0.0.1".parse::<IpAddr>().unwrap()])
+            }
+        };
+
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let listener_c = listener.clone();
+            let sessions_c = sessions.clone();
+            let counter_c = counter.clone();
+            let resolve = mk_resolve();
+            handles.push(tokio::spawn(async move {
+                forward_with_resolver(
+                    7,
+                    &listener_c,
+                    client,
+                    b"dup",
+                    &sessions_c,
+                    MAX_UDP_SESSIONS,
+                    "127.0.0.1",
+                    echo_port,
+                    &counter_c,
+                    &None,
+                    resolve,
+                )
+                .await
+                .expect("forward dedup");
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let map = sessions.lock().await;
+        assert_eq!(map.len(), 1, "并发同 client 首包应只保留一个 session");
+        let s = map.get(&client).expect("唯一 session 应在");
+        assert!(!s.upstream_task.is_finished(), "保留的 session 反向 task 应存活");
+        assert_eq!(
+            counter.connection_count.load(Ordering::Relaxed),
+            1,
+            "并发首包去重后只应计一次新连接"
+        );
+        assert_eq!(
+            counter.error_count.load(Ordering::Relaxed),
+            0,
+            "去重不应计 error"
+        );
+
+        // 收尾:abort 反向 task 释放 fd。
+        drop(map);
+        let removed = sessions.lock().await.remove(&client);
+        if let Some(s) = removed {
+            s.upstream_task.abort();
+        }
     }
 }
