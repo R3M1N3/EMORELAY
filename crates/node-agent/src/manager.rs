@@ -119,6 +119,8 @@ impl RuleManager {
         if let Some(h) = self.handles.remove(&rule_id) {
             h.stop_all().await;
         }
+        // 即时清理该规则的统计 counter,避免规则反复增删时 counters 按历史峰值累积。
+        self.stats.remove(rule_id);
     }
 
     /// 配置对账:删除本地任何不在 keep_ids 内的规则(断网期间被删的孤儿)。
@@ -136,6 +138,8 @@ impl RuleManager {
                 h.stop_all().await;
             }
         }
+        // 对账兜底:按权威 keep 集合清理 counters,即使即时 remove 路径有遗漏也不会无界累积。
+        self.stats.retain(&keep);
         orphans
     }
 
@@ -281,5 +285,33 @@ mod tests {
         removed.sort_unstable();
         assert_eq!(removed, vec![1]);
         assert!(mgr.current_rules().is_empty());
+    }
+
+    /// 删规则即时清 counter、reconcile 兜底清孤儿 counter:验证 manager 层把 stats 接通。
+    #[tokio::test]
+    async fn remove_and_reconcile_clean_stats_counters() {
+        use std::sync::atomic::Ordering;
+        let stats = Arc::new(StatsCollector::new());
+        let mut mgr = RuleManager::new(stats.clone(), "./unused".into());
+
+        // 种下三个规则的 counter(模拟 relay hot path 已 ensure 过)。
+        for id in [1, 2, 3] {
+            stats.ensure(id).rx_bytes.fetch_add(1, Ordering::Relaxed);
+        }
+
+        // 单规则删除即时清掉规则 1 的 counter。
+        mgr.remove(1).await;
+        let after_remove: Vec<i64> =
+            stats.drain_snapshot().iter().map(|s| s.rule_id).collect();
+        assert!(!after_remove.contains(&1), "remove 应即时清掉规则 1 的 counter");
+
+        // drain 已清零,重新种 2、3 后 reconcile 只保留 2。
+        for id in [2, 3] {
+            stats.ensure(id).rx_bytes.fetch_add(1, Ordering::Relaxed);
+        }
+        mgr.reconcile(&[2]).await;
+        let after_reconcile: Vec<i64> =
+            stats.drain_snapshot().iter().map(|s| s.rule_id).collect();
+        assert_eq!(after_reconcile, vec![2], "reconcile 应兜底清掉孤儿规则 3 的 counter");
     }
 }

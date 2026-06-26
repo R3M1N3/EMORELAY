@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -40,6 +40,22 @@ impl StatsCollector {
         w.entry(rule_id)
             .or_insert_with(|| Arc::new(RuleCounter::default()))
             .clone()
+    }
+
+    /// 单规则删除时即时丢弃其 counter,释放内存。正常 remove 路径调用;在途上报数据若
+    /// 在此之后回填,restore 会经 ensure 重建,不丢数(见 restore 文档与 restore_rebuilds_removed_counter)。
+    pub fn remove(&self, rule_id: i64) {
+        self.counters.write().unwrap().remove(&rule_id);
+    }
+
+    /// 对账兜底:移除所有不在 keep_ids 内的规则 counter。reconcile(收到权威 keep_ids)时调用,
+    /// 防即时 remove 路径若有遗漏导致 counter 按历史峰值无界累积。只删不在集合内的,绝不动
+    /// keep_ids 内活跃规则的累计值;在途上报数据由 restore 经 ensure 重建兜底。
+    pub fn retain(&self, keep_ids: &HashSet<i64>) {
+        self.counters
+            .write()
+            .unwrap()
+            .retain(|rule_id, _| keep_ids.contains(rule_id));
     }
 
     /// 用 swap(0) 抽取当前窗口的累计计数，counter reset 为 0；下一个上报窗口从 0 起算。
@@ -136,6 +152,55 @@ mod tests {
         assert_eq!(s.tx_bytes, 8);
         assert_eq!(s.connection_count, 1);
         assert_eq!(s.error_count, 2);
+    }
+
+    #[test]
+    fn retain_drops_unknown_rules() {
+        // 对账兜底:counters 含 {1,2,3},retain({1,3}) 后只剩 {1,3},规则 2 的 counter 被清。
+        use std::collections::HashSet;
+        let stats = StatsCollector::new();
+        for id in [1, 2, 3] {
+            stats.ensure(id).rx_bytes.fetch_add(10, Ordering::Relaxed);
+        }
+        let keep: HashSet<i64> = [1, 3].into_iter().collect();
+        stats.retain(&keep);
+
+        let snap = stats.drain_snapshot();
+        let mut ids: Vec<i64> = snap.iter().map(|s| s.rule_id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 3], "retain 后只应剩 keep 集合内的规则");
+    }
+
+    #[test]
+    fn retain_preserves_active_counter_values() {
+        // 红线:retain 不得误清活跃规则 counter 的累计值(只删不在 keep 内的)。
+        use std::collections::HashSet;
+        let stats = StatsCollector::new();
+        stats.ensure(1).rx_bytes.fetch_add(123, Ordering::Relaxed);
+        stats.ensure(2).rx_bytes.fetch_add(456, Ordering::Relaxed);
+
+        let keep: HashSet<i64> = [1].into_iter().collect();
+        stats.retain(&keep);
+
+        let snap = stats.drain_snapshot();
+        assert_eq!(snap.len(), 1, "只剩规则 1");
+        let s = snap.iter().find(|s| s.rule_id == 1).expect("rule 1");
+        assert_eq!(s.rx_bytes, 123, "保留规则的累计值不应被 retain 改动");
+    }
+
+    #[test]
+    fn remove_drops_single_rule() {
+        // 单规则删除即时 remove:删 1 后只剩 2(回归保护)。
+        let stats = StatsCollector::new();
+        stats.ensure(1).rx_bytes.fetch_add(10, Ordering::Relaxed);
+        stats.ensure(2).rx_bytes.fetch_add(20, Ordering::Relaxed);
+
+        stats.remove(1);
+
+        let snap = stats.drain_snapshot();
+        assert_eq!(snap.len(), 1, "remove 后只剩规则 2");
+        assert_eq!(snap[0].rule_id, 2);
+        assert_eq!(snap[0].rx_bytes, 20);
     }
 
     #[test]
