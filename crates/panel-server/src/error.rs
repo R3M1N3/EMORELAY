@@ -29,6 +29,9 @@ pub enum ApiError {
 
     #[error("无权限执行此操作")]
     Forbidden,
+
+    #[error("{0}")]
+    TooManyRequests(String),
 }
 
 #[derive(Serialize)]
@@ -49,6 +52,7 @@ impl IntoResponse for ApiError {
                 (StatusCode::UNAUTHORIZED, "unauthorized")
             }
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            Self::TooManyRequests(_) => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests"),
         };
         if status.is_server_error() {
             tracing::error!(error = ?self, "server error");

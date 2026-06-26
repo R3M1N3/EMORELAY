@@ -102,29 +102,49 @@ fn exit_to_target_segment(exit_node_id: i64, exit_name: String, host: &str, port
 }
 
 /// 并发对每段下发 Probe 并收集结果(保序)。
-async fn run_segments(state: &AppState, segments: Vec<Segment>) -> Vec<SegmentResult> {
+/// 任一段 register_probe 命中 probe_waiters 上限则整请求失败(429),而非部分跑——
+/// 满负载下拒绝新诊断是正确的背压语义。
+///
+/// 注意:**不**用 `?` 提前返回。否则 drop JoinSet 会就地 abort 仍在 `await` 的兄弟任务,
+/// 使其已注册并下发的 probe 等待者错过自身的 cancel_probe(map 无 sweeper/TTL),造成
+/// 泄漏并反噬本上限保护。这里把所有任务跑完(各自走 cancel/timeout 清理),记下首个
+/// 错误,循环结束后再传播。
+async fn run_segments(state: &AppState, segments: Vec<Segment>) -> ApiResult<Vec<SegmentResult>> {
     let mut set = tokio::task::JoinSet::new();
     for (idx, seg) in segments.into_iter().enumerate() {
         let state = state.clone();
         set.spawn(async move { (idx, run_one(&state, seg).await) });
     }
     let mut out: Vec<Option<SegmentResult>> = Vec::new();
+    let mut first_err: Option<ApiError> = None;
     while let Some(res) = set.join_next().await {
         if let Ok((idx, r)) = res {
-            if idx >= out.len() {
-                out.resize_with(idx + 1, || None);
+            match r {
+                Ok(seg) => {
+                    if idx >= out.len() {
+                        out.resize_with(idx + 1, || None);
+                    }
+                    out[idx] = Some(seg);
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
             }
-            out[idx] = Some(r);
         }
     }
-    out.into_iter().flatten().collect()
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    Ok(out.into_iter().flatten().collect())
 }
 
-async fn run_one(state: &AppState, seg: Segment) -> SegmentResult {
+async fn run_one(state: &AppState, seg: Segment) -> ApiResult<SegmentResult> {
     let target = fmt_target(&seg.target_host, seg.target_port);
     // 预置错误段(如 hop 配置不全):不下发探测,直接产出错误结果。
     if let Some(err) = seg.pre_error {
-        return SegmentResult {
+        return Ok(SegmentResult {
             label: seg.label,
             source_node_id: seg.source_node_id,
             source_node_name: seg.source_node_name,
@@ -134,9 +154,9 @@ async fn run_one(state: &AppState, seg: Segment) -> SegmentResult {
             avg_latency_ms: 0.0,
             loss_pct: 100.0,
             error: err,
-        };
+        });
     }
-    let (probe_id, rx) = state.register_probe();
+    let (probe_id, rx) = state.register_probe()?;
     let cmd = Command {
         body: Some(Body::Probe(Probe {
             probe_id: probe_id.clone(),
@@ -147,7 +167,7 @@ async fn run_one(state: &AppState, seg: Segment) -> SegmentResult {
     };
     if !state.dispatcher.dispatch(seg.source_node_id, cmd) {
         state.cancel_probe(&probe_id);
-        return SegmentResult {
+        return Ok(SegmentResult {
             label: seg.label,
             source_node_id: seg.source_node_id,
             source_node_name: seg.source_node_name,
@@ -157,9 +177,9 @@ async fn run_one(state: &AppState, seg: Segment) -> SegmentResult {
             avg_latency_ms: 0.0,
             loss_pct: 100.0,
             error: "源节点离线，无法探测".to_string(),
-        };
+        });
     }
-    match tokio::time::timeout(PROBE_TIMEOUT, rx).await {
+    let result = match tokio::time::timeout(PROBE_TIMEOUT, rx).await {
         // Agent 上报数值不可全信:clamp 防离谱展示(对齐 stats 的防御基线)。
         Ok(Ok(r)) => SegmentResult {
             label: seg.label,
@@ -186,7 +206,8 @@ async fn run_one(state: &AppState, seg: Segment) -> SegmentResult {
                 error: "探测超时（Agent 未在限时内回报）".to_string(),
             }
         }
-    }
+    };
+    Ok(result)
 }
 
 pub fn fmt_target(host: &str, port: i64) -> String {
@@ -236,7 +257,7 @@ pub async fn diagnose_rule(
     };
 
     Ok(Json(DiagnoseResponse {
-        segments: run_segments(&state, segments).await,
+        segments: run_segments(&state, segments).await?,
     }))
 }
 
@@ -252,7 +273,7 @@ pub async fn diagnose_tunnel(
         .ok_or(ApiError::NotFound)?;
     let segments = tunnel_chain_segments(&state, id).await?;
     Ok(Json(DiagnoseResponse {
-        segments: run_segments(&state, segments).await,
+        segments: run_segments(&state, segments).await?,
     }))
 }
 

@@ -4,11 +4,19 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     config::Config,
+    error::ApiError,
     grpc::{dispatcher::CommandDispatcher, session::SessionRegistry},
 };
 use emorelay_common::control::v1::ProbeResult;
 use sqlx::SqlitePool;
 use tokio::sync::oneshot;
+
+/// probe_waiters 全局上限:同时在途的逐段诊断 probe 数。隧道诊断按跳数 fan-out 放大,
+/// 无上限时任意认证用户可借此把内存 map 撑爆(DoS)。达上限后新 register 被拒,诊断
+/// handler 映射为 HTTP 429。这是**全局兜底**(跨并发诊断的总闸),配合 diagnose 端点的
+/// per-user 限流(主控)——单用户被节流到 burst 3、单次诊断段数 = 跳数+1,正常远不触顶;
+/// 触顶即拒绝新诊断而非无界增长。
+pub const MAX_PROBE_WAITERS: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -38,11 +46,21 @@ impl AppState {
     }
 
     /// 注册一个探测等待者,返回 (probe_id, 接收端)。
-    pub fn register_probe(&self) -> (String, oneshot::Receiver<ProbeResult>) {
+    /// 在途等待者达 [`MAX_PROBE_WAITERS`] 时拒绝,返回 [`ApiError::TooManyRequests`]
+    /// 防无界增长;插入与上限检查在同一把锁内完成,避免并发越限。
+    pub fn register_probe(
+        &self,
+    ) -> Result<(String, oneshot::Receiver<ProbeResult>), ApiError> {
         let id = format!("p{}", self.probe_seq.fetch_add(1, Ordering::Relaxed));
         let (tx, rx) = oneshot::channel();
-        self.probe_waiters.lock().unwrap().insert(id.clone(), tx);
-        (id, rx)
+        {
+            let mut waiters = self.probe_waiters.lock().unwrap();
+            if waiters.len() >= MAX_PROBE_WAITERS {
+                return Err(ApiError::TooManyRequests("诊断繁忙，请稍后再试".to_string()));
+            }
+            waiters.insert(id.clone(), tx);
+        }
+        Ok((id, rx))
     }
 
     /// 投递探测结果给对应等待者(已超时移除则忽略)。

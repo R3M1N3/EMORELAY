@@ -17,9 +17,70 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+    governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
+    key_extractor::SmartIpKeyExtractor, GovernorLayer,
 };
+
+/// 按已认证 user 的 id 限流的 key extractor:从 `Authorization: Bearer <jwt>` 解出
+/// `claims.sub` 作为 key。diagnose 端点用它防止任意认证用户高频诊断把 probe_waiters
+/// 撑爆(隧道按跳数 fan-out 放大)。
+///
+/// 解不出(无/坏 token)时回落到 key 0:让本层放行、把鉴权交还给 handler 的 `AuthUser`
+/// 提取器(返回 401/403),避免限流层抢先吞掉鉴权语义。匿名请求共享 key 0 桶——它们
+/// 本就会在 handler 处被拒,这里的限流只为已认证用户按真实 id 隔离。
+#[derive(Clone)]
+struct UserIdKeyExtractor {
+    jwt_secret: Arc<str>,
+}
+
+impl KeyExtractor for UserIdKeyExtractor {
+    type Key = i64;
+
+    fn extract<T>(
+        &self,
+        req: &axum::http::Request<T>,
+    ) -> Result<Self::Key, tower_governor::errors::GovernorError> {
+        let sub = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|raw| raw.strip_prefix("Bearer "))
+            .and_then(|token| crate::auth::jwt::decode_jwt(&self.jwt_secret, token).ok())
+            .map(|claims| claims.sub)
+            .unwrap_or(0);
+        Ok(sub)
+    }
+}
+
+/// governor 默认 429 是 text/plain 英文,违背全站统一 JSON 错误格式;改成与 ApiError
+/// 同构的 body 并带 Retry-After。与 login_routes 的 error_handler 同款。
+fn governor_json_error(
+    err: tower_governor::errors::GovernorError,
+) -> axum::response::Response {
+    match err {
+        tower_governor::errors::GovernorError::TooManyRequests { wait_time, .. } => {
+            let body = serde_json::json!({
+                "error": "too_many_requests",
+                "message": format!("诊断过于频繁，请在 {wait_time} 秒后重试"),
+            });
+            axum::response::Response::builder()
+                .status(axum::http::StatusCode::TOO_MANY_REQUESTS)
+                .header("content-type", "application/json")
+                .header("retry-after", wait_time.to_string())
+                .body(axum::body::Body::from(body.to_string()))
+                .expect("static 429 response")
+        }
+        _ => axum::response::Response::builder()
+            .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                r#"{"error":"internal_error","message":"服务器内部错误"}"#,
+            ))
+            .expect("static 500 response"),
+    }
+}
 
 pub fn router(state: AppState) -> Router {
     let install_governor = Arc::new(
@@ -78,6 +139,25 @@ pub fn router(state: AppState) -> Router {
         )
         .with_state(state.clone());
 
+    // diagnose 防滥用:per-user(claims.sub)稳态 1 次/2s、突发 3 次。隧道诊断按跳数
+    // fan-out 放大 probe,无上限时单用户即可堆爆 probe_waiters。与 state 的 64 上限
+    // 形成纵深(本层挡高频,上限挡瞬时并发)。
+    let diagnose_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .period(Duration::from_secs(2))
+            .burst_size(3)
+            .key_extractor(UserIdKeyExtractor {
+                jwt_secret: Arc::from(state.config.jwt_secret.as_str()),
+            })
+            .finish()
+            .expect("diagnose governor config"),
+    );
+    let diagnose_routes = Router::new()
+        .route("/api/rules/{id}/diagnose", post(diagnose::diagnose_rule))
+        .route("/api/tunnels/{id}/diagnose", post(diagnose::diagnose_tunnel))
+        .layer(GovernorLayer::new(diagnose_governor).error_handler(governor_json_error))
+        .with_state(state.clone());
+
     Router::new()
         .route("/api/health", get(health::health))
         .route("/api/auth/logout", post(auth::logout))
@@ -108,7 +188,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rules/{id}/restart", post(rules::restart))
         .route("/api/rules/{id}/stats", get(rules::stats))
         .route("/api/rules/{id}/logs", get(rules::logs))
-        .route("/api/rules/{id}/diagnose", post(diagnose::diagnose_rule))
         .route("/api/rules/export", get(rules_io::export))
         .route("/api/rules/import", post(rules_io::import))
         .route("/api/users", get(users::list).post(users::create))
@@ -134,7 +213,6 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/tunnels/{id}/restart", post(tunnels::restart))
         .route("/api/tunnels/{id}/status", get(tunnels::status))
-        .route("/api/tunnels/{id}/diagnose", post(diagnose::diagnose_tunnel))
         .route("/api/tunnels/{id}/grants", get(tunnels::grants))
         .route("/api/ui-config", get(system::ui_config))
         .route("/api/system/overview", get(system::overview))
@@ -146,6 +224,7 @@ pub fn router(state: AppState) -> Router {
         )
         .merge(install_routes)
         .merge(login_routes)
+        .merge(diagnose_routes)
         .with_state(state)
 }
 
