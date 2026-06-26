@@ -184,7 +184,13 @@ impl Rule {
             .await
     }
 
-    /// 列出某节点下所有未软删的规则。Agent 重连 reconcile 用。
+    /// 列出某节点下所有未软删的规则。Agent 重连 reconcile 用(结果即 reconcile 的 keep_ids)。
+    ///
+    /// **不变量(勿加 `enabled` 过滤)**:keep_ids 必须包含全部「未软删」规则,含
+    /// disabled-but-not-deleted。否则 sweeper / `user_quota` / `bandwidth_profiles` 等
+    /// **不持 per-node 锁**的裸 `dispatch_rule_apply` 所重发的已存在规则,会被 reconcile
+    /// 的 keep_ids 漏掉、当孤儿误删(退化为 code-review 修复的 #1 竞态)。enabled 状态由
+    /// ApplyRule 的 payload 表达,不在 reconcile 的存活集判定。
     pub async fn list_active_for_node(
         pool: &SqlitePool,
         node_id: i64,
