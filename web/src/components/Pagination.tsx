@@ -8,6 +8,8 @@ interface Props {
   onChangePage: (page: number) => void
   onChangePageSize?: (size: number) => void
   pageSizeOptions?: number[]
+  /** 在途批量操作期间禁用翻页/改页长,避免翻页后跨页选择被清、计数与在途 targets 脱节 */
+  disabled?: boolean
 }
 
 export function Pagination({
@@ -17,6 +19,7 @@ export function Pagination({
   onChangePage,
   onChangePageSize,
   pageSizeOptions = [20, 50, 100],
+  disabled = false,
 }: Props) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const safePage = Math.min(Math.max(1, page), totalPages)
@@ -34,8 +37,9 @@ export function Pagination({
             <span className="text-zinc-400">每页</span>
             <select
               value={pageSize}
+              disabled={disabled}
               onChange={(e) => onChangePageSize(Number(e.target.value))}
-              className="rounded-md bg-white/[0.04] border border-white/10 px-1.5 py-0.5 text-xs"
+              className="rounded-md bg-white/[0.04] border border-white/10 disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-0.5 text-xs"
             >
               {pageSizeOptions.map((n) => (
                 <option key={n} value={n}>
@@ -47,7 +51,7 @@ export function Pagination({
         )}
         <button
           type="button"
-          disabled={safePage <= 1}
+          disabled={disabled || safePage <= 1}
           onClick={() => onChangePage(safePage - 1)}
           className="rounded-md bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5"
         >
@@ -58,7 +62,7 @@ export function Pagination({
         </span>
         <button
           type="button"
-          disabled={safePage >= totalPages}
+          disabled={disabled || safePage >= totalPages}
           onClick={() => onChangePage(safePage + 1)}
           className="rounded-md bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed px-2 py-0.5"
         >

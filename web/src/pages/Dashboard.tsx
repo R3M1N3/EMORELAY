@@ -125,8 +125,8 @@ function AdminDashboard() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <Stat label="总节点数" value={ov0 ? ov0.total_nodes : data.nodes.length} hint={`${ov0 ? ov0.online_nodes : onlineNodes} 在线`} accent="indigo" />
-        <Stat label="转发规则" value={ov0 ? ov0.total_rules : data.rules.length} hint={`${ov0 ? ov0.enabled_rules : enabledRules} 启用`} accent="violet" />
+        <Stat label="总节点数" value={ov0?.total_nodes ?? data.nodes.length} hint={`${ov0?.online_nodes ?? onlineNodes} 在线`} accent="indigo" />
+        <Stat label="转发规则" value={ov0?.total_rules ?? data.rules.length} hint={`${ov0?.enabled_rules ?? enabledRules} 启用`} accent="violet" />
         <Stat label="总连接数" value={formatCount(ov0?.total_connections ?? totalConn)} hint="累计" accent="emerald" />
         <Stat label="总转发流量" value={formatBytes(ruleRx + ruleTx)} hint={`规则转发累计 ↓${formatBytes(ruleRx)} ↑${formatBytes(ruleTx)}`} accent="amber" />
         <Stat label="24h 转发流量" value={today} hint={todayHint} accent="sky" />

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
@@ -52,6 +52,9 @@ export default function NodeDetail() {
   // 30s 静默刷新心跳/资源/时序。
   const [refreshTick, setRefreshTick] = useState(0)
   useAutoRefresh(() => setRefreshTick((n) => n + 1), 30_000)
+  // 协议阻断乐观值的在途守卫:切换开关后立即记下期望 mask,防止恰在 nodes.update 提交前
+  // 发出的周期 GET 返回旧 mask 整页替换 node 时把开关「回弹」。null = 无在途乐观值。
+  const optimisticBlock = useRef<number | null>(null)
 
   function copyCred(value: string, label: string) {
     if (!navigator.clipboard) {
@@ -85,6 +88,12 @@ export default function NodeDetail() {
     }
   }
 
+  // 切换节点(路由 :id 变化时本组件实例被复用、ref 不随卸载重置)必须丢弃上一个节点的在途乐观值,
+  // 否则它会泄漏到新节点、且因新节点 GET 永不等于它而被无限期套用(开关错误显示为已阻断)。
+  useEffect(() => {
+    optimisticBlock.current = null
+  }, [nodeId])
+
   useEffect(() => {
     let cancelled = false
     // invalid id 走 Promise.reject 让 setState 落在 .catch 异步路径。
@@ -95,6 +104,13 @@ export default function NodeDetail() {
     work
       .then(([node, stats]) => {
         if (cancelled) return
+        // 在途乐观值守卫:若用户刚切过协议阻断而该周期 GET 仍是旧快照,用乐观值覆盖
+        // node.block_protocols(避免开关回弹);服务端已确认(GET 值 == 乐观值)则清守卫,回归权威。
+        const pending = optimisticBlock.current
+        if (pending != null) {
+          if (node.block_protocols === pending) optimisticBlock.current = null
+          else node = { ...node, block_protocols: pending }
+        }
         setState({ node, stats, loading: false, error: null })
       })
       .catch((e: unknown) => {
@@ -255,7 +271,10 @@ export default function NodeDetail() {
           onChanged={(nextMask) => {
             toast.success('协议阻断设置已更新')
             // P3-11:局部更新该字段即可,不再 setRefreshTick 触发整页重拉——
-            // 连切开关时 toast 不被整页重渲染打断,卡片也不整体闪烁(30s 周期刷新仍会同步其余字段)。
+            // 连切开关时 toast 不被整页重渲染打断,卡片也不整体闪烁。
+            // 同时记下在途乐观值:30s 周期刷新整页替换 node 时,load effect 会用它覆盖旧快照的
+            // block_protocols(服务端确认后自动回归权威),避免恰在 update 提交前发出的 GET 把开关回弹。
+            optimisticBlock.current = nextMask
             setState((s) => (s.node ? { ...s, node: { ...s.node, block_protocols: nextMask } } : s))
           }}
         />

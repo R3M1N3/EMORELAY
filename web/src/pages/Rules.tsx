@@ -131,7 +131,14 @@ export default function Rules() {
         user_id: filters.user_id ? Number(filters.user_id) : undefined,
         enabled: filters.enabled ? filters.enabled === 'true' : undefined,
       })
-      setList({ items: r.items, total: r.total, loading: false, error: null })
+      // 末页操作(批量启停/删除)使结果集缩小后,当前 page 可能已超出新总页数 → 空表(用户误以为没规则)。
+      // 回退到新的最后一页:setPage 触发列表 effect 用 clamp 后的页重新拉取(配额/筛选下尤其常见)。
+      const maxPage = Math.max(1, Math.ceil(r.total / pageSize))
+      const needsClamp = r.items.length === 0 && page > maxPage
+      // clamp 重拉在即:非静默操作下保持 loading 骨架而非渲染本页空结果,避免一帧误导性「尚无转发规则」
+      // 新手空态;静默刷新(30s)只悄悄回退页码,不闪骨架。
+      setList({ items: r.items, total: r.total, loading: needsClamp && !opts.silent, error: null })
+      if (needsClamp) setPage(maxPage)
     } catch (e) {
       if (opts.silent) return
       const msg = e instanceof ApiError ? e.message : '加载失败'
@@ -299,11 +306,14 @@ export default function Rules() {
     setSelected(new Set())
     await reload()
     const verb = enable ? '启用' : '禁用'
+    // 「已选 N」与「成功 M」在「部分规则已是目标态被跳过」时会不一致 —— 显式说明跳过条数,避免误读为丢失。
+    const skipped = visibleSelected.length - targets.length
+    const skipNote = skipped > 0 ? `,${skipped} 条已是${verb}状态(跳过)` : ''
     if (failed.length === 0) {
-      toast.success(`已${verb} ${ok} 条规则`)
+      toast.success(`已${verb} ${ok} 条规则${skipNote}`)
     } else {
       const head = failed.slice(0, 3).join('、')
-      toast.error(`${verb}完成:${ok} 条成功,${failed.length} 条失败(${head}${failed.length > 3 ? ' 等' : ''})`)
+      toast.error(`${verb}完成:${ok} 条成功,${failed.length} 条失败(${head}${failed.length > 3 ? ' 等' : ''})${skipNote}`)
     }
   }
 
@@ -667,6 +677,8 @@ export default function Rules() {
               setPageSize(n)
               setPage(1)
             }}
+            // 批量启停在途时禁翻页:翻页会重拉列表并使跨页选择脱节(工具条计数与在途 targets 不一致)。
+            disabled={bulkBusy}
           />
         )}
       </section>
