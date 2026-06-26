@@ -339,6 +339,11 @@ impl ControlPlane for ControlPlaneImpl {
         let state = self.state.clone();
         let node_id = inner.node_id;
         tokio::spawn(async move {
+            // per-node 串行锁(Gap #2):整个「快照读 reconcile_commands_for_node + 重放下发
+            // (含末尾权威 ReconcileRules)」对本 node 持锁,与并发 delete 的「软删 + RemoveRule
+            // 下发」互斥。否则极端时序下 delete 可能夹在本任务「快照读」与「下发」之间,使 Agent
+            // 先收 RemoveRule 再被陈旧 keep_ids 复活刚删的规则。锁仅本节点,不阻塞其它 node。
+            let _node_guard = state.dispatcher.lock_nodes(&[node_id]).await;
             match crate::grpc::tunnel_dispatch::reconcile_commands_for_node(&state, node_id).await {
                 Ok(cmds) => {
                     let n = cmds.len();

@@ -778,6 +778,15 @@ pub async fn delete(
         .ok_or(ApiError::NotFound)?;
     ensure_can_touch(&auth, &existing)?;
 
+    // per-node 串行锁(Gap #2):软删 + RemoveRule 下发须与该规则相关节点的 reconcile
+    // 「快照读 + 重放」互斥,否则极端时序下 reconcile 可能按删除前的旧快照(keep_ids 仍含
+    // 本规则)复活刚删的规则。隧道规则锁链上全部 hop 节点。锁须在软删之前取(覆盖整段),
+    // 目标节点从软删前的 existing 计算(软删后隧道 hop 仍可解析)。
+    let target_nodes = crate::grpc::tunnel_dispatch::rule_target_nodes(&state, &existing)
+        .await
+        .unwrap_or_else(|_| vec![existing.node_id]);
+    let _node_guards = state.dispatcher.lock_nodes(&target_nodes).await;
+
     let rows = Rule::soft_delete(&state.pool, id).await?;
     if rows == 0 {
         return Err(ApiError::NotFound);

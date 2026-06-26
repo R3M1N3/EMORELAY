@@ -130,6 +130,16 @@ async fn tunnel_node_ids(state: &AppState, tunnel_id: i64) -> sqlx::Result<Vec<i
         .await
 }
 
+/// 规则 remove/reconcile 触及的目标节点集合:隧道规则 = 链上全部 hop 节点,非隧道 =
+/// 单节点。delete 临界区据此对所有相关 node 加 per-node 串行锁(Gap #2),与各 hop 的
+/// reconcile 串行,消除复活窗口。
+pub async fn rule_target_nodes(state: &AppState, rule: &DbRule) -> sqlx::Result<Vec<i64>> {
+    match rule.tunnel_id {
+        Some(tid) => tunnel_node_ids(state, tid).await,
+        None => Ok(vec![rule.node_id]),
+    }
+}
+
 /// remove:隧道规则对链上每个节点发 RemoveRule;非隧道单节点。
 /// 返回是否全部目标节点都送达了 RemoveRule。隧道规则跨多跳,任一节点离线即 false——
 /// 调用方(delete)据此告诉用户「节点离线,将在恢复后由对账清理」,而非误报已彻底删除。

@@ -1,8 +1,9 @@
 use emorelay_common::control::v1::Command;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::mpsc;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 /// 每个在线 node channel 的容量。慢/假死 agent 时,待下发命令最多在 panel 内存
 /// 堆积 CHANNEL_CAPACITY 条;超过即由 try_send 背压拒绝(dispatch 返回 false),
@@ -19,6 +20,13 @@ const CHANNEL_CAPACITY: usize = 1024;
 pub struct CommandDispatcher {
     channels: RwLock<HashMap<i64, ChannelEntry>>,
     next_gen: AtomicU64,
+    /// per-node 串行锁注册表(Gap #2)。reconcile 的「快照读 + 重放下发」与 delete 的
+    /// 「软删 + RemoveRule 下发」对同一 node 经 [`lock_nodes`] 持同一把异步互斥,二者串行,
+    /// 消除「delete 后被 reconcile 按旧快照(含已删 rule 的 keep_ids)复活」的窗口。
+    /// 粒度 per-node:不同 node 互不阻塞,纯控制面,不影响转发热路径。
+    /// 外层 std `Mutex` 仅护注册表查改(无 await,瞬时);每个 value 是 per-node 的
+    /// 异步 `Mutex`,可跨 await 持有。entry 只增不删(node 数有界,内存可忽略)。
+    node_locks: Mutex<HashMap<i64, Arc<AsyncMutex<()>>>>,
 }
 
 struct ChannelEntry {
@@ -68,6 +76,30 @@ impl CommandDispatcher {
                 map.remove(&node_id);
             }
         }
+    }
+
+    /// 取得给定节点集合的 per-node 串行锁,返回持有的 owned guards(随返回值 drop 释放)。
+    /// 调用方在锁的生命周期内完成「reconcile 快照读+下发」或「delete 软删+下发」临界区。
+    ///
+    /// 死锁规避:同时锁多个节点(隧道规则 delete 跨多跳)时,**按 node_id 升序**获取——
+    /// 任意两个并发的多节点持锁者获取顺序一致,不构成环路等待。reconcile 永远只锁单节点
+    /// (单 Agent 订阅),单次获取不可能死锁。入参先去重排序。
+    pub async fn lock_nodes(&self, node_ids: &[i64]) -> Vec<OwnedMutexGuard<()>> {
+        let mut ids: Vec<i64> = node_ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        // 先在 std 锁内拿/建每个 node 的 Arc<AsyncMutex>(瞬时,无 await),再逐个异步 lock。
+        let mutexes: Vec<Arc<AsyncMutex<()>>> = {
+            let mut reg = self.node_locks.lock().unwrap();
+            ids.iter()
+                .map(|id| reg.entry(*id).or_default().clone())
+                .collect()
+        };
+        let mut guards = Vec::with_capacity(mutexes.len());
+        for m in mutexes {
+            guards.push(m.lock_owned().await);
+        }
+        guards
     }
 }
 
