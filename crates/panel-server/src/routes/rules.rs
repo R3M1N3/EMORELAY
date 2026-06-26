@@ -580,7 +580,10 @@ pub async fn create(
     .await;
 
     // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
-    let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
+    // per-node 锁(Bug #1):ApplyRule 入队须与该规则相关节点的 reconcile「快照读+末尾
+    // ReconcileRules」互斥,否则重连 reconcile 在途时本规则会夹在快照(旧、不含本规则)
+    // 与权威 keep_ids 之间被 Agent 当孤儿删 → DB 存在但数据面永久死、在线不自愈。
+    crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(&state, &rule).await;
 
     let mut view = RuleView::from(rule);
     view.user_name = lookup_username(&state.pool, view.user_id).await?;
@@ -761,7 +764,8 @@ pub async fn update(
     .await;
 
     // 下发失败只 warn(实体已落库,reconcile 兜底),不让误导性 500 回给客户端。
-    let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
+    // per-node 锁见 create:与相关节点 reconcile 互斥,防 ApplyRule 被陈旧 keep_ids 误删。
+    crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(&state, &rule).await;
 
     Ok(Json(rule.into()))
 }
@@ -782,10 +786,19 @@ pub async fn delete(
     // 「快照读 + 重放」互斥,否则极端时序下 reconcile 可能按删除前的旧快照(keep_ids 仍含
     // 本规则)复活刚删的规则。隧道规则锁链上全部 hop 节点。锁须在软删之前取(覆盖整段),
     // 目标节点从软删前的 existing 计算(软删后隧道 hop 仍可解析)。
+    //
+    // misleading-fallback(Bug #2):目标节点查询出错(仅隧道规则可能:查 tunnel_hops 失败)
+    // 时**不回落 entry-only**——那会只锁/删 entry hop、漏 mid/exit,且因 entry 下发成功而把
+    // dispatched 误报 true。改为:软删仍执行(保持「已成功不回 500」取舍),但跳过下发并如实
+    // 标 dispatched=false(未送达,由后续 reconcile 在节点重连时按软删后的真值兜底清理)。
+    // 此分支无 RemoveRule 下发,故无需 per-node 锁(没有可与 reconcile 竞争的下发)。
     let target_nodes = crate::grpc::tunnel_dispatch::rule_target_nodes(&state, &existing)
         .await
-        .unwrap_or_else(|_| vec![existing.node_id]);
-    let _node_guards = state.dispatcher.lock_nodes(&target_nodes).await;
+        .ok();
+    let _node_guards = match &target_nodes {
+        Some(nodes) => Some(state.dispatcher.lock_nodes(nodes).await),
+        None => None,
+    };
 
     let rows = Rule::soft_delete(&state.pool, id).await?;
     if rows == 0 {
@@ -805,10 +818,15 @@ pub async fn delete(
     .await;
 
     // 软删已成功(实体不可见);下发 RemoveRule 是 best-effort。dispatched=false 表示
-    // 至少一个目标节点离线,规则在数据面可能仍在跑,将由配置对账在节点恢复后清理。
-    // 复用上面已算出的 target_nodes(加锁集 == 下发集),不再二次查 tunnel_hops。
-    let dispatched =
-        crate::grpc::tunnel_dispatch::dispatch_rule_remove_to(&state, existing.id, &target_nodes);
+    // 至少一个目标节点离线**或目标节点查询出错**(见上),规则在数据面可能仍在跑,
+    // 将由配置对账在节点恢复后清理。复用上面已算出的 target_nodes(加锁集 == 下发集),
+    // 不再二次查 tunnel_hops。
+    let dispatched = match &target_nodes {
+        Some(nodes) => {
+            crate::grpc::tunnel_dispatch::dispatch_rule_remove_to(&state, existing.id, nodes)
+        }
+        None => false,
+    };
 
     Ok(Json(json!({ "ok": true, "dispatched": dispatched })))
 }
@@ -862,8 +880,9 @@ async fn set_enabled_handler(
     .await;
 
     // 通过 ApplyRule 让 Agent 用新的 enabled 字段重新对齐（启停 listener）。
+    // per-node 锁见 create:与相关节点 reconcile 互斥,防 ApplyRule 被陈旧 keep_ids 误删。
     if let Ok(Some(rule)) = Rule::find_by_id(&state.pool, id).await {
-        let _ = crate::grpc::tunnel_dispatch::dispatch_rule_apply(&state, &rule).await;
+        crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(&state, &rule).await;
     }
 
     Ok(Json(json!({ "ok": true, "enabled": enabled })))

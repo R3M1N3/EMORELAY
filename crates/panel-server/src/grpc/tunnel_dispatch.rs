@@ -113,6 +113,32 @@ pub async fn dispatch_rule_apply(state: &AppState, rule: &DbRule) -> sqlx::Resul
     }
 }
 
+/// apply 的「持 per-node 锁」封装(Bug #1):先算目标节点(隧道=链上全部 hop、非隧道=单
+/// 节点)并取 per-node 串行锁,再在锁内 dispatch ApplyRule。与 reconcile 的「快照读 + 末尾
+/// 权威 ReconcileRules」对同一 node 互斥,消除「reconcile 在途时并发 apply 的规则夹在旧快照
+/// 与 keep_ids 之间被 Agent 当孤儿删 → DB 在、数据面死、在线不自愈」窗口。
+///
+/// 目标节点查询出错(仅隧道规则可能:查 tunnel_hops 失败)时**不下发**也不退化锁集——
+/// 持错锁形同未锁,部分下发更是误导;直接跳过,由后续 reconcile 在重连时兜底对齐
+/// (与 dispatch_rule_apply 离线时「下次 register 同步」同口径)。实体已落库,无数据丢失。
+/// 下发本身 best-effort(离线仅 warn),整体返回值故省略——调用方一律不据此报错给客户端。
+pub async fn dispatch_rule_apply_locked(state: &AppState, rule: &DbRule) {
+    let nodes = match rule_target_nodes(state, rule).await {
+        Ok(n) => n,
+        Err(e) => {
+            warn!(
+                error = ?e, rule_id = rule.id, tunnel_id = ?rule.tunnel_id,
+                "rule_target_nodes failed; apply NOT dispatched (reconcile will sync at next register)"
+            );
+            return;
+        }
+    };
+    let _guards = state.dispatcher.lock_nodes(&nodes).await;
+    if let Err(e) = dispatch_rule_apply(state, rule).await {
+        warn!(error = ?e, rule_id = rule.id, "dispatch_rule_apply failed");
+    }
+}
+
 /// 查节点协议嗅探阻断位掩码(非隧道规则下发时填入 proto);失败/缺失回落 0(不阻断)。
 async fn node_block_protocols(state: &AppState, node_id: i64) -> sqlx::Result<u32> {
     let m: Option<i64> =
