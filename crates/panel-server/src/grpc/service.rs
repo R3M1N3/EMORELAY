@@ -7,7 +7,7 @@ use emorelay_common::control::v1::{
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{info, warn};
@@ -315,38 +315,7 @@ impl ControlPlane for ControlPlaneImpl {
         if inner.node_id != session_node_id {
             return Err(Status::permission_denied("session/node mismatch"));
         }
-        let (rx, generation) = self.state.dispatcher.subscribe(inner.node_id);
-
-        // Reconcile：新 channel 建立后立即重放该 node 所有 active 规则。
-        // 覆盖断网期间漏掉的 CRUD，让 Agent 重连后与 server 真值对齐。
-        let reconciled = match crate::grpc::tunnel_dispatch::reconcile_commands_for_node(
-            &self.state,
-            inner.node_id,
-        )
-        .await
-        {
-            Ok(cmds) => {
-                let n = cmds.len();
-                // 权威规则 id 全集 = 本次重放的全部 ApplyRule 的 rule.id;末尾追加 ReconcileRules,
-                // 令 Agent 删除断网期间被删、RemoveRule 丢失的孤儿,与面板真值收敛。
-                // 注意:查询成功返回空集合 = 该节点确无规则,Agent 应清空(有意);仅查询 Err
-                // (下方分支)才保守不下发 ReconcileRules——勿把「成功空集」也改成 fail-safe。
-                let keep_ids = crate::grpc::tunnel_dispatch::authoritative_rule_ids(&cmds);
-                for cmd in cmds {
-                    self.state.dispatcher.dispatch(inner.node_id, cmd);
-                }
-                self.state.dispatcher.dispatch(
-                    inner.node_id,
-                    crate::grpc::tunnel_dispatch::reconcile_rules_command(keep_ids),
-                );
-                n
-            }
-            Err(e) => {
-                warn!(error = ?e, "reconcile query failed; agent will run with last-known rules");
-                0
-            }
-        };
-        info!(node_id = inner.node_id, reconciled, "command stream opened");
+        let (rx, tx, generation) = self.state.dispatcher.subscribe(inner.node_id);
 
         // 用 GuardedStream 包装 receiver:stream 终止 (agent 断连 / 主动 cancel) 时
         // DispatcherGuard::drop -> unsubscribe_if(node_id, generation),清理 channels
@@ -357,9 +326,52 @@ impl ControlPlane for ControlPlaneImpl {
             generation,
         };
         let stream = GuardedStream {
-            inner: UnboundedReceiverStream::new(rx).map(Ok),
+            inner: ReceiverStream::new(rx).map(Ok),
             _guard: guard,
         };
+
+        // Reconcile：channel 建立后重放该 node 所有 active 规则,覆盖断网期间漏掉的 CRUD,
+        // 让 Agent 重连后与 server 真值对齐。**在 stream 返回后由独立任务用 send().await
+        // 背压式下发**:有界 channel(1024)在重放命令数超容量时,同步 try_send 会丢弃尾部
+        // (含末尾权威 ReconcileRules → Agent 收不到 keep_ids → 孤儿不清理 / 规则缺失);
+        // 改为 spawn + send().await,消费者(本 stream)已 live,满则等待 Agent 拉取而非丢弃,
+        // 既不丢命令也不阻塞本 RPC 返回。
+        let state = self.state.clone();
+        let node_id = inner.node_id;
+        tokio::spawn(async move {
+            match crate::grpc::tunnel_dispatch::reconcile_commands_for_node(&state, node_id).await {
+                Ok(cmds) => {
+                    let n = cmds.len();
+                    // 权威规则 id 全集 = 本次重放的全部 ApplyRule 的 rule.id;末尾追加 ReconcileRules,
+                    // 令 Agent 删除断网期间被删、RemoveRule 丢失的孤儿,与面板真值收敛。
+                    // 注意:查询成功返回空集合 = 该节点确无规则,Agent 应清空(有意);仅查询 Err
+                    // (下方分支)才保守不下发 ReconcileRules——勿把「成功空集」也改成 fail-safe。
+                    let keep_ids = crate::grpc::tunnel_dispatch::authoritative_rule_ids(&cmds);
+                    for cmd in cmds {
+                        // send().await 仅在 receiver 关闭(Agent 已断连)时 Err——此时整批重放作废,
+                        // 提前退出;新一轮 subscribe 会重对账。
+                        if tx.send(cmd).await.is_err() {
+                            warn!(node_id, "agent disconnected mid-reconcile; replay aborted");
+                            return;
+                        }
+                    }
+                    if tx
+                        .send(crate::grpc::tunnel_dispatch::reconcile_rules_command(keep_ids))
+                        .await
+                        .is_err()
+                    {
+                        warn!(node_id, "agent disconnected before reconcile-rules; replay aborted");
+                        return;
+                    }
+                    info!(node_id, reconciled = n, "command stream reconciled");
+                }
+                Err(e) => {
+                    warn!(error = ?e, node_id, "reconcile query failed; agent will run with last-known rules");
+                }
+            }
+        });
+        info!(node_id = inner.node_id, "command stream opened");
+
         Ok(Response::new(Box::pin(stream) as Self::SubscribeCommandsStream))
     }
 
