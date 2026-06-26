@@ -54,16 +54,20 @@ impl KeyExtractor for UserIdKeyExtractor {
     }
 }
 
-/// governor 默认 429 是 text/plain 英文,违背全站统一 JSON 错误格式;改成与 ApiError
-/// 同构的 body 并带 Retry-After。与 login_routes 的 error_handler 同款。
-fn governor_json_error(
-    err: tower_governor::errors::GovernorError,
-) -> axum::response::Response {
-    match err {
+/// governor 默认 429 是 text/plain 英文,违背全站统一 JSON 错误格式;统一成与 ApiError
+/// 同构的 body 并带 Retry-After。429 文案参数化(各限流入口语境不同),作为 error_handler
+/// 工厂复用——login / diagnose 共用同一实现,仅传入各自文案的 `{wait_time}` 模板。
+///
+/// `message`:接收剩余等待秒数(u64),返回该入口的 429 文案。
+fn governor_json_error<F>(message: F) -> impl Fn(tower_governor::errors::GovernorError) -> axum::response::Response + Clone
+where
+    F: Fn(u64) -> String + Clone,
+{
+    move |err| match err {
         tower_governor::errors::GovernorError::TooManyRequests { wait_time, .. } => {
             let body = serde_json::json!({
                 "error": "too_many_requests",
-                "message": format!("诊断过于频繁，请在 {wait_time} 秒后重试"),
+                "message": message(wait_time),
             });
             axum::response::Response::builder()
                 .status(axum::http::StatusCode::TOO_MANY_REQUESTS)
@@ -110,32 +114,9 @@ pub fn router(state: AppState) -> Router {
     let login_routes = Router::new()
         .route("/api/auth/login", post(auth::login))
         .layer(
-            GovernorLayer::new(login_governor)
-                // 默认 429 是 text/plain 英文,违背全站统一 JSON 错误格式;改成与
-                // ApiError 同构的 body 并带 Retry-After。
-                .error_handler(|err| match err {
-                    tower_governor::errors::GovernorError::TooManyRequests {
-                        wait_time, ..
-                    } => {
-                        let body = serde_json::json!({
-                            "error": "too_many_requests",
-                            "message": format!("尝试过于频繁,请在 {wait_time} 秒后重试"),
-                        });
-                        axum::response::Response::builder()
-                            .status(axum::http::StatusCode::TOO_MANY_REQUESTS)
-                            .header("content-type", "application/json")
-                            .header("retry-after", wait_time.to_string())
-                            .body(axum::body::Body::from(body.to_string()))
-                            .expect("static 429 response")
-                    }
-                    _ => axum::response::Response::builder()
-                        .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
-                        .header("content-type", "application/json")
-                        .body(axum::body::Body::from(
-                            r#"{"error":"internal_error","message":"服务器内部错误"}"#,
-                        ))
-                        .expect("static 500 response"),
-                }),
+            GovernorLayer::new(login_governor).error_handler(governor_json_error(|wait_time| {
+                format!("尝试过于频繁,请在 {wait_time} 秒后重试")
+            })),
         )
         .with_state(state.clone());
 
@@ -155,7 +136,9 @@ pub fn router(state: AppState) -> Router {
     let diagnose_routes = Router::new()
         .route("/api/rules/{id}/diagnose", post(diagnose::diagnose_rule))
         .route("/api/tunnels/{id}/diagnose", post(diagnose::diagnose_tunnel))
-        .layer(GovernorLayer::new(diagnose_governor).error_handler(governor_json_error))
+        .layer(GovernorLayer::new(diagnose_governor).error_handler(governor_json_error(
+            |wait_time| format!("诊断过于频繁，请在 {wait_time} 秒后重试"),
+        )))
         .with_state(state.clone());
 
     Router::new()

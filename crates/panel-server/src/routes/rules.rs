@@ -806,10 +806,9 @@ pub async fn delete(
 
     // 软删已成功(实体不可见);下发 RemoveRule 是 best-effort。dispatched=false 表示
     // 至少一个目标节点离线,规则在数据面可能仍在跑,将由配置对账在节点恢复后清理。
-    // DB 查询出错(取节点 id)时按未送达处理,绝不因下发问题让删除回 500。
-    let dispatched = crate::grpc::tunnel_dispatch::dispatch_rule_remove(&state, &existing)
-        .await
-        .unwrap_or(false);
+    // 复用上面已算出的 target_nodes(加锁集 == 下发集),不再二次查 tunnel_hops。
+    let dispatched =
+        crate::grpc::tunnel_dispatch::dispatch_rule_remove_to(&state, existing.id, &target_nodes);
 
     Ok(Json(json!({ "ok": true, "dispatched": dispatched })))
 }

@@ -140,22 +140,19 @@ pub async fn rule_target_nodes(state: &AppState, rule: &DbRule) -> sqlx::Result<
     }
 }
 
-/// remove:隧道规则对链上每个节点发 RemoveRule;非隧道单节点。
-/// 返回是否全部目标节点都送达了 RemoveRule。隧道规则跨多跳,任一节点离线即 false——
-/// 调用方(delete)据此告诉用户「节点离线,将在恢复后由对账清理」,而非误报已彻底删除。
-pub async fn dispatch_rule_remove(state: &AppState, rule: &DbRule) -> sqlx::Result<bool> {
-    let nodes = match rule.tunnel_id {
-        Some(tid) => tunnel_node_ids(state, tid).await?,
-        None => vec![rule.node_id],
-    };
+/// remove:对**已知**目标节点列表逐个发 RemoveRule,返回是否全部送达。隧道规则跨多跳,
+/// 任一节点离线即 false——调用方(delete)据此告诉用户「节点离线,将在恢复后由对账清理」,
+/// 而非误报已彻底删除。目标节点由 delete 路径先算出(`rule_target_nodes`:隧道=链上全部 hop、
+/// 非隧道=单节点;同时供 per-node 锁用),直接传入避免重复查 `tunnel_hops`。
+pub fn dispatch_rule_remove_to(state: &AppState, rule_id: i64, nodes: &[i64]) -> bool {
     let mut all_dispatched = true;
-    for node_id in nodes {
-        if !state.dispatcher.dispatch(node_id, remove_command(rule.id)) {
-            warn_offline(node_id, rule.id, "rule removal");
+    for &node_id in nodes {
+        if !state.dispatcher.dispatch(node_id, remove_command(rule_id)) {
+            warn_offline(node_id, rule_id, "rule removal");
             all_dispatched = false;
         }
     }
-    Ok(all_dispatched)
+    all_dispatched
 }
 
 /// restart。返回是否至少送达一个节点(rules.rs restart 响应里回显)。
