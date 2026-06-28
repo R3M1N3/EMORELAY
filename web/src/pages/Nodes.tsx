@@ -425,7 +425,7 @@ function NodeRow({
       <td className="px-4 py-3 align-top">
         <Link
           to={`/nodes/${node.id}`}
-          className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
+          className="text-base font-semibold text-zinc-100 hover:text-accent"
         >
           {node.name}
         </Link>
@@ -435,9 +435,10 @@ function NodeRow({
         <div><RegionBadge region={node.region} /></div>
         <div className="text-xs text-zinc-400 mt-0.5">{node.public_ip || '未填'}</div>
       </td>
-      {/* 长 URL 截断显示,完整值挂 title;否则挤压名称/状态列(移动端尤甚)。 */}
+      {/* 长 URL 截断显示,完整值挂 title;否则挤压名称/状态列(移动端尤甚)。
+          18rem(288px)足以容纳常见 https 端点含 :port 全显,仅超长值才省略号+title。 */}
       <td
-        className="px-4 py-3 align-top text-zinc-400 font-mono text-xs max-w-[14rem] truncate"
+        className="px-4 py-3 align-top text-zinc-400 font-mono text-xs max-w-[18rem] truncate"
         title={node.grpc_endpoint || undefined}
       >
         {node.grpc_endpoint || '—'}
@@ -451,7 +452,7 @@ function NodeRow({
           {node.last_seen_at ? `最后心跳 ${shortTime(node.last_seen_at)}` : '从未上线'}
         </div>
         {node.agent_version && (
-          <div className="text-[11px] text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
+          <div className="text-xs text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
         )}
       </td>
       <td className="px-4 py-3 align-top text-xs text-zinc-300 min-w-[8rem]">

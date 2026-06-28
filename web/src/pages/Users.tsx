@@ -253,7 +253,7 @@ function UserRow({
   return (
     <tr className="hover:bg-white/[0.02]">
       <td className="px-4 py-3 align-top">
-        <div className="text-[15px] font-semibold text-zinc-100">{user.username}</div>
+        <div className="text-base font-semibold text-zinc-100">{user.username}</div>
         <div className="text-xs text-zinc-400 mt-0.5">ID #{user.id}</div>
       </td>
       <td className="px-4 py-3 align-top">

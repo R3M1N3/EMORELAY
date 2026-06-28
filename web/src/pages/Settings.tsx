@@ -382,7 +382,7 @@ export default function Settings() {
                     </td>
                     <td className="px-4 py-2 align-top">
                       <span
-                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] ${
+                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs ${
                           l.result === 'success'
                             ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
                             : 'border-red-500/40 bg-red-500/10 text-red-200'

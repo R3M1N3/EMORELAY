@@ -56,7 +56,7 @@ export function Sparkline({
 
   return (
     <div className="w-full">
-      <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+      <div className="mb-1 flex items-center justify-between text-xs text-zinc-300">
         <span>
           当前 <span className="text-zinc-200 tabular-nums">{fmt(cur)}</span>
         </span>
@@ -97,7 +97,7 @@ export function Sparkline({
         {/* hover 数值 */}
         {hover != null && (
           <span
-            className="pointer-events-none absolute -top-3.5 rounded bg-zinc-900/95 px-1.5 py-0.5 text-[11px] text-zinc-100 ring-1 ring-white/10 tabular-nums"
+            className="pointer-events-none absolute -top-3.5 rounded bg-zinc-900/95 px-1.5 py-0.5 text-xs text-zinc-100 ring-1 ring-white/10 tabular-nums"
             style={{ left: `${(hover / (values.length - 1)) * 100}%`, transform: 'translateX(-50%)' }}
           >
             {fmt(values[hover])}

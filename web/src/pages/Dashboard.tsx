@@ -241,8 +241,10 @@ function NodeRow({ node }: { node: NodeView }) {
       : node.status === 'offline'
       ? 'bg-zinc-500'
       : 'bg-amber-400'
+  // 窄屏纵向堆叠:名称/IP 占整行不再被右侧资源指标挤成 ~65px 致 IP 被 truncate 切没;
+  // 资源指标落到名称下方左对齐。≥sm 仍单行两端对齐。
   return (
-    <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
+    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
       <div className="flex items-center gap-3 min-w-0">
         <span className={`inline-block h-2 w-2 rounded-full shadow ${dot}`} aria-hidden />
         <span className="sr-only">{node.status === 'online' ? '在线' : node.status === 'offline' ? '离线' : '状态未知'}</span>
@@ -251,7 +253,7 @@ function NodeRow({ node }: { node: NodeView }) {
           <div className="text-xs text-zinc-400 truncate"><RegionBadge region={node.region} /> · {node.public_ip || '未填'}</div>
         </div>
       </div>
-      <div className="flex items-center gap-4 text-xs text-zinc-400 shrink-0">
+      <div className="flex items-center gap-4 text-xs text-zinc-400 shrink-0 pl-5 sm:pl-0">
         {/* 离线节点资源是掉线前陈旧采样,不当现值展示。 */}
         {node.status === 'online' ? (
           <>

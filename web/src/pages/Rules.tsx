@@ -916,17 +916,18 @@ function RuleRow({
           onChange={(e) => onSelectChange(e.target.checked)}
         />
       </td>
-      <td className="px-4 py-3 align-top">
+      {/* nowrap:窄屏横滚表内名称不再折成多行撑高行;长名随既有 overflow-x-auto 横向滚动。 */}
+      <td className="px-4 py-3 align-top whitespace-nowrap">
         <Link
           to={`/rules/${rule.id}`}
-          className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
+          className="text-base font-semibold text-zinc-100 hover:text-accent"
         >
           {rule.name}
         </Link>
         <div className="text-xs text-zinc-400 mt-0.5">ID #{rule.id}</div>
         {grantRevoked && (
           <div
-            className="mt-1 inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-300"
+            className="mt-1 inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
             title="管理员已撤销该节点/隧道的使用授权:此规则保留运行,但不能再新建同类规则。"
           >
             授权已撤销
@@ -956,13 +957,13 @@ function RuleRow({
           )}
         </span>
         {tunnelName != null && (
-          <div className="mt-0.5 text-[11px] text-sky-300/80 font-sans">隧道 {tunnelName}</div>
+          <div className="mt-0.5 text-xs text-sky-300/80 font-sans">隧道 {tunnelName}</div>
         )}
       </td>
       <td className="px-4 py-3 align-top text-zinc-300 font-mono text-xs">
         {rule.target_host}:{rule.target_port}
         {rule.extra_targets.length > 0 && (
-          <div className="text-[11px] text-amber-300/80 font-sans mt-0.5">
+          <div className="text-xs text-amber-300/80 font-sans mt-0.5">
             +{rule.extra_targets.length} 个目标负载
           </div>
         )}

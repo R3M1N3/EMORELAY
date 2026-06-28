@@ -156,7 +156,7 @@ export default function Tunnels() {
                       <td className="px-4 py-3 align-top">
                         <Link
                           to={`/tunnels/${t.id}`}
-                          className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
+                          className="text-base font-semibold text-zinc-100 hover:text-accent"
                         >
                           {t.name}
                         </Link>

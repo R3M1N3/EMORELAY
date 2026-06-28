@@ -166,10 +166,11 @@ export default function NodeDetail() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      {/* 窄屏纵向堆叠:标题/操作各占整行,避免 4 个操作按钮挤压标题致折行或越过视口右缘被裁。 */}
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div className="min-w-0">
           <Link to="/nodes" className="text-xs text-zinc-400 hover:text-zinc-200">← 返回节点列表</Link>
-          <h2 className="mt-1 text-xl font-semibold tracking-tight">{node.name}</h2>
+          <h2 className="mt-1 text-xl font-semibold tracking-tight break-words">{node.name}</h2>
           <p className="text-sm text-zinc-400">
             <span className="inline-flex items-center gap-1.5 mr-3">
               <StatusDot kind={node.status} />
@@ -178,7 +179,7 @@ export default function NodeDetail() {
             ID #{node.id} · <RegionBadge region={node.region} /> · {node.public_ip || '未填'}
           </p>
         </div>
-        <div className="flex gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0">
           <Link
             to={`/rules?node_id=${node.id}`}
             className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"

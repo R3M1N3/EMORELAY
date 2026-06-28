@@ -178,7 +178,7 @@ function ProtectedShell() {
           <div className="ml-auto flex items-center gap-3 text-xs">
             <span className="hidden sm:inline text-zinc-400 truncate max-w-[12rem]">
               {user.username}{' '}
-              <span className="ml-1 text-[11px] uppercase text-zinc-400">{user.role}</span>
+              <span className="ml-1 text-xs uppercase text-zinc-400">{user.role}</span>
             </span>
             <button
               onClick={logout}
@@ -240,7 +240,7 @@ function NavItem({ to, label, hint, onClick }: { to: string; label: string; hint
             />
           )}
           <span>{label}</span>
-          {hint && <span className="text-[11px] uppercase text-zinc-400">{hint}</span>}
+          {hint && <span className="text-xs uppercase text-zinc-400">{hint}</span>}
         </>
       )}
     </NavLink>

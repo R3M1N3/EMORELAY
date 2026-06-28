@@ -259,7 +259,7 @@ export default function TunnelDetail() {
                     <td className="px-4 py-3">
                       <Link
                         to={`/rules/${r.id}`}
-                        className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
+                        className="text-base font-semibold text-zinc-100 hover:text-accent"
                       >
                         {r.name}
                       </Link>
