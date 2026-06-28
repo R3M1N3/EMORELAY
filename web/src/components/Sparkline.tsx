@@ -91,9 +91,10 @@ export function Sparkline({
             <line x1={hp[0]} y1="0" x2={hp[0]} y2={height} className="stroke-white/25" strokeWidth="1" vectorEffect="non-scaling-stroke" />
           )}
         </svg>
-        {/* 右缘 min/max 量程标注:加底色防与折线重叠;留 right-1 内边距防裁切 */}
-        <span className="pointer-events-none absolute right-1 top-0 rounded bg-zinc-950/70 px-1 text-xs leading-tight text-zinc-400 tabular-nums">{fmt(max)}</span>
-        <span className="pointer-events-none absolute right-1 bottom-0 rounded bg-zinc-950/70 px-1 text-xs leading-tight text-zinc-400 tabular-nums">{fmt(min)}</span>
+        {/* 右缘 min/max 量程标注:加底色防与折线重叠;留 right-1 内边距防裁切。
+            56px 画布内 text-xs(14px)偏挤、压折线,角标单独钉 12px;上方 legend 维持 text-xs(14px)。 */}
+        <span className="pointer-events-none absolute right-1 top-0 rounded bg-zinc-950/70 px-1 text-[12px] leading-tight text-zinc-400 tabular-nums">{fmt(max)}</span>
+        <span className="pointer-events-none absolute right-1 bottom-0 rounded bg-zinc-950/70 px-1 text-[12px] leading-tight text-zinc-400 tabular-nums">{fmt(min)}</span>
         {/* hover 数值 */}
         {hover != null && (
           <span
