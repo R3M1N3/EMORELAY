@@ -154,15 +154,15 @@ export default function UserDashboard() {
         </div>
         {subToken ? (
           <>
-            <p className="text-[12px] text-zinc-400 break-all font-mono">
+            <p className="text-xs text-zinc-400 break-all font-mono">
               {`${window.location.origin}/api/subscription/usage?token=…`}
             </p>
-            <p className="text-[11px] text-zinc-400 mt-1.5">
+            <p className="text-xs text-zinc-400 mt-1.5">
               在 Clash 等客户端里添加此链接，可直接查看套餐余量与到期。此链接为只读用量链接（仅能查看本人流量余额，无法操作其它功能），有效期到账号到期。
             </p>
           </>
         ) : (
-          <p className="text-[12px] text-zinc-400">订阅链接获取失败，请刷新页面重试。</p>
+          <p className="text-xs text-zinc-400">订阅链接获取失败，请刷新页面重试。</p>
         )}
       </section>
 
@@ -192,14 +192,14 @@ export default function UserDashboard() {
                     >
                       {r.name}
                     </Link>
-                    <div className="text-[11px] text-zinc-400 truncate">
+                    <div className="text-xs text-zinc-400 truncate">
                       {r.protocol.toUpperCase()} ·{' '}
                       {ruleEntryDisplay(nodeEntryHost(nodesById.get(r.node_id)), r.listen_port)}{' '}
                       → {r.target_host}:{r.target_port}
                     </div>
                   </div>
                 </div>
-                <div className="text-[11px] text-zinc-400 shrink-0">
+                <div className="text-xs text-zinc-400 shrink-0">
                   ↓{formatBytes(r.rx_bytes)} ↑{formatBytes(r.tx_bytes)}
                 </div>
               </div>

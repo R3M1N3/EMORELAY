@@ -38,7 +38,7 @@ export function CopyButton({
       className={`inline-flex items-center justify-center rounded p-1.5 text-zinc-400 hover:text-accent-hi transition-colors ${className}`}
     >
       {copied ? (
-        <span aria-hidden className="text-emerald-400 text-[11px] leading-none">
+        <span aria-hidden className="text-emerald-400 text-xs leading-none">
           ✓
         </span>
       ) : (

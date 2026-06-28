@@ -80,7 +80,7 @@ export default function ChangePassword() {
           placeholder="再次输入新密码"
         />
         {confirm !== '' && confirm !== newPassword && (
-          <p aria-live="polite" className="mt-1.5 text-[11px] text-red-300">两次输入的新密码不一致</p>
+          <p aria-live="polite" className="mt-1.5 text-xs text-red-300">两次输入的新密码不一致</p>
         )}
 
         {error && (

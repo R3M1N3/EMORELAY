@@ -185,7 +185,7 @@ export default function TunnelDetail() {
         <h3 className="px-5 py-3 text-sm font-medium text-zinc-200 border-b border-white/5">节点链</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+            <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
               <tr>
                 <th scope="col" className="px-4 py-2.5 text-left font-medium">序号</th>
                 <th scope="col" className="px-4 py-2.5 text-left font-medium">角色</th>
@@ -217,15 +217,15 @@ export default function TunnelDetail() {
       <section className="glass-card rise p-5">
         <h3 className="text-sm font-medium text-zinc-200 mb-3">已授权用户</h3>
         {grantedUsers == null ? (
-          <span className="text-[12px] text-zinc-400">—</span>
+          <span className="text-xs text-zinc-400">—</span>
         ) : grantedUsers.length === 0 ? (
-          <span className="text-[12px] text-zinc-400">无（普通用户默认不可用本隧道）</span>
+          <span className="text-xs text-zinc-400">无（普通用户默认不可用本隧道）</span>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {grantedUsers.map((u) => (
               <span
                 key={u.id}
-                className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-zinc-200"
+                className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-zinc-200"
               >
                 {u.username}
               </span>
@@ -245,7 +245,7 @@ export default function TunnelDetail() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+              <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">协议</th>
@@ -259,7 +259,7 @@ export default function TunnelDetail() {
                     <td className="px-4 py-3">
                       <Link
                         to={`/rules/${r.id}`}
-                        className="font-medium text-zinc-100 hover:text-accent"
+                        className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
                       >
                         {r.name}
                       </Link>

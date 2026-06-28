@@ -139,7 +139,7 @@ export default function Tunnels() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+                <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
                   <tr>
                     <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
                     <th scope="col" className="px-4 py-2.5 text-left font-medium">传输</th>
@@ -156,11 +156,11 @@ export default function Tunnels() {
                       <td className="px-4 py-3 align-top">
                         <Link
                           to={`/tunnels/${t.id}`}
-                          className="font-medium text-zinc-100 hover:text-accent"
+                          className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
                         >
                           {t.name}
                         </Link>
-                        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{t.id}</div>
+                        <div className="text-xs text-zinc-400 mt-0.5">ID #{t.id}</div>
                       </td>
                       <td className="px-4 py-3 align-top text-zinc-300 uppercase text-xs">
                         {t.transport}
@@ -173,7 +173,7 @@ export default function Tunnels() {
                       </td>
                       <td className="px-4 py-3 align-top text-zinc-300">{t.hops_count}</td>
                       <td className="px-4 py-3 align-top text-zinc-300">{t.rules_count}</td>
-                      <td className="px-4 py-3 align-top text-[12px] text-zinc-400">
+                      <td className="px-4 py-3 align-top text-xs text-zinc-400">
                         {shortTime(t.created_at)}
                       </td>
                       <td className="px-4 py-3 align-top text-right">
@@ -424,7 +424,7 @@ function TunnelForm({
             onChange={(e) => setTrafficRatio(e.target.value)}
             className={fieldInputCls}
           />
-          <p className="mt-1 text-[11px] text-zinc-400">计费乘数，1 = 原样，2 = 双倍</p>
+          <p className="mt-1 text-xs text-zinc-400">计费乘数，1 = 原样，2 = 双倍</p>
         </div>
         <div>
           <label htmlFor="tunnel-billing" className={fieldLabelCls}>
@@ -497,7 +497,7 @@ function TunnelForm({
         >
           + 添加节点
         </button>
-        <p className="mt-1.5 text-[11px] text-zinc-400">
+        <p className="mt-1.5 text-xs text-zinc-400">
           第 2 跳起的节点必须配置公网 IP；所有节点须在线
         </p>
       </div>

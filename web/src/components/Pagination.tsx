@@ -27,7 +27,7 @@ export function Pagination({
   const end = Math.min(total, safePage * pageSize)
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-white/5 text-[12px] text-zinc-400">
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-white/5 text-xs text-zinc-400">
       <div>
         共 {total} 条 · 显示 {start}-{end}
       </div>

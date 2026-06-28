@@ -51,11 +51,11 @@ export function DiagnosePanel({
         </button>
       </div>
       {result == null ? (
-        <p className="text-[12px] text-zinc-400">
+        <p className="text-xs text-zinc-400">
           逐段探测链路每一跳的 TCP 可达性、延迟与丢失，定位哪一段断了。
         </p>
       ) : result.segments.length === 0 ? (
-        <p className="text-[12px] text-zinc-400">无可探测的链路段。</p>
+        <p className="text-xs text-zinc-400">无可探测的链路段。</p>
       ) : (
         <div className="space-y-2">
           {result.segments.map((s, i) => (
@@ -94,9 +94,9 @@ function SegmentRow({ seg }: { seg: SegmentResult }) {
           <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${q.dot}`} aria-hidden />
           <span className="text-sm text-zinc-200 truncate">{seg.label}</span>
         </div>
-        <span className="text-[11px] text-zinc-400 shrink-0">{q.text}</span>
+        <span className="text-xs text-zinc-400 shrink-0">{q.text}</span>
       </div>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-zinc-400">
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-400">
         <span className="font-mono">{seg.source_node_name} → {seg.target}</span>
         {lq && (
           <>

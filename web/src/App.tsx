@@ -133,7 +133,7 @@ function ProtectedShell() {
             <div className="text-sm font-bold tracking-[0.14em] bg-gradient-to-r from-white via-accent-hi to-white bg-clip-text text-transparent">
               EMORELAY
             </div>
-            <div className="text-[11px] text-zinc-400 mt-0.5">流量转发面板</div>
+            <div className="text-xs text-zinc-400 mt-0.5">流量转发面板</div>
           </div>
           <button
             onClick={() => setDrawerOpen(false)}
@@ -148,7 +148,7 @@ function ProtectedShell() {
             <NavItem key={n.to} to={n.to} label={n.label} onClick={() => setDrawerOpen(false)} />
           ))}
         </nav>
-        <div className="mt-auto pt-4 border-t border-white/5 text-[11px] text-zinc-400 md:hidden">
+        <div className="mt-auto pt-4 border-t border-white/5 text-xs text-zinc-400 md:hidden">
           <div className="truncate">{user.username} · {user.role}</div>
         </div>
       </aside>
@@ -175,10 +175,10 @@ function ProtectedShell() {
             </svg>
           </button>
           <CurrentRoute />
-          <div className="ml-auto flex items-center gap-3 text-[12px]">
+          <div className="ml-auto flex items-center gap-3 text-xs">
             <span className="hidden sm:inline text-zinc-400 truncate max-w-[12rem]">
               {user.username}{' '}
-              <span className="ml-1 text-[10px] uppercase text-zinc-400">{user.role}</span>
+              <span className="ml-1 text-[11px] uppercase text-zinc-400">{user.role}</span>
             </span>
             <button
               onClick={logout}
@@ -240,7 +240,7 @@ function NavItem({ to, label, hint, onClick }: { to: string; label: string; hint
             />
           )}
           <span>{label}</span>
-          {hint && <span className="text-[10px] uppercase text-zinc-400">{hint}</span>}
+          {hint && <span className="text-[11px] uppercase text-zinc-400">{hint}</span>}
         </>
       )}
     </NavLink>

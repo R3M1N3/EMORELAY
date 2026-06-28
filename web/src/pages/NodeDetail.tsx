@@ -240,23 +240,23 @@ export default function NodeDetail() {
             <Row k="最后心跳" v={node.last_seen_at ? shortTime(node.last_seen_at) : '从未上线'} />
             <Row k="创建" v={shortTime(node.created_at)} />
           </dl>
-          <div className="text-[11px] text-zinc-400 mt-2">
+          <div className="text-xs text-zinc-400 mt-2">
             Agent 接入凭据在创建节点时一次性显示；
             凭据遗失或泄露时，点右上角「轮换凭据」重新签发(旧证书随即吊销)。
           </div>
           {/* P7:已授权使用本节点的用户(在「用户」页编辑授权)。 */}
           <div className="mt-3 pt-3 border-t border-white/5">
-            <div className="text-[11px] text-zinc-400 mb-1.5">已授权用户</div>
+            <div className="text-xs text-zinc-400 mb-1.5">已授权用户</div>
             {grantedUsers == null ? (
-              <span className="text-[12px] text-zinc-400">—</span>
+              <span className="text-xs text-zinc-400">—</span>
             ) : grantedUsers.length === 0 ? (
-              <span className="text-[12px] text-zinc-400">无（普通用户默认不可用本节点）</span>
+              <span className="text-xs text-zinc-400">无（普通用户默认不可用本节点）</span>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {grantedUsers.map((u) => (
                   <span
                     key={u.id}
-                    className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-zinc-200"
+                    className="inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-zinc-200"
                   >
                     {u.username}
                   </span>
@@ -283,7 +283,7 @@ export default function NodeDetail() {
           <h3 className="text-sm font-medium text-zinc-200 mb-3">
             当前资源
             {node.status !== 'online' && (
-              <span className="ml-2 text-[11px] font-normal text-zinc-500">节点离线,实时资源不可用(下方累计为最后值)</span>
+              <span className="ml-2 text-xs font-normal text-zinc-400">节点离线,实时资源不可用(下方累计为最后值)</span>
             )}
           </h3>
           <div className="grid grid-cols-3 gap-3 text-sm">
@@ -315,7 +315,7 @@ export default function NodeDetail() {
             将向节点 <span className="font-medium text-white">{node.name}</span> 下发一键升级
             （目标 = 面板当前版本）。Agent 自行下载校验后原子替换并重启。
           </p>
-          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
             重启瞬间该节点全部存量连接会中断（规则随即自动恢复，已建立的连接不会回来）。
             升级结果请稍后观察本页「基本信息 · Agent 版本」(节点重启重连后自动刷新)。
           </p>
@@ -356,7 +356,7 @@ export default function NodeDetail() {
           <p className="text-sm text-zinc-300">
             将为节点 <span className="font-medium text-white">{node.name}</span> 重新签发 mTLS 证书。
           </p>
-          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
             旧证书将立即失效，必须用新的四件套重装 Agent，否则该节点将无法再连接主控。
           </p>
           <div className="mt-5 flex justify-end gap-2">
@@ -385,7 +385,7 @@ export default function NodeDetail() {
           <p className="text-sm text-zinc-300">
             节点 <span className="font-medium text-white">{node.name}</span> 的新 mTLS 凭据。
           </p>
-          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
             旧证书已吊销。私钥仅此一次显示，请立即妥善保存并用以下三件套重装 Agent。
           </p>
           <div className="mt-4 space-y-2">
@@ -428,7 +428,7 @@ function CredBlock({
 }) {
   return (
     <details className="rounded-lg border border-white/10 bg-zinc-950">
-      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-[11px] text-zinc-400 select-none">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-xs text-zinc-400 select-none">
         <span>{label}</span>
         <button
           type="button"
@@ -436,12 +436,12 @@ function CredBlock({
             e.preventDefault()
             onCopy(value, label)
           }}
-          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2 py-0.5 text-[11px] text-zinc-200"
+          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2 py-0.5 text-xs text-zinc-200"
         >
           复制
         </button>
       </summary>
-      <pre className="max-h-40 overflow-auto border-t border-white/5 px-3 py-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap break-all">
+      <pre className="max-h-40 overflow-auto border-t border-white/5 px-3 py-2 font-mono text-xs text-emerald-200 whitespace-pre-wrap break-all">
         {value}
       </pre>
     </details>
@@ -471,7 +471,7 @@ function Row({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-zinc-400">{k}</dt>
-      <dd className={`text-zinc-200 ${mono ? 'font-mono text-[12px]' : ''}`}>{v}</dd>
+      <dd className={`text-zinc-200 ${mono ? 'font-mono text-xs' : ''}`}>{v}</dd>
     </div>
   )
 }
@@ -479,7 +479,7 @@ function Row({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-      <div className="text-[11px] text-zinc-400">{label}</div>
+      <div className="text-xs text-zinc-400">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
   )
@@ -516,7 +516,7 @@ function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: (ne
   return (
     <section className="glass-card rise p-5">
       <h3 className="text-sm font-medium text-zinc-200 mb-1">协议阻断</h3>
-      <p className="text-[11px] text-zinc-400 mb-3">
+      <p className="text-xs text-zinc-400 mb-3">
         对普通 TCP 转发的首包做被动指纹识别，命中即断连，防止转发被滥用为开放代理。默认全关。
       </p>
       <div className="space-y-2">
@@ -534,7 +534,7 @@ function ProtocolBlockCard({ node, onChanged }: { node: NodeView; onChanged: (ne
             />
             <span className="min-w-0">
               <span className="text-sm text-zinc-200">阻断 {label}</span>
-              <span className="block text-[11px] text-zinc-400">{hint}</span>
+              <span className="block text-xs text-zinc-400">{hint}</span>
             </span>
           </label>
         ))}

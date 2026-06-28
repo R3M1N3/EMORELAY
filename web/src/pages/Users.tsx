@@ -140,7 +140,7 @@ export default function Users() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+              <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">用户名</th>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">角色</th>
@@ -253,24 +253,24 @@ function UserRow({
   return (
     <tr className="hover:bg-white/[0.02]">
       <td className="px-4 py-3 align-top">
-        <div className="font-medium text-zinc-100">{user.username}</div>
-        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{user.id}</div>
+        <div className="text-[15px] font-semibold text-zinc-100">{user.username}</div>
+        <div className="text-xs text-zinc-400 mt-0.5">ID #{user.id}</div>
       </td>
       <td className="px-4 py-3 align-top">
         <span
-          className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${roleClass}`}
+          className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${roleClass}`}
         >
           {user.role}
         </span>
       </td>
-      <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
+      <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-xs">
         {user.rule_count}
         {user.forward_rules_quota != null ? ` / ${user.forward_rules_quota}` : ''}
       </td>
-      <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-[12px]">
+      <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums text-xs">
         {formatBytes(user.total_traffic_bytes)}
       </td>
-      <td className="px-4 py-3 align-top text-[12px] text-zinc-300 whitespace-nowrap">
+      <td className="px-4 py-3 align-top text-xs text-zinc-300 whitespace-nowrap">
         {user.expires_at ? shortTime(user.expires_at) : '不限'}
       </td>
       <td
@@ -283,8 +283,8 @@ function UserRow({
       >
         <QuotaBar used={user.period_used_bytes_cached} limit={user.traffic_limit_bytes_30d} />
       </td>
-      <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.created_at)}</td>
-      <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">{shortTime(user.updated_at)}</td>
+      <td className="px-4 py-3 align-top text-zinc-400 text-xs">{shortTime(user.created_at)}</td>
+      <td className="px-4 py-3 align-top text-zinc-400 text-xs">{shortTime(user.updated_at)}</td>
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
         <button
           type="button"
@@ -320,7 +320,7 @@ const TONE_CLS = {
 function QuotaBar({ used, limit }: { used: number; limit: number | null }) {
   const percent = quotaPercent(used, limit)
   if (percent == null) {
-    return <span className="text-[12px] text-zinc-400">{formatBytes(used)} / 不限</span>
+    return <span className="text-xs text-zinc-400">{formatBytes(used)} / 不限</span>
   }
   return (
     <div>
@@ -337,7 +337,7 @@ function QuotaBar({ used, limit }: { used: number; limit: number | null }) {
           style={{ width: `${percent}%` }}
         />
       </div>
-      <div className="text-[11px] text-zinc-400 mt-1">
+      <div className="text-xs text-zinc-400 mt-1">
         {formatBytes(used)} / {formatBytes(limit as number)}（{percent.toFixed(0)}%）
       </div>
     </div>
@@ -383,12 +383,12 @@ function GrantPicker({
       </label>
       <div className="max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 space-y-0.5">
         {options.length === 0 ? (
-          <div className="px-1 py-1 text-[12px] text-zinc-400">{empty}</div>
+          <div className="px-1 py-1 text-xs text-zinc-400">{empty}</div>
         ) : (
           options.map((o) => (
             <label
               key={o.id}
-              className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[12px] text-zinc-200 hover:bg-white/5 cursor-pointer"
+              className="flex items-center gap-2 rounded-md px-1.5 py-1 text-xs text-zinc-200 hover:bg-white/5 cursor-pointer"
             >
               <input
                 type="checkbox"
@@ -670,7 +670,7 @@ function UserForm({
           placeholder="3-32 字符,无空白"
         />
         {mode === 'edit' && (
-          <p className="text-[11px] text-zinc-400 mt-1">用户名不可改;新增用户即可指定。</p>
+          <p className="text-xs text-zinc-400 mt-1">用户名不可改;新增用户即可指定。</p>
         )}
       </div>
 
@@ -700,7 +700,7 @@ function UserForm({
           <option value="user">user (普通用户)</option>
           <option value="admin">admin (管理员)</option>
         </select>
-        <p className="text-[11px] text-zinc-400 mt-1">
+        <p className="text-xs text-zinc-400 mt-1">
           系统至少保留一个 admin;删除最后一个 admin 或将其降级会被拒绝。
         </p>
       </div>
@@ -715,7 +715,7 @@ function UserForm({
             onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
             className={fieldInputCls}
           />
-          <p className="text-[11px] text-zinc-400 mt-1">留空 = 永不到期。到期后规则自动停用、登录被拒。</p>
+          <p className="text-xs text-zinc-400 mt-1">留空 = 永不到期。到期后规则自动停用、登录被拒。</p>
         </div>
         <div>
           <label htmlFor="user-traffic" className={fieldLabelCls}>30 天用量上限 (GB)</label>
@@ -729,7 +729,7 @@ function UserForm({
             className={fieldInputCls}
             placeholder="留空 = 不限"
           />
-          <p className="text-[11px] text-zinc-400 mt-1">超限后该用户全部规则自动停用。重置方式见下。</p>
+          <p className="text-xs text-zinc-400 mt-1">超限后该用户全部规则自动停用。重置方式见下。</p>
         </div>
         <div>
           <label htmlFor="user-reset" className={fieldLabelCls}>用量重置方式</label>
@@ -746,7 +746,7 @@ function UserForm({
               </option>
             ))}
           </select>
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             滚动窗口按最近 30 天统计；月度则每月固定日 0 点清零（月末容错）。
           </p>
         </div>
@@ -762,7 +762,7 @@ function UserForm({
             className={fieldInputCls}
             placeholder="留空 = 不限"
           />
-          <p className="text-[11px] text-zinc-400 mt-1">该用户最多可创建的转发规则数;留空/0 = 不限。</p>
+          <p className="text-xs text-zinc-400 mt-1">该用户最多可创建的转发规则数;留空/0 = 不限。</p>
         </div>
       </div>
 
@@ -800,7 +800,7 @@ function UserForm({
               })
             }
           />
-          <p className="col-span-2 text-[11px] text-zinc-400 -mt-1">
+          <p className="col-span-2 text-xs text-zinc-400 -mt-1">
             默认拒绝:未勾选的节点/隧道该用户不可见、不可建规则。撤销授权不影响已建规则(保留运行,仅禁止新建)。
           </p>
           {grantedTunnels.size > 0 && (
@@ -810,7 +810,7 @@ function UserForm({
                 {tunnelOptions
                   .filter((t) => grantedTunnels.has(t.id))
                   .map((t) => (
-                    <div key={t.id} className="flex items-center gap-2 text-[12px]">
+                    <div key={t.id} className="flex items-center gap-2 text-xs">
                       <span className="truncate flex-1 text-zinc-300">{t.name}</span>
                       <input
                         type="number"

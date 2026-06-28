@@ -224,12 +224,12 @@ function SeriesCard({
       <div className="space-y-2">
         {rx.length > 0 && (
           <div>
-            {rxLabel && <div className="text-[11px] text-zinc-400 mb-1">↓ {rxLabel}</div>}
+            {rxLabel && <div className="text-xs text-zinc-400 mb-1">↓ {rxLabel}</div>}
             <Sparkline values={rx} colorClass="stroke-accent" fillClass="fill-accent/10" formatValue={format} label={`${title} ${rxLabel}`} />
           </div>
         )}
         <div>
-          {txLabel && <div className="text-[11px] text-zinc-400 mb-1">↑ {txLabel}</div>}
+          {txLabel && <div className="text-xs text-zinc-400 mb-1">↑ {txLabel}</div>}
           <Sparkline values={tx} colorClass={txColor} fillClass={txFill ?? 'fill-emerald-500/10'} formatValue={format} label={`${title} ${txLabel}`} />
         </div>
       </div>
@@ -251,7 +251,7 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+          <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
             <tr>
               <th scope="col" className="px-4 py-2 text-left font-medium">时间</th>
               <th scope="col" className="px-4 py-2 text-left font-medium">操作</th>
@@ -262,13 +262,13 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
           <tbody className="divide-y divide-white/5">
             {logs.map((l) => (
               <tr key={l.id} className="hover:bg-white/[0.02]">
-                <td className="px-4 py-2 align-top text-[12px] text-zinc-400 font-mono whitespace-nowrap">
+                <td className="px-4 py-2 align-top text-xs text-zinc-400 font-mono whitespace-nowrap">
                   {shortTime(l.created_at)}
                 </td>
-                <td className="px-4 py-2 align-top text-[12px] text-zinc-200" title={l.action}>{actionLabel(l.action)}</td>
+                <td className="px-4 py-2 align-top text-xs text-zinc-200" title={l.action}>{actionLabel(l.action)}</td>
                 <td className="px-4 py-2 align-top">
                   <span
-                    className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] ${
+                    className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] ${
                       l.result === 'success'
                         ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
                         : 'border-red-500/40 bg-red-500/10 text-red-200'
@@ -277,7 +277,7 @@ function LogsCard({ logs }: { logs: RuleLogEntry[] }) {
                     {l.result}
                   </span>
                 </td>
-                <td className="px-4 py-2 align-top text-[11px] text-zinc-400 max-w-[20rem] truncate">
+                <td className="px-4 py-2 align-top text-xs text-zinc-400 max-w-[20rem] truncate">
                   {l.error_message ?? ''}
                 </td>
               </tr>
@@ -293,7 +293,7 @@ function Row({ k, v, mono, copy }: { k: string; v: string; mono?: boolean; copy?
   return (
     <div className="flex justify-between gap-3">
       <dt className="text-zinc-400">{k}</dt>
-      <dd className={`flex items-center gap-1 text-zinc-200 ${mono ? 'font-mono text-[12px]' : ''}`}>
+      <dd className={`flex items-center gap-1 text-zinc-200 ${mono ? 'font-mono text-xs' : ''}`}>
         {v}
         {copy != null && <CopyButton value={copy} label={`复制${k}`} />}
       </dd>
@@ -304,7 +304,7 @@ function Row({ k, v, mono, copy }: { k: string; v: string; mono?: boolean; copy?
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-      <div className="text-[11px] text-zinc-400">{label}</div>
+      <div className="text-xs text-zinc-400">{label}</div>
       <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
   )

@@ -99,7 +99,7 @@ export default function BandwidthProfiles() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+              <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
                   <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
                   <th scope="col" className="px-4 py-2.5 text-right font-medium">带宽 (Mbps)</th>
@@ -113,15 +113,15 @@ export default function BandwidthProfiles() {
                   <tr key={p.id} className="hover:bg-white/[0.02]">
                     <td className="px-4 py-3 align-top">
                       <div className="font-medium text-zinc-100">{p.name}</div>
-                      <div className="text-[11px] text-zinc-400 mt-0.5">ID #{p.id}</div>
+                      <div className="text-xs text-zinc-400 mt-0.5">ID #{p.id}</div>
                     </td>
                     <td className="px-4 py-3 align-top text-right text-zinc-200 tabular-nums">
                       {p.bandwidth_mbps}
                     </td>
-                    <td className="px-4 py-3 align-top text-zinc-400 text-[12px] max-w-[18rem] truncate">
+                    <td className="px-4 py-3 align-top text-zinc-400 text-xs max-w-[18rem] truncate">
                       {p.description || '—'}
                     </td>
-                    <td className="px-4 py-3 align-top text-zinc-400 text-[12px]">
+                    <td className="px-4 py-3 align-top text-zinc-400 text-xs">
                       {shortTime(p.updated_at)}
                     </td>
                     <td className="px-4 py-3 align-top text-right whitespace-nowrap">
@@ -291,7 +291,7 @@ function ProfileForm({
           className={fieldInputCls}
           placeholder="100"
         />
-        <p className="text-[11px] text-zinc-400 mt-1">
+        <p className="text-xs text-zinc-400 mt-1">
           上下行合并计；修改后引用此配置的规则即时生效。
         </p>
       </div>

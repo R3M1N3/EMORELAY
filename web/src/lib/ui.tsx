@@ -277,7 +277,7 @@ export function EmptyState({
       </div>
       <div>
         <div className="text-sm font-medium text-zinc-200">{title}</div>
-        {hint && <p className="mx-auto mt-1 max-w-sm text-[12px] text-zinc-400">{hint}</p>}
+        {hint && <p className="mx-auto mt-1 max-w-sm text-xs text-zinc-400">{hint}</p>}
       </div>
       {action && <div className="mt-1">{action}</div>}
     </div>

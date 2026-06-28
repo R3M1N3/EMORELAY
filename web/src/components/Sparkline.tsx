@@ -36,7 +36,7 @@ export function Sparkline({
 
   if (values.length < 2) {
     return (
-      <div className="flex items-center justify-center text-[11px] text-zinc-400" style={{ height }}>
+      <div className="flex items-center justify-center text-xs text-zinc-400" style={{ height }}>
         {values.length === 0 ? emptyLabel : '数据不足(再等一个统计周期)'}
       </div>
     )
@@ -56,7 +56,7 @@ export function Sparkline({
 
   return (
     <div className="w-full">
-      <div className="mb-1 flex items-center justify-between text-[10px] text-zinc-400">
+      <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
         <span>
           当前 <span className="text-zinc-200 tabular-nums">{fmt(cur)}</span>
         </span>
@@ -91,13 +91,13 @@ export function Sparkline({
             <line x1={hp[0]} y1="0" x2={hp[0]} y2={height} className="stroke-white/25" strokeWidth="1" vectorEffect="non-scaling-stroke" />
           )}
         </svg>
-        {/* 右缘 min/max 量程标注 */}
-        <span className="pointer-events-none absolute right-0.5 top-0 text-[9px] leading-none text-zinc-500 tabular-nums">{fmt(max)}</span>
-        <span className="pointer-events-none absolute right-0.5 bottom-0 text-[9px] leading-none text-zinc-500 tabular-nums">{fmt(min)}</span>
+        {/* 右缘 min/max 量程标注:加底色防与折线重叠;留 right-1 内边距防裁切 */}
+        <span className="pointer-events-none absolute right-1 top-0 rounded bg-zinc-950/70 px-1 text-xs leading-tight text-zinc-400 tabular-nums">{fmt(max)}</span>
+        <span className="pointer-events-none absolute right-1 bottom-0 rounded bg-zinc-950/70 px-1 text-xs leading-tight text-zinc-400 tabular-nums">{fmt(min)}</span>
         {/* hover 数值 */}
         {hover != null && (
           <span
-            className="pointer-events-none absolute -top-3.5 rounded bg-zinc-900/95 px-1.5 py-0.5 text-[10px] text-zinc-100 ring-1 ring-white/10 tabular-nums"
+            className="pointer-events-none absolute -top-3.5 rounded bg-zinc-900/95 px-1.5 py-0.5 text-[11px] text-zinc-100 ring-1 ring-white/10 tabular-nums"
             style={{ left: `${(hover / (values.length - 1)) * 100}%`, transform: 'translateX(-50%)' }}
           >
             {fmt(values[hover])}

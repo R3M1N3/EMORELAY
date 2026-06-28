@@ -233,7 +233,7 @@ export default function Nodes() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+                <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
                   <tr>
                     <th scope="col" className="px-4 py-2.5 text-left font-medium">名称</th>
                     <th scope="col" className="px-4 py-2.5 text-left font-medium">区域 / IP</th>
@@ -332,7 +332,7 @@ export default function Nodes() {
           <p className="text-sm text-zinc-300">
             节点 <span className="font-medium text-white">{token.name}</span> 的 Agent 接入凭据。
           </p>
-          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+          <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
             私钥仅此一次显示，丢失需轮换凭据。请立即妥善保存以下全部内容。
           </p>
           {(() => {
@@ -341,7 +341,7 @@ export default function Nodes() {
               // 评审 P2-3:原文案说「再回到这里」,但本 Modal 关闭即永久消失(凭据一次性),
               // 是条死路。注意:轮换凭据只重签证书不补发 token,不能承诺「重新生成安装命令」。
               return (
-                <p className="mt-3 text-[11px] text-amber-300">
+                <p className="mt-3 text-xs text-amber-300">
                   未配置 Agent 上报端点，无法生成一键安装命令，本节点请用下方凭据手动部署。
                   到「设置」页配置端点后，之后新建的节点会自动附带安装命令。
                 </p>
@@ -356,7 +356,7 @@ export default function Nodes() {
             })
             return (
               <div className="mt-3">
-                <div className="text-[11px] text-zinc-400 mb-1">
+                <div className="text-xs text-zinc-400 mb-1">
                   一键安装命令（已内嵌 mTLS 凭据）
                 </div>
                 {/* 只读 textarea:聚焦自动全选,HTTP 内网剪贴板不可用时也能手动 Ctrl+C 复制 */}
@@ -365,7 +365,7 @@ export default function Nodes() {
                   value={cmd}
                   onFocus={(e) => e.currentTarget.select()}
                   rows={3}
-                  className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-[11px] text-emerald-100 resize-none break-all"
+                  className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-xs text-emerald-100 resize-none break-all"
                 />
                 <button
                   type="button"
@@ -379,7 +379,7 @@ export default function Nodes() {
           })()}
 
           <div className="mt-4 space-y-2">
-            <div className="text-[11px] text-zinc-400">
+            <div className="text-xs text-zinc-400">
               或手动分发以下各项（与安装命令二选一）：
             </div>
             <CredBlock label="Agent Token" value={token.token} onCopy={copyCred} defaultOpen />
@@ -425,19 +425,19 @@ function NodeRow({
       <td className="px-4 py-3 align-top">
         <Link
           to={`/nodes/${node.id}`}
-          className="font-medium text-zinc-100 hover:text-accent"
+          className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
         >
           {node.name}
         </Link>
-        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{node.id}</div>
+        <div className="text-xs text-zinc-400 mt-0.5">ID #{node.id}</div>
       </td>
       <td className="px-4 py-3 align-top text-zinc-300">
         <div><RegionBadge region={node.region} /></div>
-        <div className="text-[11px] text-zinc-400 mt-0.5">{node.public_ip || '未填'}</div>
+        <div className="text-xs text-zinc-400 mt-0.5">{node.public_ip || '未填'}</div>
       </td>
       {/* 长 URL 截断显示,完整值挂 title;否则挤压名称/状态列(移动端尤甚)。 */}
       <td
-        className="px-4 py-3 align-top text-zinc-400 font-mono text-[12px] max-w-[14rem] truncate"
+        className="px-4 py-3 align-top text-zinc-400 font-mono text-xs max-w-[14rem] truncate"
         title={node.grpc_endpoint || undefined}
       >
         {node.grpc_endpoint || '—'}
@@ -447,33 +447,33 @@ function NodeRow({
           <StatusDot kind={node.status} />
           {statusLabel(node.status)}
         </span>
-        <div className="text-[11px] text-zinc-400 mt-0.5">
+        <div className="text-xs text-zinc-400 mt-0.5">
           {node.last_seen_at ? `最后心跳 ${shortTime(node.last_seen_at)}` : '从未上线'}
         </div>
         {node.agent_version && (
-          <div className="text-[10px] text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
+          <div className="text-[11px] text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
         )}
       </td>
-      <td className="px-4 py-3 align-top text-[12px] text-zinc-300 min-w-[8rem]">
+      <td className="px-4 py-3 align-top text-xs text-zinc-300 min-w-[8rem]">
         {/* 离线节点的 cpu/mem/load 是掉线前的陈旧采样(sweeper 不清零),不当现值展示。 */}
         {node.status === 'online' ? (
           <div className="space-y-1.5">
             <UsageGauge label="CPU" pct={node.cpu_usage} />
             <UsageGauge label="MEM" pct={node.memory_usage} />
-            <div className="flex justify-between text-[11px] text-zinc-400">
+            <div className="flex justify-between text-xs text-zinc-400">
               <span>LOAD</span>
               <span>{node.load_average.toFixed(2)}</span>
             </div>
           </div>
         ) : (
-          <span className="text-[11px] text-zinc-500">离线 · 无实时资源</span>
+          <span className="text-xs text-zinc-400">离线 · 无实时资源</span>
         )}
       </td>
-      <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
+      <td className="px-4 py-3 align-top text-xs text-zinc-300">
         <div>↓ {formatBytes(node.rx_bytes_total)}</div>
         <div>↑ {formatBytes(node.tx_bytes_total)}</div>
       </td>
-      <td className="px-4 py-3 align-top text-[12px] text-zinc-400">
+      <td className="px-4 py-3 align-top text-xs text-zinc-400">
         {node.port_pool_min}–{node.port_pool_max}
       </td>
       <td className="px-4 py-3 align-top text-right">
@@ -502,7 +502,7 @@ function UsageGauge({ label, pct }: { label: string; pct: number }) {
   const color = v < 60 ? 'bg-emerald-400' : v < 85 ? 'bg-amber-400' : 'bg-red-400'
   return (
     <div>
-      <div className="flex justify-between text-[11px] text-zinc-400">
+      <div className="flex justify-between text-xs text-zinc-400">
         <span>{label}</span>
         <span>{pct.toFixed(1)}%</span>
       </div>
@@ -534,7 +534,7 @@ function CredBlock({
 }) {
   return (
     <details open={defaultOpen} className="rounded-lg border border-white/10 bg-zinc-950">
-      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-[11px] text-zinc-400 select-none">
+      <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-xs text-zinc-400 select-none">
         <span>{label}</span>
         <button
           type="button"
@@ -542,12 +542,12 @@ function CredBlock({
             e.preventDefault()
             onCopy(value, label)
           }}
-          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2 py-0.5 text-[11px] text-zinc-200"
+          className="rounded-md bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-2 py-0.5 text-xs text-zinc-200"
         >
           复制
         </button>
       </summary>
-      <pre className="max-h-40 overflow-auto border-t border-white/5 px-3 py-2 font-mono text-[11px] text-emerald-200 whitespace-pre-wrap break-all">
+      <pre className="max-h-40 overflow-auto border-t border-white/5 px-3 py-2 font-mono text-xs text-emerald-200 whitespace-pre-wrap break-all">
         {value}
       </pre>
     </details>
@@ -669,7 +669,7 @@ function NodeForm({
   return (
     <form noValidate onSubmit={onSubmit} className="space-y-4">
       {mode === 'create' && !agentEndpointConfigured && (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
           尚未配置 Agent 上报端点，创建后将无法生成一键安装命令（凭据仍可手动保存）。
           建议先到「设置」页配置后再创建节点。
         </p>
@@ -722,7 +722,7 @@ function NodeForm({
           className={fieldInputCls}
           placeholder="留空 = 直接展示接入地址"
         />
-        <p className="text-[11px] text-zinc-400 mt-1">
+        <p className="text-xs text-zinc-400 mt-1">
           接入地址是隧道/节点互联实际连接的地址(NAT/DDNS 机器填可达域名);
           展示地址是普通用户看到的入口,留空回落接入地址。
         </p>
@@ -736,7 +736,7 @@ function NodeForm({
           className={fieldInputCls}
           placeholder="https://agent.example.com:7001"
         />
-        <p className="text-[11px] text-zinc-400 mt-1">
+        <p className="text-xs text-zinc-400 mt-1">
           仅作展示用途。Agent 会主动用 token 连接主控，不由主控反向拨号。
         </p>
       </div>

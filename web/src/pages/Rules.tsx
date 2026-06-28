@@ -608,7 +608,7 @@ export default function Rules() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-400 bg-white/[0.03]">
+              <thead className="text-xs uppercase text-zinc-400 bg-white/[0.03]">
                 <tr>
                   <th scope="col" className="px-4 py-2.5 w-px">
                     <input
@@ -714,7 +714,7 @@ export default function Rules() {
             （入口 {ruleEntryDisplay(nodeEntryHost(nodesById.get(confirming.node_id)), confirming.listen_port)}）。
             节点在线时对应端口将立即停止监听；若节点离线，规则将在其恢复后自动清理。
           </p>
-          <p className="mt-2 text-[12px] text-amber-300/90">
+          <p className="mt-2 text-xs text-amber-300/90">
             将一并清除该规则累计统计：↓{formatBytes(confirming.rx_bytes)} ↑{formatBytes(confirming.tx_bytes)} · 连接 {formatCount(confirming.connection_count)}
           </p>
           <div className="mt-5 flex justify-end gap-2">
@@ -797,13 +797,13 @@ export default function Rules() {
             </select>
           </div>
           {/* 归属按用户名跨实例回填,落空场景必须显式告知。 */}
-          <p className="mb-3 text-[11px] text-zinc-400">
+          <p className="mb-3 text-xs text-zinc-400">
             归属按文件内用户名匹配回填（规则计入被回填用户的流量配额）；本实例不存在该用户（或老版本导出文件）时，规则归当前操作者并计入其配额。
           </p>
           <div className="max-h-80 overflow-y-auto rounded-lg border border-white/10">
             <table className="w-full text-sm">
               {/* sticky 表头必须近实底:Modal 底色变透明后,半透明表头滚动时会与行文字叠影。 */}
-              <thead className="text-[11px] uppercase text-zinc-400 bg-zinc-950 sticky top-0">
+              <thead className="text-xs uppercase text-zinc-400 bg-zinc-950 sticky top-0">
                 <tr>
                   <th scope="col" className="px-3 py-2 text-left font-medium">#</th>
                   <th scope="col" className="px-3 py-2 text-left font-medium">规则</th>
@@ -825,7 +825,7 @@ export default function Rules() {
                       <td className="px-3 py-2 text-zinc-400">{it.index + 1}</td>
                       <td className="px-3 py-2 text-zinc-200">
                         {src?.name ?? '—'}
-                        <span className="text-[11px] text-zinc-400 ml-1.5 font-mono">
+                        <span className="text-xs text-zinc-400 ml-1.5 font-mono">
                           {src
                             ? `${
                                 // 选了导入目标时显示实际落点节点,避免与文件内 node_name 误导。
@@ -838,7 +838,7 @@ export default function Rules() {
                         </span>
                       </td>
                       <td className={`px-3 py-2 ${tone}`}>{it.action}</td>
-                      <td className="px-3 py-2 text-[12px] text-zinc-400">{it.reason || '—'}</td>
+                      <td className="px-3 py-2 text-xs text-zinc-400">{it.reason || '—'}</td>
                     </tr>
                   )
                 })}
@@ -919,14 +919,14 @@ function RuleRow({
       <td className="px-4 py-3 align-top">
         <Link
           to={`/rules/${rule.id}`}
-          className="font-medium text-zinc-100 hover:text-accent"
+          className="text-[15px] font-semibold text-zinc-100 hover:text-accent"
         >
           {rule.name}
         </Link>
-        <div className="text-[11px] text-zinc-400 mt-0.5">ID #{rule.id}</div>
+        <div className="text-xs text-zinc-400 mt-0.5">ID #{rule.id}</div>
         {grantRevoked && (
           <div
-            className="mt-1 inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300"
+            className="mt-1 inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-300"
             title="管理员已撤销该节点/隧道的使用授权:此规则保留运行,但不能再新建同类规则。"
           >
             授权已撤销
@@ -934,18 +934,18 @@ function RuleRow({
         )}
       </td>
       {showOwner && (
-        <td className="px-4 py-3 align-top text-zinc-300 text-[12px]">
+        <td className="px-4 py-3 align-top text-zinc-300 text-xs">
           {rule.user_name ?? '—'}
         </td>
       )}
       <td className="px-4 py-3 align-top text-zinc-300 whitespace-nowrap">
         <div>{node?.name ?? `节点 #${rule.node_id}`}</div>
-        <div className="text-[11px] text-zinc-400 mt-0.5">
+        <div className="text-xs text-zinc-400 mt-0.5">
           {protoLabel}
           {rule.bandwidth_mbps != null && ` · ${rule.bandwidth_mbps} Mbps`}
         </div>
       </td>
-      <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
+      <td className="px-4 py-3 align-top text-zinc-300 font-mono text-xs">
         <span className="inline-flex items-center gap-1">
           {ruleEntryDisplay(entryHost, rule.listen_port)}
           {entryHost && (
@@ -956,13 +956,13 @@ function RuleRow({
           )}
         </span>
         {tunnelName != null && (
-          <div className="mt-0.5 text-[10px] text-sky-300/80 font-sans">隧道 {tunnelName}</div>
+          <div className="mt-0.5 text-[11px] text-sky-300/80 font-sans">隧道 {tunnelName}</div>
         )}
       </td>
-      <td className="px-4 py-3 align-top text-zinc-300 font-mono text-[12px]">
+      <td className="px-4 py-3 align-top text-zinc-300 font-mono text-xs">
         {rule.target_host}:{rule.target_port}
         {rule.extra_targets.length > 0 && (
-          <div className="text-[10px] text-amber-300/80 font-sans mt-0.5">
+          <div className="text-[11px] text-amber-300/80 font-sans mt-0.5">
             +{rule.extra_targets.length} 个目标负载
           </div>
         )}
@@ -973,10 +973,10 @@ function RuleRow({
           {rule.enabled ? '启用' : '禁用'}
         </span>
       </td>
-      <td className="px-4 py-3 align-top text-[12px] text-zinc-300">
+      <td className="px-4 py-3 align-top text-xs text-zinc-300">
         <div>↓ {formatBytes(rule.rx_bytes)}</div>
         <div>↑ {formatBytes(rule.tx_bytes)}</div>
-        <div className="text-[11px] text-zinc-400 mt-0.5">累计连接 {formatCount(rule.connection_count)}</div>
+        <div className="text-xs text-zinc-400 mt-0.5">累计连接 {formatCount(rule.connection_count)}</div>
       </td>
       <td className="px-4 py-3 align-top text-right whitespace-nowrap">
         <button
@@ -1076,7 +1076,7 @@ function ExportModal({
   return (
     <Modal title="导出规则" onClose={() => !busy && onClose()} size="sm">
       <div className="space-y-3">
-        <p className="text-[12px] text-zinc-400">选择导出范围，生成 JSON 文件下载。</p>
+        <p className="text-xs text-zinc-400">选择导出范围，生成 JSON 文件下载。</p>
         <div className="flex flex-col gap-2 text-sm">
           {(
             [
@@ -1129,7 +1129,7 @@ function ExportModal({
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
-            <p className="text-[11px] text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-400 mt-1">
               隧道关联规则导入到其它实例时需手动重建隧道关联。
             </p>
           </div>
@@ -1476,7 +1476,7 @@ export function RuleForm({
               </option>
             ))}
           </select>
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             选择隧道后，规则将落在隧道入口节点，流量经隧道链转发至目标。
           </p>
         </div>
@@ -1506,7 +1506,7 @@ export function RuleForm({
                 </option>
               )}
           </select>
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             {mode === 'edit'
               ? '归属创建后不可修改(可删除后以新归属重建)。'
               : userList.length >= 100
@@ -1547,7 +1547,7 @@ export function RuleForm({
           className={fieldInputCls}
           placeholder={mode === 'create' ? '留空 = 自动分配' : '留空 = 不修改'}
         />
-        <p className="text-[11px] text-zinc-400 mt-1">
+        <p className="text-xs text-zinc-400 mt-1">
           监听 IP 固定 0.0.0.0(所有网卡);入口地址按节点展示地址显示。
         </p>
       </div>
@@ -1579,7 +1579,7 @@ export function RuleForm({
             placeholder="1.2.3.4 或 backend.example.com"
           />
           {targetHostInvalid && (
-            <p id="rule-target-host-err" aria-live="polite" className="text-[11px] text-red-300 mt-1">
+            <p id="rule-target-host-err" aria-live="polite" className="text-xs text-red-300 mt-1">
               不是合法 IP 或域名（如 1.2.3.4 / backend.example.com）
             </p>
           )}
@@ -1613,7 +1613,7 @@ export function RuleForm({
             className={`${fieldInputCls} font-mono`}
             placeholder={'每行一个 host:端口\n2.2.2.2:443\nbackend2.example.com:8080'}
           />
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             留空 = 单目标。主目标(上方) + 额外目标组成负载池;IPv6 用 [::1]:端口。
           </p>
           {form.extra_targets.trim() !== '' && (
@@ -1652,7 +1652,7 @@ export function RuleForm({
                 </option>
               ))}
             </select>
-            <p className="text-[11px] text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-400 mt-1">
               在「限速」页维护可复用配置；到期与流量配额已移至用户维度。
             </p>
           </div>
@@ -1667,13 +1667,13 @@ export function RuleForm({
               className={fieldInputCls}
               placeholder="留空 = 不限"
             />
-            <p className="text-[11px] text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-400 mt-1">
               仅 TCP 生效;达到上限时新连接被直接断开。
             </p>
           </div>
           <div>
             <label className={fieldLabelCls}>PROXY protocol</label>
-            <label className="flex items-center gap-2 text-[13px] text-zinc-200 mt-1.5 cursor-pointer">
+            <label className="flex items-center gap-2 text-sm text-zinc-200 mt-1.5 cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.send_proxy_protocol}
@@ -1681,7 +1681,7 @@ export function RuleForm({
               />
               向上游发送 PROXY protocol v1
             </label>
-            <p className="text-[11px] text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-400 mt-1">
               仅非隧道 TCP;让上游(如 nginx)拿到真实客户端 IP(需上游启用 proxy_protocol)。
             </p>
           </div>

@@ -185,7 +185,7 @@ export default function Settings() {
         <h2 className="text-xl font-semibold tracking-tight">系统设置</h2>
         <p className="text-sm text-zinc-400 mt-1">
           安全状态 / 保留端口黑名单 / 全局默认配置
-          {version && <span className="ml-2 text-zinc-500">· 面板 v{version}</span>}
+          {version && <span className="ml-2 text-zinc-400">· 面板 v{version}</span>}
         </p>
       </div>
 
@@ -194,7 +194,7 @@ export default function Settings() {
       {/* 转发接入(表单首块)与审计日志并排:大屏左右两列,窄屏回落单列 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <form onSubmit={onSubmit} className="glass-card rise p-5 space-y-4">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-accent/80">转发接入</h4>
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-accent/80">转发接入</h4>
         <div>
           <label htmlFor="set-endpoint" className={fieldLabelCls}>Agent 上报端点</label>
           <input
@@ -205,7 +205,7 @@ export default function Settings() {
             className={fieldInputCls}
             placeholder="https://relay.example.com:50051"
           />
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             Agent 默认 gRPC 连入地址。新建节点的「安装命令」会嵌入这个值；
             生产建议用 https。留空表示未配置（节点详情页的安装命令按钮会禁用）。
             <span className="text-amber-400/90">
@@ -215,7 +215,7 @@ export default function Settings() {
           </p>
         </div>
 
-        <h4 className="border-t border-white/5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-accent/80">端口与数据保留</h4>
+        <h4 className="border-t border-white/5 pt-4 text-xs font-semibold uppercase tracking-wider text-accent/80">端口与数据保留</h4>
         <div>
           <label htmlFor="set-reserved" className={fieldLabelCls}>保留端口 (reserved_ports)</label>
           <textarea
@@ -226,7 +226,7 @@ export default function Settings() {
             className={`${fieldInputCls} font-mono text-xs`}
             placeholder="[22, 80, 443, 3306, 5432]"
           />
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             JSON 整数数组。任何规则的 listen_port 命中将被拒绝创建。
           </p>
         </div>
@@ -242,7 +242,7 @@ export default function Settings() {
             className={fieldInputCls}
             placeholder="30"
           />
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             node_stats / rule_stats 分钟桶保留天数（默认 30），超期数据由后台每小时自动清理；
             不清理审计日志。
             <span className="text-amber-400/90">
@@ -251,7 +251,7 @@ export default function Settings() {
           </p>
         </div>
 
-        <h4 className="border-t border-white/5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-accent/80">通知</h4>
+        <h4 className="border-t border-white/5 pt-4 text-xs font-semibold uppercase tracking-wider text-accent/80">通知</h4>
         <div>
           <label htmlFor="set-webhook" className={fieldLabelCls}>通知 Webhook URL (notify_webhook_url)</label>
           <input
@@ -262,7 +262,7 @@ export default function Settings() {
             className={fieldInputCls}
             placeholder="https://example.com/hook（留空 = 关闭通知）"
           />
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             节点掉线/恢复、用户超额/到期时 POST JSON{' '}
             <code className="text-zinc-400">{'{event, occurred_at, data}'}</code> 到此地址。
             事件：node.offline / node.online / user.quota_exceeded / user.expired。
@@ -270,7 +270,7 @@ export default function Settings() {
           </p>
         </div>
 
-        <h4 className="border-t border-white/5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-accent/80">外观</h4>
+        <h4 className="border-t border-white/5 pt-4 text-xs font-semibold uppercase tracking-wider text-accent/80">外观</h4>
         <div>
           <label htmlFor="set-accent" className={fieldLabelCls}>全局强调色 (ui_accent_color)</label>
           <div className="flex items-center gap-3">
@@ -299,7 +299,7 @@ export default function Settings() {
               </button>
             )}
           </div>
-          <p className="text-[11px] text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             #rrggbb 格式。保存后全站配色（按钮/导航/背景极光）随之联动，
             所有已登录客户端最迟 30 秒内自动跟进，无需刷新。
             建议选用较亮的颜色，深色会降低暗底上的文字对比度。
@@ -328,7 +328,7 @@ export default function Settings() {
         <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-medium text-zinc-200">最近审计日志</h3>
-            <p className="text-[11px] text-zinc-400">最近 20 条操作记录</p>
+            <p className="text-xs text-zinc-400">最近 20 条操作记录</p>
           </div>
           <select
             aria-label="按结果筛选审计日志"
@@ -358,7 +358,7 @@ export default function Settings() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-400 bg-zinc-900/80">
+              <thead className="text-xs uppercase text-zinc-400 bg-zinc-900/80">
                 <tr>
                   <th scope="col" className="px-4 py-2 text-left font-medium">时间</th>
                   <th scope="col" className="px-4 py-2 text-left font-medium">操作</th>
@@ -370,19 +370,19 @@ export default function Settings() {
               <tbody className="divide-y divide-white/5">
                 {logs.items.map((l) => (
                   <tr key={l.id} className="hover:bg-white/[0.02]">
-                    <td className="px-4 py-2 align-top text-[12px] text-zinc-400 font-mono whitespace-nowrap">
+                    <td className="px-4 py-2 align-top text-xs text-zinc-400 font-mono whitespace-nowrap">
                       {shortTime(l.created_at)}
                     </td>
-                    <td className="px-4 py-2 align-top text-[12px] text-zinc-200" title={l.action}>
+                    <td className="px-4 py-2 align-top text-xs text-zinc-200" title={l.action}>
                       {actionLabel(l.action)}
                     </td>
-                    <td className="px-4 py-2 align-top text-[12px] text-zinc-400">
+                    <td className="px-4 py-2 align-top text-xs text-zinc-400">
                       {l.target_type ?? '—'}
                       {l.target_id != null ? ` #${l.target_id}` : ''}
                     </td>
                     <td className="px-4 py-2 align-top">
                       <span
-                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] ${
+                        className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] ${
                           l.result === 'success'
                             ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
                             : 'border-red-500/40 bg-red-500/10 text-red-200'
@@ -391,7 +391,7 @@ export default function Settings() {
                         {l.result}
                       </span>
                     </td>
-                    <td className="px-4 py-2 align-top text-[11px] text-zinc-400 max-w-[18rem] truncate">
+                    <td className="px-4 py-2 align-top text-xs text-zinc-400 max-w-[18rem] truncate">
                       {l.error_message ?? l.payload ?? ''}
                     </td>
                   </tr>
@@ -451,16 +451,16 @@ function SecurityCard({ data }: { data: SecurityInfo | 'loading' | 'error' }) {
       <h3 className="text-sm font-medium text-zinc-200 mb-3">安全状态</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
-          <div className="text-[11px] text-zinc-400">JWT 密钥</div>
+          <div className="text-xs text-zinc-400">JWT 密钥</div>
           <div className={`text-sm mt-0.5 ${jwtStatus.cls}`}>{jwtStatus.text}</div>
-          <div className="text-[11px] text-zinc-400 mt-0.5">
+          <div className="text-xs text-zinc-400 mt-0.5">
             长度 {data.jwt_secret_length} 字节 · 过期 {data.jwt_expiry_hours} 小时
           </div>
         </div>
         <div className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
-          <div className="text-[11px] text-zinc-400">Agent 鉴权方式</div>
+          <div className="text-xs text-zinc-400">Agent 鉴权方式</div>
           <div className={`text-sm mt-0.5 ${tlsStatus.cls}`}>{tlsStatus.text}</div>
-          <div className="text-[11px] text-zinc-400 mt-0.5">{tlsStatus.hint}</div>
+          <div className="text-xs text-zinc-400 mt-0.5">{tlsStatus.hint}</div>
         </div>
       </div>
     </section>
