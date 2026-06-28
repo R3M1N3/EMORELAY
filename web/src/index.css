@@ -41,10 +41,10 @@
   --color-accent-hi: var(--accent-hi);
   --font-sans: "Hanken Grotesk", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Chivo Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  /* 字号系统第 2 轮：语义档基线整体上移一档(次级 13/正文 15/标准 17)。
+  /* 字号系统第 2 轮：语义档基线整体上移一档(次级 14/正文 15/标准 17)。
      行高在 v4 是无单位比值,字号放大时行高 px 自动按原比例跟随,无需手调间距。
      标题档 lg/xl/2xl 保持 stock 不动(本就够大)。 */
-  --text-xs: 0.8125rem;   /* 12 → 13px；行高比值沿用 1.333 → ~17.3px */
+  --text-xs: 0.875rem;    /* 12 → 14px；行高比值沿用 1.333 → ~18.7px */
   --text-sm: 0.9375rem;   /* 14 → 15px；行高比值沿用 1.429 → ~21.4px */
   --text-base: 1.0625rem; /* 16 → 17px；行高比值沿用 1.5 → ~25.5px */
 }
