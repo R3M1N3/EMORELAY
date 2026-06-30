@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom'
 import {
   ApiError,
   nodes,
-  rules,
   shortTime,
   statusLabel,
   tunnels,
@@ -12,6 +11,7 @@ import {
 } from '../lib/api'
 import { ErrorBox, Modal, PageLoading, StatusDot } from '../lib/ui'
 import { DiagnosePanel } from '../components/DiagnosePanel'
+import { ExportRulesButton } from '../components/ExportRulesButton'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
@@ -48,8 +48,6 @@ export default function TunnelDetail() {
   const [restarting, setRestarting] = useState(false)
   // 重启是破坏性操作(瞬断隧道上所有规则转发):与列表页一致,加二次确认弹窗。
   const [restartConfirm, setRestartConfirm] = useState(false)
-  // 导出走一次 fetch+blob,规则量大/网络慢时有可感知延迟:进行中态 + 防连点。
-  const [exporting, setExporting] = useState(false)
   // P7:该隧道被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
   const [grantedUsers, setGrantedUsers] = useState<GrantedUser[] | null>(null)
   // 15s 静默刷新 hop 心跳聚合状态(隧道 up/degraded/down 变化较快)。
@@ -151,24 +149,10 @@ export default function TunnelDetail() {
         </div>
         <div className="flex gap-2 shrink-0">
           {/* P9: 导出本隧道关联规则(隧道规则导入时需手动重建关联,文件中含 tunnel_name 供识别)。 */}
-          <button
-            type="button"
-            disabled={exporting}
-            onClick={async () => {
-              setExporting(true)
-              try {
-                await rules.exportDownload({ tunnel_id: tunnelId })
-                toast.success('已导出。注意:隧道关联无法随导入自动重建,导入后需手动重新关联隧道')
-              } catch (e) {
-                toast.error(e instanceof ApiError ? e.message : '导出失败')
-              } finally {
-                setExporting(false)
-              }
-            }}
-            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-2 text-sm"
-          >
-            {exporting ? '导出中…' : '导出规则'}
-          </button>
+          <ExportRulesButton
+            query={{ tunnel_id: tunnelId }}
+            successText="已导出。注意:隧道关联无法随导入自动重建,导入后需手动重新关联隧道"
+          />
           <button
             type="button"
             onClick={() => setRestartConfirm(true)}

@@ -4,7 +4,6 @@ import {
   ApiError,
   formatBytes,
   nodes,
-  rules,
   shortTime,
   statusLabel,
   type GrantedUser,
@@ -13,6 +12,7 @@ import {
 } from '../lib/api'
 import { Sparkline } from '../components/Sparkline'
 import { RegionBadge } from '../components/RegionBadge'
+import { ExportRulesButton } from '../components/ExportRulesButton'
 import { ErrorBox, Modal, PageLoading, StatusDot } from '../lib/ui'
 import { useToast } from '../lib/use-toast'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
@@ -45,7 +45,6 @@ export default function NodeDetail() {
   const [confirmingUpgrade, setConfirmingUpgrade] = useState(false)
   const [upgrading, setUpgrading] = useState(false)
   const [revoking, setRevoking] = useState(false)
-  const [exporting, setExporting] = useState(false)
   const [revokedCreds, setRevokedCreds] = useState<RevokedCreds | null>(null)
   // P7:该节点被授权给哪些用户(admin-only 端点;本页路由已 admin-only)。null = 未加载。
   const [grantedUsers, setGrantedUsers] = useState<GrantedUser[] | null>(null)
@@ -196,24 +195,7 @@ export default function NodeDetail() {
             升级 Agent
           </button>
           {/* P9: 导出本节点全部规则(跨实例迁移/备份用)。 */}
-          <button
-            type="button"
-            disabled={exporting}
-            onClick={async () => {
-              setExporting(true)
-              try {
-                await rules.exportDownload({ node_id: nodeId })
-                toast.success('已导出本节点规则')
-              } catch (e) {
-                toast.error(e instanceof ApiError ? e.message : '导出失败')
-              } finally {
-                setExporting(false)
-              }
-            }}
-            className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-2 text-sm"
-          >
-            {exporting ? '导出中…' : '导出规则'}
-          </button>
+          <ExportRulesButton query={{ node_id: nodeId }} successText="已导出本节点规则" />
           <button
             type="button"
             onClick={() => setConfirmingRevoke(true)}

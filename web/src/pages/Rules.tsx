@@ -119,18 +119,23 @@ export default function Rules() {
     })
   }
 
+  // 列表请求参数(reload 与列表 effect 共用,避免新增筛选项要改两处、口径漂移)。
+  function listParams() {
+    return {
+      page,
+      page_size: pageSize,
+      node_id: filters.node_id ? Number(filters.node_id) : undefined,
+      protocol: filters.protocol || undefined,
+      search: filters.search.trim() || undefined,
+      user_id: filters.user_id ? Number(filters.user_id) : undefined,
+      enabled: filters.enabled ? filters.enabled === 'true' : undefined,
+    }
+  }
+
   async function reload(opts: { silent?: boolean } = {}) {
     if (!opts.silent) setList((s) => ({ ...s, loading: true, error: null }))
     try {
-      const r = await rules.list({
-        page,
-        page_size: pageSize,
-        node_id: filters.node_id ? Number(filters.node_id) : undefined,
-        protocol: filters.protocol || undefined,
-        search: filters.search.trim() || undefined,
-        user_id: filters.user_id ? Number(filters.user_id) : undefined,
-        enabled: filters.enabled ? filters.enabled === 'true' : undefined,
-      })
+      const r = await rules.list(listParams())
       // 末页操作(批量启停/删除)使结果集缩小后,当前 page 可能已超出新总页数 → 空表(用户误以为没规则)。
       // 回退到新的最后一页:setPage 触发列表 effect 用 clamp 后的页重新拉取(配额/筛选下尤其常见)。
       const maxPage = Math.max(1, Math.ceil(r.total / pageSize))
@@ -222,15 +227,7 @@ export default function Rules() {
   useEffect(() => {
     let cancelled = false
     rules
-      .list({
-        page,
-        page_size: pageSize,
-        node_id: filters.node_id ? Number(filters.node_id) : undefined,
-        protocol: filters.protocol || undefined,
-        search: filters.search.trim() || undefined,
-        user_id: filters.user_id ? Number(filters.user_id) : undefined,
-        enabled: filters.enabled ? filters.enabled === 'true' : undefined,
-      })
+      .list(listParams())
       .then((r) => {
         if (!cancelled) setList({ items: r.items, total: r.total, loading: false, error: null })
       })

@@ -51,6 +51,68 @@ pub const SORT_FIELDS: &[&str] = &[
     "updated_at",
 ];
 
+/// forward_rules 列表/计数共用的 WHERE 片段(含 deleted_at IS NULL)。
+/// **片段顺序必须与 [`bind_rule_filters!`] 的 bind 顺序严格一致**——SQLite `?` 是位置绑定,
+/// 顺序错位会静默把值绑到错误的列。新增筛选项必须同时改本函数与该宏。
+fn rule_filter_where(
+    node_id: Option<i64>,
+    protocol: Option<&str>,
+    search: Option<&str>,
+    restrict_user_id: Option<i64>,
+    user_id: Option<i64>,
+    enabled: Option<bool>,
+) -> String {
+    let mut parts = vec!["deleted_at IS NULL"];
+    if node_id.is_some() {
+        parts.push("node_id = ?");
+    }
+    if protocol.is_some() {
+        parts.push("protocol = ?");
+    }
+    if search.is_some() {
+        parts.push("(name LIKE ? ESCAPE '\\' OR target_host LIKE ? ESCAPE '\\' OR CAST(listen_port AS TEXT) = ?)");
+    }
+    if restrict_user_id.is_some() {
+        parts.push("user_id = ?");
+    }
+    if user_id.is_some() {
+        parts.push("user_id = ?");
+    }
+    if enabled.is_some() {
+        parts.push("enabled = ?");
+    }
+    parts.join(" AND ")
+}
+
+/// 把 [`rule_filter_where`] 对应的过滤值按同序 bind 到 query builder(list_paged/count_filtered 共用)。
+/// bind 顺序必须与 `rule_filter_where` 的片段顺序一致。
+macro_rules! bind_rule_filters {
+    ($q:expr, $node_id:expr, $protocol:expr, $search:expr, $restrict_user_id:expr, $user_id:expr, $enabled:expr) => {{
+        let mut q = $q;
+        if let Some(nid) = $node_id {
+            q = q.bind(nid);
+        }
+        if let Some(p) = $protocol {
+            q = q.bind(p);
+        }
+        if let Some(s) = $search {
+            // 转义 \ % _ 防通配符污染;裸 s 那个 bind 是端口精确匹配,不转义。
+            let like = format!("%{}%", crate::util::escape_like(s));
+            q = q.bind(like.clone()).bind(like).bind(s.to_string());
+        }
+        if let Some(uid) = $restrict_user_id {
+            q = q.bind(uid);
+        }
+        if let Some(uid) = $user_id {
+            q = q.bind(uid);
+        }
+        if let Some(en) = $enabled {
+            q = q.bind(en);
+        }
+        q
+    }};
+}
+
 impl Rule {
     #[allow(clippy::too_many_arguments)]
     pub async fn list_paged(
@@ -67,52 +129,20 @@ impl Rule {
         enabled: Option<bool>,
     ) -> sqlx::Result<Vec<Self>> {
         let order = if order_desc { "DESC" } else { "ASC" };
-        let mut where_parts = vec!["deleted_at IS NULL".to_string()];
-        if node_id.is_some() {
-            where_parts.push("node_id = ?".into());
-        }
-        if protocol.is_some() {
-            where_parts.push("protocol = ?".into());
-        }
-        if search.is_some() {
-            where_parts.push(
-                "(name LIKE ? ESCAPE '\\' OR target_host LIKE ? ESCAPE '\\' OR CAST(listen_port AS TEXT) = ?)".into(),
-            );
-        }
-        if restrict_user_id.is_some() {
-            where_parts.push("user_id = ?".into());
-        }
-        if user_id.is_some() {
-            where_parts.push("user_id = ?".into());
-        }
-        if enabled.is_some() {
-            where_parts.push("enabled = ?".into());
-        }
+        let where_sql =
+            rule_filter_where(node_id, protocol, search, restrict_user_id, user_id, enabled);
         let sql = format!(
-            "SELECT {RULE_COLUMNS} FROM forward_rules WHERE {} ORDER BY {sort_field} {order} LIMIT ? OFFSET ?",
-            where_parts.join(" AND ")
+            "SELECT {RULE_COLUMNS} FROM forward_rules WHERE {where_sql} ORDER BY {sort_field} {order} LIMIT ? OFFSET ?"
         );
-        let mut q = sqlx::query_as::<_, Rule>(&sql);
-        if let Some(nid) = node_id {
-            q = q.bind(nid);
-        }
-        if let Some(p) = protocol {
-            q = q.bind(p);
-        }
-        if let Some(s) = search {
-            // 转义 \ % _ 防通配符污染;裸 s 那个 bind 是端口精确匹配,不转义。
-            let like = format!("%{}%", crate::util::escape_like(s));
-            q = q.bind(like.clone()).bind(like).bind(s.to_string());
-        }
-        if let Some(uid) = restrict_user_id {
-            q = q.bind(uid);
-        }
-        if let Some(uid) = user_id {
-            q = q.bind(uid);
-        }
-        if let Some(en) = enabled {
-            q = q.bind(en);
-        }
+        let q = bind_rule_filters!(
+            sqlx::query_as::<_, Rule>(&sql),
+            node_id,
+            protocol,
+            search,
+            restrict_user_id,
+            user_id,
+            enabled
+        );
         q.bind(limit).bind(offset).fetch_all(pool).await
     }
 
@@ -125,52 +155,18 @@ impl Rule {
         user_id: Option<i64>,
         enabled: Option<bool>,
     ) -> sqlx::Result<i64> {
-        let mut where_parts = vec!["deleted_at IS NULL".to_string()];
-        if node_id.is_some() {
-            where_parts.push("node_id = ?".into());
-        }
-        if protocol.is_some() {
-            where_parts.push("protocol = ?".into());
-        }
-        if search.is_some() {
-            where_parts.push(
-                "(name LIKE ? ESCAPE '\\' OR target_host LIKE ? ESCAPE '\\' OR CAST(listen_port AS TEXT) = ?)".into(),
-            );
-        }
-        if restrict_user_id.is_some() {
-            where_parts.push("user_id = ?".into());
-        }
-        if user_id.is_some() {
-            where_parts.push("user_id = ?".into());
-        }
-        if enabled.is_some() {
-            where_parts.push("enabled = ?".into());
-        }
-        let sql = format!(
-            "SELECT COUNT(*) FROM forward_rules WHERE {}",
-            where_parts.join(" AND ")
+        let where_sql =
+            rule_filter_where(node_id, protocol, search, restrict_user_id, user_id, enabled);
+        let sql = format!("SELECT COUNT(*) FROM forward_rules WHERE {where_sql}");
+        let q = bind_rule_filters!(
+            sqlx::query_scalar::<_, i64>(&sql),
+            node_id,
+            protocol,
+            search,
+            restrict_user_id,
+            user_id,
+            enabled
         );
-        let mut q = sqlx::query_scalar::<_, i64>(&sql);
-        if let Some(nid) = node_id {
-            q = q.bind(nid);
-        }
-        if let Some(p) = protocol {
-            q = q.bind(p);
-        }
-        if let Some(s) = search {
-            // 转义 \ % _ 防通配符污染;裸 s 那个 bind 是端口精确匹配,不转义。
-            let like = format!("%{}%", crate::util::escape_like(s));
-            q = q.bind(like.clone()).bind(like).bind(s.to_string());
-        }
-        if let Some(uid) = restrict_user_id {
-            q = q.bind(uid);
-        }
-        if let Some(uid) = user_id {
-            q = q.bind(uid);
-        }
-        if let Some(en) = enabled {
-            q = q.bind(en);
-        }
         q.fetch_one(pool).await
     }
 
