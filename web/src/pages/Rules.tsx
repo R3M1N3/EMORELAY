@@ -28,6 +28,7 @@ import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
 import { DiagnosePanel } from '../components/DiagnosePanel'
 import { formatHostPort, nodeEntryHost, ruleEntryDisplay } from '../lib/format-addr'
+import { rulesToTxt } from '../lib/rule-txt'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; rule: RuleView } | null
@@ -1021,9 +1022,8 @@ function RuleRow({
   )
 }
 
-// 导出范围 Modal:全部 / 指定节点 / 指定隧道。复用已支持 node_id/tunnel_id 过滤的 exportDownload。
-// 显式让用户选维度(对标 flux「导出时选维度」),解决「导出入口分散/不能自选节点隧道」的体验断点。
-function ExportModal({
+// 导出弹窗:选范围(全部/节点/隧道)+ 格式(JSON/TXT),生成到文本框,支持复制与下载文件。
+export function ExportModal({
   nodeList,
   tunnelList,
   onClose,
@@ -1036,9 +1036,22 @@ function ExportModal({
   const [scope, setScope] = useState<'all' | 'node' | 'tunnel'>('all')
   const [nodeId, setNodeId] = useState('')
   const [tunnelId, setTunnelId] = useState('')
+  const [format, setFormat] = useState<'json' | 'txt'>('json')
+  const [items, setItems] = useState<RuleExportItem[] | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function doExport() {
+  // 范围改变作废已生成内容(避免展示与选择不符)。
+  function changeScope(s: 'all' | 'node' | 'tunnel') {
+    setScope(s)
+    setItems(null)
+  }
+
+  const content = useMemo(() => {
+    if (!items) return ''
+    return format === 'json' ? JSON.stringify(items, null, 2) : rulesToTxt(items)
+  }, [items, format])
+
+  async function generate() {
     if (scope === 'node' && !nodeId) {
       toast.error('请选择节点')
       return
@@ -1055,27 +1068,29 @@ function ExportModal({
           : scope === 'tunnel'
             ? { tunnel_id: Number(tunnelId) }
             : {}
-      await rules.exportDownload(q)
-      toast.success(
-        scope === 'all'
-          ? '已导出全部规则'
-          : scope === 'node'
-            ? '已导出该节点规则'
-            : '已导出该隧道规则',
-      )
-      onClose()
+      setItems(await rules.exportFetch(q))
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : '导出失败')
+      toast.error(e instanceof ApiError ? e.message : '生成失败')
     } finally {
       setBusy(false)
     }
   }
 
+  function download() {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `emorelay-rules-export.${format}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
-    <Modal title="导出规则" onClose={() => !busy && onClose()} size="sm">
+    <Modal title="导出规则" onClose={() => !busy && onClose()} size="lg">
       <div className="space-y-3">
-        <p className="text-xs text-zinc-400">选择导出范围，生成 JSON 文件下载。</p>
         <div className="flex flex-col gap-2 text-sm">
+          <span className="text-zinc-400">导出范围</span>
           {(
             [
               ['all', '全部规则'],
@@ -1089,7 +1104,7 @@ function ExportModal({
                 name="export-scope"
                 checked={scope === v}
                 disabled={busy}
-                onChange={() => setScope(v)}
+                onChange={() => changeScope(v)}
               />
               {label}
             </label>
@@ -1102,7 +1117,10 @@ function ExportModal({
               id="export-node"
               value={nodeId}
               disabled={busy}
-              onChange={(e) => setNodeId(e.target.value)}
+              onChange={(e) => {
+                setNodeId(e.target.value)
+                setItems(null)
+              }}
               className={fieldInputCls}
             >
               <option value="">请选择节点</option>
@@ -1119,7 +1137,10 @@ function ExportModal({
               id="export-tunnel"
               value={tunnelId}
               disabled={busy}
-              onChange={(e) => setTunnelId(e.target.value)}
+              onChange={(e) => {
+                setTunnelId(e.target.value)
+                setItems(null)
+              }}
               className={fieldInputCls}
             >
               <option value="">请选择隧道</option>
@@ -1132,6 +1153,53 @@ function ExportModal({
             </p>
           </div>
         )}
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-zinc-400">格式</span>
+          {(['json', 'txt'] as const).map((f) => (
+            <label key={f} className="inline-flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="export-format"
+                checked={format === f}
+                disabled={busy}
+                onChange={() => setFormat(f)}
+              />
+              {f === 'json' ? 'JSON' : 'TXT'}
+            </label>
+          ))}
+        </div>
+        {format === 'txt' && (
+          <p className="text-xs text-zinc-400">
+            TXT 仅含 目标/名称/入口端口,不含协议/节点/归属/启用态等。
+          </p>
+        )}
+        {items &&
+          (items.length === 0 ? (
+            <p className="text-sm text-zinc-400">该范围没有可导出的规则。</p>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-zinc-400">{items.length} 条规则</span>
+                <div className="flex items-center gap-2">
+                  <CopyButton value={content} label="复制导出内容" />
+                  <button
+                    type="button"
+                    onClick={download}
+                    className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-1.5 text-sm"
+                  >
+                    下载文件
+                  </button>
+                </div>
+              </div>
+              <textarea
+                readOnly
+                value={content}
+                rows={10}
+                aria-label="导出内容"
+                className={`${fieldInputCls} font-mono resize-y`}
+              />
+            </div>
+          ))}
       </div>
       <div className="mt-5 flex justify-end gap-2">
         <button
@@ -1140,10 +1208,10 @@ function ExportModal({
           disabled={busy}
           className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
         >
-          取消
+          关闭
         </button>
-        <button type="button" onClick={() => void doExport()} disabled={busy} className="btn-accent">
-          {busy ? '导出中…' : '导出'}
+        <button type="button" onClick={() => void generate()} disabled={busy} className="btn-accent">
+          {busy ? '生成中…' : '生成'}
         </button>
       </div>
     </Modal>
