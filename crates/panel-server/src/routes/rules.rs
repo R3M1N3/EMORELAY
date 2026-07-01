@@ -28,7 +28,7 @@ pub struct TargetDto {
     pub port: u16,
 }
 
-fn parse_extra_targets(json: Option<&str>) -> Vec<TargetDto> {
+pub(crate) fn parse_extra_targets(json: Option<&str>) -> Vec<TargetDto> {
     json.and_then(|s| serde_json::from_str::<Vec<TargetDto>>(s).ok())
         .unwrap_or_default()
 }
@@ -163,7 +163,7 @@ pub struct UpdateRuleRequest {
 
 /// 校验多目标 + 策略,返回 (extra_targets_json, lb_strategy)。每个额外目标做与主目标
 /// 同等的 host 形状校验;非 admin 不得指向内网。空列表 → None(清空)。
-fn validate_targets(
+pub(crate) fn validate_targets(
     extra: &[TargetDto],
     lb_strategy: Option<&str>,
     is_admin: bool,

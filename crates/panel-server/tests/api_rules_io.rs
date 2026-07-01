@@ -392,3 +392,52 @@ async fn import_backfills_owner_by_username() {
     .unwrap();
     assert_eq!(owner, app.admin_user_id, "匹配不到时归导入者");
 }
+
+#[tokio::test]
+async fn export_import_roundtrip_preserves_extra_targets() {
+    let app = common::make_app().await.unwrap();
+    let node_id = seed_node_named(&app, "mt-node").await;
+    let r = create_rule(
+        &app,
+        json!({ "node_id": node_id, "name": "mt-r1", "protocol": "tcp", "listen_port": 20000,
+                "target_host": "1.1.1.1", "target_port": 80,
+                "extra_targets": [{"host": "2.2.2.2", "port": 80}, {"host": "3.3.3.3", "port": 8080}],
+                "lb_strategy": "round" }),
+    )
+    .await;
+    let rule_id = r["id"].as_i64().unwrap();
+
+    // 导出:extra_targets + lb_strategy 带出
+    let req = common::auth_req(Method::GET, "/api/rules/export", &app.admin_token, None).unwrap();
+    let (status, exported) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{exported}");
+    let item = &exported.as_array().unwrap()[0];
+    assert_eq!(item["lb_strategy"], "round");
+    let extra = item["extra_targets"].as_array().unwrap();
+    assert_eq!(extra.len(), 2);
+    assert_eq!(extra[0]["host"], "2.2.2.2");
+    assert_eq!(extra[1]["port"], 8080);
+
+    // 删除后实导恢复
+    let req = common::auth_req(Method::DELETE, &format!("/api/rules/{rule_id}"), &app.admin_token, None).unwrap();
+    let (status, _) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let req = common::auth_req(
+        Method::POST, "/api/rules/import?strategy=skip&dry_run=0", &app.admin_token, Some(exported),
+    ).unwrap();
+    let (status, report) = common::send(app.app.clone(), req).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["items"][0]["action"], "create");
+
+    // 落库校验:extra_targets JSON + lb_strategy
+    let (et, lb): (Option<String>, String) = sqlx::query_as(
+        "SELECT extra_targets, lb_strategy FROM forward_rules WHERE deleted_at IS NULL",
+    )
+    .fetch_one(&app.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(lb, "round");
+    let targets: Vec<serde_json::Value> = serde_json::from_str(&et.unwrap()).unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0]["host"], "2.2.2.2");
+}

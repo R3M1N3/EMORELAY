@@ -9,6 +9,7 @@ use crate::{
     models::{bandwidth_profile::BandwidthProfile, node::Node, rule::Rule, settings},
     state::AppState,
 };
+use crate::routes::rules::{parse_extra_targets, validate_targets, TargetDto};
 use axum::{
     extract::{Query, State},
     http::header,
@@ -33,6 +34,16 @@ pub struct RuleExportItem {
     /// 归属用户名(跨实例按用户名回填;缺失/匹配不到 → 归导入者)。老导出文件无此字段。
     #[serde(default)]
     pub owner_username: Option<String>,
+    /// P2 多目标额外目标(空 = 单目标);老导出文件无此字段。
+    #[serde(default)]
+    pub extra_targets: Vec<TargetDto>,
+    /// 负载策略;老文件无此字段默认 fifo。
+    #[serde(default = "default_lb_strategy")]
+    pub lb_strategy: String,
+}
+
+fn default_lb_strategy() -> String {
+    "fifo".to_string()
 }
 
 #[derive(Deserialize)]
@@ -55,6 +66,8 @@ struct ExportRow {
     tunnel_name: Option<String>,
     bandwidth_profile_name: Option<String>,
     owner_username: Option<String>,
+    extra_targets: Option<String>,
+    lb_strategy: String,
 }
 
 pub async fn export(
@@ -75,7 +88,8 @@ pub async fn export(
     }
     let sql = format!(
         "SELECT fr.name, fr.protocol, fr.listen_ip, fr.listen_port, fr.target_host, \
-                fr.target_port, fr.enabled, n.name AS node_name, \
+                fr.target_port, fr.enabled, fr.extra_targets, fr.lb_strategy, \
+                n.name AS node_name, \
                 t.name AS tunnel_name, \
                 bp.name AS bandwidth_profile_name, \
                 u.username AS owner_username \
@@ -113,15 +127,26 @@ pub async fn export(
             tunnel_name: r.tunnel_name,
             bandwidth_profile_name: r.bandwidth_profile_name,
             owner_username: r.owner_username,
+            extra_targets: parse_extra_targets(r.extra_targets.as_deref()),
+            lb_strategy: r.lb_strategy,
         })
         .collect();
+    let body = serialize_export(&items)?;
     Ok((
-        [(
-            header::CONTENT_DISPOSITION,
-            "attachment; filename=\"emorelay-rules-export.json\"",
-        )],
-        Json(items),
+        [
+            (header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"emorelay-rules-export.json\"",
+            ),
+        ],
+        body,
     ))
+}
+
+/// 导出体序列化:2 空格缩进美化。抽成函数便于单测。
+fn serialize_export(items: &[RuleExportItem]) -> ApiResult<String> {
+    Ok(serde_json::to_string_pretty(items).map_err(anyhow::Error::from)?)
 }
 
 #[derive(Deserialize)]
@@ -152,12 +177,16 @@ enum PlannedAction {
         bandwidth_profile_id: Option<i64>,
         /// 归属:owner_username 匹配到的活跃用户;None → 归导入者。
         owner_id: Option<i64>,
+        extra_json: Option<String>,
+        lb_strategy: String,
     },
     Overwrite {
         existing_id: i64,
         /// 落点节点(文件内自重复检测用),与 Create 同口径。
         node_id: i64,
         bandwidth_profile_id: Option<i64>,
+        extra_json: Option<String>,
+        lb_strategy: String,
     },
     Skip,
     Error(String),
@@ -222,7 +251,7 @@ pub async fn import(
         let (action, reason): (&'static str, String) = match planned {
             PlannedAction::Error(reason) => ("error", reason),
             PlannedAction::Skip => ("skip", "相同监听绑定已存在".into()),
-            PlannedAction::Create { node_id, bandwidth_profile_id, owner_id } => {
+            PlannedAction::Create { node_id, bandwidth_profile_id, owner_id, extra_json, lb_strategy } => {
                 // 归属结果进 reason,让 admin 在 dry-run 预览就能看到每条的落点归属。
                 let owner_note = match (&owner_id, item.owner_username.as_deref()) {
                     (Some(_), Some(name)) => format!("归属: {name}"),
@@ -235,17 +264,17 @@ pub async fn import(
                     ("create", owner_note)
                 } else {
                     let owner = owner_id.unwrap_or(auth.0.sub);
-                    match execute_create(&state, owner, item, node_id, bandwidth_profile_id).await {
+                    match execute_create(&state, owner, item, node_id, bandwidth_profile_id, extra_json.as_deref(), &lb_strategy).await {
                         Ok(()) => ("create", owner_note),
                         Err(e) => ("error", format!("创建失败: {e}")),
                     }
                 }
             }
-            PlannedAction::Overwrite { existing_id, node_id: _, bandwidth_profile_id } => {
+            PlannedAction::Overwrite { existing_id, node_id: _, bandwidth_profile_id, extra_json, lb_strategy } => {
                 if dry_run {
                     ("overwrite", format!("将覆盖规则 #{existing_id}"))
                 } else {
-                    match execute_overwrite(&state, item, existing_id, bandwidth_profile_id).await {
+                    match execute_overwrite(&state, item, existing_id, bandwidth_profile_id, extra_json.as_deref(), &lb_strategy).await {
                         Ok(()) => ("overwrite", format!("已覆盖规则 #{existing_id}")),
                         Err(e) => ("error", format!("覆盖失败: {e}")),
                     }
@@ -352,6 +381,14 @@ async fn plan_item(
             .map(|u| u.id),
     };
 
+    // 多目标 + 策略校验(导入 admin only → is_admin=true,允许内网目标)。
+    let (extra_json, lb_strategy) =
+        match validate_targets(&item.extra_targets, Some(&item.lb_strategy), true) {
+            Ok(v) => v,
+            Err(ApiError::BadRequest(msg)) => return Ok(PlannedAction::Error(msg)),
+            Err(e) => return Err(e),
+        };
+
     // 冲突检测:精确同 binding → 按 strategy;互斥协议冲突 → error(那是另一条规则)。
     let exact: Option<(i64,)> = sqlx::query_as(
         "SELECT id FROM forward_rules \
@@ -366,7 +403,13 @@ async fn plan_item(
     .await?;
     if let Some((existing_id,)) = exact {
         return Ok(match strategy {
-            "overwrite" => PlannedAction::Overwrite { existing_id, node_id: node.id, bandwidth_profile_id },
+            "overwrite" => PlannedAction::Overwrite {
+                existing_id,
+                node_id: node.id,
+                bandwidth_profile_id,
+                extra_json,
+                lb_strategy,
+            },
             _ => PlannedAction::Skip,
         });
     }
@@ -398,6 +441,8 @@ async fn plan_item(
         node_id: node.id,
         bandwidth_profile_id,
         owner_id,
+        extra_json,
+        lb_strategy,
     })
 }
 
@@ -407,6 +452,8 @@ async fn execute_create(
     item: &RuleExportItem,
     node_id: i64,
     bandwidth_profile_id: Option<i64>,
+    extra_json: Option<&str>,
+    lb_strategy: &str,
 ) -> anyhow::Result<()> {
     let new_id = Rule::create(
         &state.pool,
@@ -420,15 +467,16 @@ async fn execute_create(
         i64::from(item.target_port),
         bandwidth_profile_id,
         None,
-        // 导入不携带连接数上限(admin 管控资产,导入后按需另设)。
         None,
     )
     .await?;
+    // 多目标 / 非默认策略落库(须在 dispatch 前,使下发规则包含全部目标)。
+    if extra_json.is_some() || lb_strategy != "fifo" {
+        Rule::set_targets(&state.pool, new_id, extra_json, lb_strategy).await?;
+    }
     if !item.enabled {
         Rule::set_enabled(&state.pool, new_id, false).await?;
     }
-    // per-node 锁(Bug #1):导入 create 的 ApplyRule 同样须与该节点 reconcile 互斥,
-    // 防 reconcile 在途时被陈旧 keep_ids 误删(导入仅非隧道规则,锁集即单节点)。
     if let Some(rule) = Rule::find_by_id(&state.pool, new_id).await? {
         crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(state, &rule).await;
     }
@@ -440,6 +488,8 @@ async fn execute_overwrite(
     item: &RuleExportItem,
     existing_id: i64,
     bandwidth_profile_id: Option<i64>,
+    extra_json: Option<&str>,
+    lb_strategy: &str,
 ) -> anyhow::Result<()> {
     Rule::update_fields(
         &state.pool,
@@ -449,16 +499,43 @@ async fn execute_overwrite(
         None,
         Some(item.target_host.trim()),
         Some(i64::from(item.target_port)),
-        // None=不改;导入 profile 缺失映射为解除关联(0)
         Some(bandwidth_profile_id.unwrap_or(0)),
-        // 连接数上限不随导入改动
         None,
     )
     .await?;
     Rule::set_enabled(&state.pool, existing_id, item.enabled).await?;
-    // per-node 锁见 execute_create:覆盖导入 overwrite 的 ApplyRule 下发。
+    // 覆盖导入:额外目标 + 策略整组替换(空 = 清空),与导出往返一致。
+    Rule::set_targets(&state.pool, existing_id, extra_json, lb_strategy).await?;
     if let Some(rule) = Rule::find_by_id(&state.pool, existing_id).await? {
         crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(state, &rule).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialize_export_is_pretty_and_carries_multi_target() {
+        let items = vec![RuleExportItem {
+            name: "r1".into(),
+            protocol: "tcp".into(),
+            listen_ip: "0.0.0.0".into(),
+            listen_port: 100,
+            target_host: "1.1.1.1".into(),
+            target_port: 80,
+            enabled: true,
+            node_name: "n".into(),
+            tunnel_name: None,
+            bandwidth_profile_name: None,
+            owner_username: None,
+            extra_targets: vec![TargetDto { host: "2.2.2.2".into(), port: 81 }],
+            lb_strategy: "round".into(),
+        }];
+        let s = serialize_export(&items).unwrap();
+        assert!(s.contains("\n  "), "导出应为缩进美化 JSON: {s}");
+        assert!(s.contains("\"extra_targets\""));
+        assert!(s.contains("\"lb_strategy\": \"round\""));
+    }
 }
