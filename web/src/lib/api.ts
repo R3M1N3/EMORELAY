@@ -332,6 +332,10 @@ export interface RuleExportItem {
   bandwidth_profile_name: string | null
   /** 归属用户名:导入按用户名匹配回填,匹配不到归导入者(老文件无此字段) */
   owner_username?: string | null
+  /** P2 多目标额外目标(空/缺省 = 单目标) */
+  extra_targets?: TargetDto[]
+  /** 负载策略;缺省 fifo */
+  lb_strategy?: LbStrategy
 }
 
 export interface ImportItemReport {
@@ -690,6 +694,13 @@ export const rules = {
     a.download = 'emorelay-rules-export.json'
     a.click()
     URL.revokeObjectURL(url)
+  },
+  /** 拉取导出数据(不下载),供弹窗展示/格式化。后端返回美化 JSON,解析成数组。 */
+  exportFetch: (q: { node_id?: number; tunnel_id?: number } = {}) => {
+    const sp = new URLSearchParams()
+    if (q.node_id) sp.set('node_id', String(q.node_id))
+    if (q.tunnel_id) sp.set('tunnel_id', String(q.tunnel_id))
+    return api.get<RuleExportItem[]>(`/api/rules/export?${sp.toString()}`)
   },
   /** targetNodeId 给定时全部映射到该节点,忽略文件内 node_name(P9)。 */
   importRules: (
