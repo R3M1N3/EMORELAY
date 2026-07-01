@@ -477,6 +477,8 @@ async fn execute_create(
     if !item.enabled {
         Rule::set_enabled(&state.pool, new_id, false).await?;
     }
+    // per-node 锁(勿去,见 b864a64):导入 create 的 ApplyRule 须与该节点 reconcile 互斥,
+    // 防 reconcile 在途时被陈旧 keep_ids 误删(导入仅非隧道规则,锁集即单节点)。
     if let Some(rule) = Rule::find_by_id(&state.pool, new_id).await? {
         crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(state, &rule).await;
     }
@@ -506,6 +508,7 @@ async fn execute_overwrite(
     Rule::set_enabled(&state.pool, existing_id, item.enabled).await?;
     // 覆盖导入:额外目标 + 策略整组替换(空 = 清空),与导出往返一致。
     Rule::set_targets(&state.pool, existing_id, extra_json, lb_strategy).await?;
+    // per-node 锁见 execute_create(勿去):覆盖导入 overwrite 的 ApplyRule 下发同样须互斥。
     if let Some(rule) = Rule::find_by_id(&state.pool, existing_id).await? {
         crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(state, &rule).await;
     }

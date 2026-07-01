@@ -18,7 +18,7 @@ export interface TxtParseResult {
   errors: string[]
 }
 
-/** 解析单个 `host:port`(按最后一个冒号切,兼容 IPv4/主机名/带括号 IPv6)。 */
+/** 解析单个 `host:port`(按最后一个冒号切,兼容 IPv4/主机名;IPv6 目标请用 JSON 导入)。 */
 function parseAddr(a: string): TargetDto | null {
   const idx = a.lastIndexOf(':')
   if (idx <= 0 || idx === a.length - 1) return null
