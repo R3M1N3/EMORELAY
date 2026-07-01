@@ -28,7 +28,7 @@ import { Pagination } from '../components/Pagination'
 import { CopyButton } from '../components/CopyButton'
 import { DiagnosePanel } from '../components/DiagnosePanel'
 import { formatHostPort, nodeEntryHost, ruleEntryDisplay } from '../lib/format-addr'
-import { rulesToTxt } from '../lib/rule-txt'
+import { parseTxtToItems, rulesToTxt } from '../lib/rule-txt'
 import { useAutoRefresh } from '../lib/use-auto-refresh'
 
 type Editing = { mode: 'create' } | { mode: 'edit'; rule: RuleView } | null
@@ -70,6 +70,7 @@ export default function Rules() {
   const [confirming, setConfirming] = useState<RuleView | null>(null)
   const [diagnosing, setDiagnosing] = useState<RuleView | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [importing, setImporting] = useState<{
     items: RuleExportItem[]
     report: ImportReport
@@ -329,24 +330,15 @@ export default function Rules() {
     }
   }
 
-  async function onImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = '' // 允许重复选同一文件
-    if (!file) return
-    let items: RuleExportItem[]
-    try {
-      items = JSON.parse(await file.text()) as RuleExportItem[]
-      if (!Array.isArray(items)) throw new Error('not array')
-    } catch {
-      toast.error('文件不是合法的规则导出 JSON')
-      return
-    }
+  // 输入弹窗产出 items → dry-run 预检 → 打开现有预览 Modal(复用策略/目标/报告)。
+  async function startImportPreview(items: RuleExportItem[]) {
     if (items.length === 0) {
-      toast.error('文件为空')
+      toast.error('没有可导入的规则')
       return
     }
     try {
       const report = await rules.importRules(items, 'skip', true)
+      setImportOpen(false)
       setImporting({ items, report, strategy: 'skip', targetNodeId: '', submitting: false })
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '预检失败')
@@ -411,15 +403,12 @@ export default function Rules() {
               >
                 导出
               </button>
-              <label className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm cursor-pointer">
+              <button
+                onClick={() => setImportOpen(true)}
+                className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+              >
                 导入
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={(e) => void onImportFile(e)}
-                />
-              </label>
+              </button>
             </>
           )}
           <button
@@ -751,6 +740,14 @@ export default function Rules() {
           nodeList={nodeList}
           tunnelList={tunnelList}
           onClose={() => setExportOpen(false)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportModal
+          nodeList={nodeList}
+          onClose={() => setImportOpen(false)}
+          onSubmit={(items) => void startImportPreview(items)}
         />
       )}
 
@@ -1212,6 +1209,156 @@ export function ExportModal({
         </button>
         <button type="button" onClick={() => void generate()} disabled={busy} className="btn-accent">
           {busy ? '生成中…' : '生成'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+// 导入弹窗:粘贴/上传 → 自动识别 JSON(EMORELAY 导出)或 TXT(目标地址|名称|入口端口)。
+// 只负责产出 RuleExportItem[] 交给 onSubmit;父层跑 dry-run 后接现有预览 Modal。
+export function ImportModal({
+  nodeList,
+  onClose,
+  onSubmit,
+}: {
+  nodeList: NodeView[]
+  onClose: () => void
+  onSubmit: (items: RuleExportItem[]) => void
+}) {
+  const toast = useToast()
+  const [text, setText] = useState('')
+  const [nodeId, setNodeId] = useState('')
+  const [protocol, setProtocol] = useState<'tcp' | 'udp' | 'tcp_udp'>('tcp_udp')
+  const [errors, setErrors] = useState<string[]>([])
+
+  function readFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    void file.text().then((t) => setText(t))
+  }
+
+  function preview() {
+    setErrors([])
+    const raw = text.trim()
+    if (!raw) {
+      toast.error('请粘贴或上传要导入的内容')
+      return
+    }
+    // 自动识别:能解析为 JSON 数组 → JSON;否则按 TXT 逐行。
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      parsed = null
+    }
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) {
+        toast.error('内容为空')
+        return
+      }
+      onSubmit(parsed as RuleExportItem[])
+      return
+    }
+    // TXT 路径:必须选目标节点。
+    const node = nodeList.find((n) => String(n.id) === nodeId)
+    if (!node) {
+      toast.error('TXT 导入请先选择目标节点')
+      return
+    }
+    const { items, errors: errs } = parseTxtToItems(raw, { nodeName: node.name, protocol })
+    if (errs.length > 0) {
+      setErrors(errs)
+      return
+    }
+    if (items.length === 0) {
+      toast.error('没有可导入的有效行')
+      return
+    }
+    onSubmit(items)
+  }
+
+  return (
+    <Modal title="导入规则" onClose={onClose} size="lg">
+      <div className="space-y-3">
+        <p className="text-xs text-zinc-400">
+          粘贴 JSON(EMORELAY 导出)或 TXT(每行 <code>目标地址|名称|入口端口</code>,多目标逗号分隔),自动识别格式。
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={8}
+          placeholder={'JSON 数组,或 TXT:\n1.2.3.4:443|香港中转|10001'}
+          aria-label="导入内容"
+          className={`${fieldInputCls} font-mono resize-y`}
+        />
+        <div className="flex items-center gap-3 flex-wrap text-sm">
+          <label className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 cursor-pointer">
+            上传文件
+            <input
+              type="file"
+              accept="application/json,.json,.txt,text/plain"
+              className="hidden"
+              onChange={readFile}
+            />
+          </label>
+          <span className="text-zinc-400 text-xs">JSON 与 TXT 均可</span>
+        </div>
+        <div className="rounded-lg border border-white/10 p-3 space-y-2">
+          <p className="text-xs text-zinc-400">TXT 文本导入用(JSON 导入忽略以下项):</p>
+          <div className="flex gap-3 flex-wrap">
+            <div>
+              <label htmlFor="import-txt-node" className={fieldLabelCls}>目标节点</label>
+              <select
+                id="import-txt-node"
+                value={nodeId}
+                onChange={(e) => setNodeId(e.target.value)}
+                className={`${fieldInputCls} max-w-xs`}
+              >
+                <option value="">请选择节点</option>
+                {nodeList.map((n) => (
+                  <option key={n.id} value={n.id}>{n.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="import-txt-proto" className={fieldLabelCls}>协议</label>
+              <select
+                id="import-txt-proto"
+                value={protocol}
+                onChange={(e) => setProtocol(e.target.value as 'tcp' | 'udp' | 'tcp_udp')}
+                className={fieldInputCls}
+              >
+                <option value="tcp_udp">TCP + UDP</option>
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-zinc-400">监听地址固定 0.0.0.0;多目标默认负载策略 fifo。</p>
+        </div>
+        {errors.length > 0 && (
+          <div
+            role="alert"
+            className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-300 space-y-1 max-h-40 overflow-y-auto"
+          >
+            {errors.map((msg, i) => (
+              <div key={i}>{msg}</div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg bg-white/5 hover:bg-white/10 ring-1 ring-inset ring-white/10 px-3 py-2 text-sm"
+        >
+          取消
+        </button>
+        <button type="button" onClick={preview} className="btn-accent">
+          预览
         </button>
       </div>
     </Modal>
