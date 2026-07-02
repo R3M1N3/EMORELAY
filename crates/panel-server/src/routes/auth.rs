@@ -3,7 +3,7 @@ use crate::{
     auth::{
         extractor::{ActorIp, AuthUserAllowMcp},
         jwt::encode_jwt,
-        password::{dummy_hash, hash_password, verify_password},
+        password::{dummy_hash, hash_password_blocking, verify_password_blocking},
     },
     error::{ApiError, ApiResult},
     models::user::User,
@@ -103,7 +103,7 @@ pub async fn login(
             // timing oracle 防御：对未知用户也跑一次 Argon2 verify 对齐时延。
             // 返回值与错误一起吞掉——dummy_hash() 由 hash_password 生成、OnceLock
             // 缓存，几乎不可能解析失败；即使失败也必须保持与真路径相同的时延。
-            let _ = verify_password(&req.password, dummy_hash());
+            let _ = verify_password_blocking(req.password.clone(), dummy_hash().to_string()).await;
             record_login_failure(
                 &state,
                 actor_ip.as_option(),
@@ -116,7 +116,8 @@ pub async fn login(
         }
     };
 
-    let ok = verify_password(&req.password, &user.password_hash)
+    let ok = verify_password_blocking(req.password.clone(), user.password_hash.clone())
+        .await
         .map_err(ApiError::Internal)?;
     if !ok {
         record_login_failure(
@@ -249,7 +250,9 @@ pub async fn change_password(
     let user = User::find_by_id(&state.pool, claims.sub)
         .await?
         .ok_or(ApiError::Unauthorized)?;
-    let ok = verify_password(&req.old_password, &user.password_hash).map_err(ApiError::Internal)?;
+    let ok = verify_password_blocking(req.old_password.clone(), user.password_hash.clone())
+        .await
+        .map_err(ApiError::Internal)?;
     if !ok {
         audit::record_with_ip(
             &state.pool,
@@ -268,7 +271,9 @@ pub async fn change_password(
     if req.new_password == req.old_password {
         return Err(ApiError::BadRequest("新密码不能与当前密码相同".into()));
     }
-    let new_hash = hash_password(&req.new_password).map_err(ApiError::Internal)?;
+    let new_hash = hash_password_blocking(req.new_password.clone())
+        .await
+        .map_err(ApiError::Internal)?;
     let rows = User::change_password_self(&state.pool, user.id, &new_hash).await?;
     if rows == 0 {
         return Err(ApiError::NotFound);

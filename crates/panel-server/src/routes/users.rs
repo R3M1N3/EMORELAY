@@ -2,7 +2,7 @@ use crate::{
     audit,
     auth::{
         extractor::{ActorIp, AuthUser},
-        password::hash_password,
+        password::hash_password_blocking,
     },
     error::{ApiError, ApiResult},
     models::{grant, user::User},
@@ -347,7 +347,9 @@ pub async fn create(
     // create 时 0 与 None 等价(都是不限)
     let limit = req.traffic_limit_bytes_30d.filter(|n| *n > 0);
 
-    let hash = hash_password(&req.password).map_err(ApiError::Internal)?;
+    let hash = hash_password_blocking(req.password.clone())
+        .await
+        .map_err(ApiError::Internal)?;
     // admin 新建账号设的是临时密码,强制用户首登改成自己的(对标 flux requirePasswordChange)。
     let new_id = User::create(
         &state.pool,
@@ -453,7 +455,11 @@ pub async fn update(
     }
 
     let new_hash = match req.password.as_deref() {
-        Some(p) => Some(hash_password(p).map_err(ApiError::Internal)?),
+        Some(p) => Some(
+            hash_password_blocking(p.to_string())
+                .await
+                .map_err(ApiError::Internal)?,
+        ),
         None => None,
     };
     let rows = User::update(
