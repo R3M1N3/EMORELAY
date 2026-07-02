@@ -142,7 +142,7 @@ impl TunnelTransport for TlsTransport {
             .expect_client_san
             .clone()
             .context("entry hop (ordinal 0) must not bind a tunnel listener")?;
-        let l = TcpListener::bind(addr)
+        let l = crate::relay::bind_tcp_dual(addr)
             .await
             .with_context(|| format!("tunnel tls bind {addr}"))?;
         Ok(Box::new(TlsTunnelListener {

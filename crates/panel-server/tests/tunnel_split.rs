@@ -14,6 +14,7 @@ fn rule_input() -> SplitInput {
         max_connections: 25,
         tunnel_id: 7,
         transport: "tls".into(),
+        remote_af: "auto".into(),
     }
 }
 

@@ -18,6 +18,8 @@ pub struct SplitInput {
     pub max_connections: i64,
     pub tunnel_id: i64,
     pub transport: String,
+    /// 出站地址族偏好(仅 exit 消费)。
+    pub remote_af: String,
 }
 
 /// 单跳输入:节点 id + 该跳监听端口(entry 为 None)+ 节点可达地址。
@@ -66,6 +68,7 @@ pub fn split_tunnel_rule(input: &SplitInput, hops: &[HopInput]) -> Vec<(i64, Pro
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
             send_proxy_protocol: false,
+            remote_af: input.remote_af.clone(),
         };
         (hop.node_id, proto)
     }).collect()

@@ -190,6 +190,7 @@ mod tests {
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
             send_proxy_protocol: false,
+            remote_af: String::new(),
             tunnel: Some(TunnelContext {
                 tunnel_id: 3,
                 role: TunnelRole::Entry as i32,
@@ -249,6 +250,7 @@ mod tests {
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
             send_proxy_protocol: false,
+            remote_af: String::new(),
             tunnel: None,
         }
     }

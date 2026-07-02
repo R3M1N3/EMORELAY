@@ -123,12 +123,14 @@ impl ControlClient {
         Ok(req)
     }
 
-    pub async fn heartbeat(&mut self, cpu: f64, mem: f64, load: f64) -> Result<()> {
+    pub async fn heartbeat(&mut self, cpu: f64, mem: f64, load: f64, ipv4_cap: i32, ipv6_cap: i32) -> Result<()> {
         let req = self.auth_request(HeartbeatRequest {
             node_id: self.node_id,
             cpu_usage: cpu,
             memory_usage: mem,
             load_average: load,
+            ipv4_capability: ipv4_cap,
+            ipv6_capability: ipv6_cap,
         })?;
         self.client.heartbeat(req).await.context("heartbeat rpc")?;
         Ok(())

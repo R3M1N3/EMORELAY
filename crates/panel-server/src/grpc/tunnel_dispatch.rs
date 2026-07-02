@@ -75,6 +75,7 @@ async fn split_for(
         max_connections: rule.max_connections.unwrap_or(0),
         tunnel_id,
         transport: tunnel.transport.clone(),
+        remote_af: rule.remote_af.clone(),
     };
     Ok(Some(split_tunnel_rule(&input, &hop_inputs)))
 }

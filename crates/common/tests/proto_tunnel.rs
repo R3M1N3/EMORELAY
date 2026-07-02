@@ -20,6 +20,7 @@ fn rule_carries_tunnel_context() {
         extra_targets: Vec::new(),
         lb_strategy: String::new(),
         send_proxy_protocol: false,
+        remote_af: String::new(),
         tunnel: Some(TunnelContext {
             tunnel_id: 7,
             role: TunnelRole::Entry as i32,

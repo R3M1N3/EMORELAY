@@ -68,7 +68,7 @@ pub async fn start(
                 rule.id,
                 ctx,
                 transport,
-                HopMode::Exit { target_host: rule.target_host.clone(), target_port },
+                HopMode::Exit { target_host: rule.target_host.clone(), target_port, remote_af: rule.remote_af.clone() },
             )
             .await
         }
@@ -92,7 +92,7 @@ async fn start_entry(
     let listen_port = u16::try_from(rule.listen_port)
         .with_context(|| format!("listen_port out of u16 range: {}", rule.listen_port))?;
     let addr = SocketAddr::new(listen_ip, listen_port);
-    let next_hop = format!("{}:{}", ctx.next_hop_addr, ctx.next_hop_inter_port);
+    let next_hop = crate::relay::join_host_port(&ctx.next_hop_addr, ctx.next_hop_inter_port as u16);
     let counter = stats.ensure(rule.id);
     let rule_id = rule.id;
 
@@ -427,7 +427,7 @@ async fn open_udp_session(
 #[derive(Clone)]
 enum HopMode {
     Mid,
-    Exit { target_host: String, target_port: u16 },
+    Exit { target_host: String, target_port: u16, remote_af: String },
 }
 
 async fn start_relay_hop(
@@ -438,7 +438,7 @@ async fn start_relay_hop(
 ) -> Result<TunnelTaskHandle> {
     let bind_addr = format!("0.0.0.0:{}", ctx.self_inter_port);
     let mut listener = transport.bind(&bind_addr).await?;
-    let next_hop = format!("{}:{}", ctx.next_hop_addr, ctx.next_hop_inter_port);
+    let next_hop = crate::relay::join_host_port(&ctx.next_hop_addr, ctx.next_hop_inter_port as u16);
     info!(rule_id, %bind_addr, tunnel_id = ctx.tunnel_id, role = ctx.role, "tunnel hop listening");
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
@@ -510,7 +510,7 @@ async fn handle_hop_conn(
             let upstream = transport.dial(next_hop).await?;
             bridge_raw(conn, upstream).await
         }
-        HopMode::Exit { target_host, target_port } => {
+        HopMode::Exit { target_host, target_port, remote_af } => {
             let mut conn = conn;
             let mut preamble = [0u8; 1];
             // 读 preamble 套超时:连入后(尤其裸 TCP transport 无握手认证)迟迟不发 preamble 字节的
@@ -528,6 +528,10 @@ async fn handle_hop_conn(
                     let ips = crate::dns::resolve_target(&target_host)
                         .await
                         .with_context(|| format!("resolve target {target_host}"))?;
+                    let ips = crate::relay::filter_af(ips, &remote_af);
+                    if ips.is_empty() {
+                        anyhow::bail!("resolve target {target_host}: 无匹配 {remote_af} 地址");
+                    }
                     let mut upstream: Option<TcpStream> = None;
                     let mut last_err: Option<anyhow::Error> = None;
                     for ip in ips {
@@ -557,7 +561,7 @@ async fn handle_hop_conn(
                     crate::relay::set_keepalive(&upstream);
                     bridge_raw(conn, Box::new(upstream)).await
                 }
-                STREAM_UDP => exit_udp_conn(conn, &target_host, target_port).await,
+                STREAM_UDP => exit_udp_conn(conn, &target_host, target_port, &remote_af).await,
                 other => anyhow::bail!("unknown stream preamble: {other:#04x}"),
             }
         }
@@ -607,13 +611,15 @@ where
 
 /// exit 端 UDP 帧流:拆帧 → UDP send;UDP recv → 打帧回写。
 /// 任一方向断(隧道 EOF / udp 错误)即结束,UDP socket 随之释放。
-async fn exit_udp_conn(conn: TunnelConn, target_host: &str, target_port: u16) -> Result<()> {
-    // DNS 缓存解析(字面 IP 直通)+ 逐 IP SSRF 校验后 connect,与 relay/udp.rs 同形。
+async fn exit_udp_conn(conn: TunnelConn, target_host: &str, target_port: u16, remote_af: &str) -> Result<()> {
     let ips = crate::dns::resolve_target(target_host)
         .await
         .with_context(|| format!("resolve udp target {target_host}"))?;
-    let udp = UdpSocket::bind("0.0.0.0:0").await.context("bind exit udp socket")?;
-    let mut connected = false;
+    let ips = crate::relay::filter_af(ips, remote_af);
+    if ips.is_empty() {
+        anyhow::bail!("resolve udp target {target_host}: 无匹配 {remote_af} 地址");
+    }
+    let mut udp: Option<UdpSocket> = None;
     let mut last_err: Option<anyhow::Error> = None;
     for ip in ips {
         let sa = SocketAddr::new(ip, target_port);
@@ -621,19 +627,26 @@ async fn exit_udp_conn(conn: TunnelConn, target_host: &str, target_port: u16) ->
             last_err = Some(e);
             continue;
         }
-        match udp.connect(sa).await {
+        let sock = match UdpSocket::bind(crate::relay::udp_bind_addr_for(&ip)).await {
+            Ok(s) => s,
+            Err(e) => {
+                last_err = Some(anyhow::Error::new(e).context(format!("bind exit udp for {sa}")));
+                continue;
+            }
+        };
+        match sock.connect(sa).await {
             Ok(()) => {
-                connected = true;
+                udp = Some(sock);
                 break;
             }
             Err(e) => last_err = Some(anyhow::Error::new(e).context(format!("connect udp target {sa}"))),
         }
     }
-    if !connected {
-        return Err(last_err.unwrap_or_else(|| {
+    let udp = udp.ok_or_else(|| {
+        last_err.unwrap_or_else(|| {
             anyhow::anyhow!("connect udp target {target_host}:{target_port}: 无可达地址")
-        }));
-    }
+        })
+    })?;
     let (mut t_r, mut t_w) = tokio::io::split(conn);
 
     let inbound = async {
@@ -726,6 +739,7 @@ mod tests {
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
             send_proxy_protocol: false,
+            remote_af: String::new(),
             tunnel: Some(TunnelContext {
                 tunnel_id: 9,
                 role: role as i32,

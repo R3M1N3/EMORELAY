@@ -170,11 +170,13 @@ async fn run_session(
             }
             _ = hb_tick.tick() => {
                 let m = sampler.refresh_metrics();
-                client.heartbeat(m.cpu_usage, m.memory_usage, m.load_average).await?;
+                client.heartbeat(m.cpu_usage, m.memory_usage, m.load_average, m.ipv4_capability, m.ipv6_capability).await?;
                 info!(
                     cpu = m.cpu_usage,
                     mem = m.memory_usage,
                     load = m.load_average,
+                    ipv4 = m.ipv4_capability,
+                    ipv6 = m.ipv6_capability,
                     "heartbeat sent"
                 );
             }

@@ -1379,6 +1379,8 @@ interface RuleFormState {
   max_connections: string
   /** 向上游发送 PROXY protocol(admin 管控,仅非隧道 TCP) */
   send_proxy_protocol: boolean
+  /** 出站地址族 */
+  remote_af: string
   /** 额外目标,每行一个 host:port */
   extra_targets: string
   lb_strategy: LbStrategy
@@ -1422,6 +1424,7 @@ export function RuleForm({
     user_id: initial != null ? String(initial.user_id) : '',
     max_connections: initial?.max_connections != null ? String(initial.max_connections) : '',
     send_proxy_protocol: initial?.send_proxy_protocol ?? false,
+    remote_af: initial?.remote_af ?? 'auto',
     extra_targets: (initial?.extra_targets ?? []).map((t) => `${t.host}:${t.port}`).join('\n'),
     lb_strategy: initial?.lb_strategy ?? 'fifo',
   })
@@ -1554,6 +1557,7 @@ export function RuleForm({
           if (form.max_connections) payload.max_connections = Number(form.max_connections)
           if (form.send_proxy_protocol) payload.send_proxy_protocol = true
         }
+        if (form.remote_af && form.remote_af !== 'auto') payload.remote_af = form.remote_af
         payload.tunnel_id = form.tunnel_id ? Number(form.tunnel_id) : null
         if (extraTargets.length > 0) {
           payload.extra_targets = extraTargets
@@ -1597,6 +1601,10 @@ export function RuleForm({
           send_proxy_protocol:
             isAdmin && form.send_proxy_protocol !== initial.send_proxy_protocol
               ? form.send_proxy_protocol
+              : undefined,
+          remote_af:
+            form.remote_af !== (initial.remote_af ?? 'auto')
+              ? form.remote_af
               : undefined,
         }
         // 多目标/策略变更才发(空数组 = 清空回单目标)。
@@ -1761,7 +1769,7 @@ export function RuleForm({
           placeholder={mode === 'create' ? '留空 = 自动分配' : '留空 = 不修改'}
         />
         <p className="text-xs text-zinc-400 mt-1">
-          监听 IP 固定 0.0.0.0(所有网卡);入口地址按节点展示地址显示。
+          0.0.0.0 仅 IPv4;:: 同时接受 IPv4 和 IPv6（双栈）。入口地址按节点展示地址显示。
         </p>
       </div>
 
@@ -1896,6 +1904,22 @@ export function RuleForm({
             </label>
             <p className="text-xs text-zinc-400 mt-1">
               仅非隧道 TCP;让上游(如 nginx)拿到真实客户端 IP(需上游启用 proxy_protocol)。
+            </p>
+          </div>
+          <div>
+            <label htmlFor="rule-remote-af" className={fieldLabelCls}>出站地址族</label>
+            <select
+              id="rule-remote-af"
+              value={form.remote_af}
+              onChange={(e) => set('remote_af', e.target.value)}
+              className={fieldInputCls}
+            >
+              <option value="auto">自动（auto）</option>
+              <option value="v4">仅 IPv4</option>
+              <option value="v6">仅 IPv6</option>
+            </select>
+            <p className="text-xs text-zinc-400 mt-1">
+              控制出站连接目标的地址族;auto 按 DNS 解析结果自动选择。
             </p>
           </div>
         </div>

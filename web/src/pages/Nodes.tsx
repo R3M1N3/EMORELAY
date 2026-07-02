@@ -454,6 +454,16 @@ function NodeRow({
         {node.agent_version && (
           <div className="text-xs text-zinc-400 mt-0.5">Agent v{node.agent_version}</div>
         )}
+        {(node.has_ipv4 != null || node.has_ipv6 != null) && (
+          <div className="flex gap-1 mt-1">
+            {node.has_ipv4 != null && (
+              <span title={node.has_ipv4 === 1 ? 'IPv4 可用' : 'IPv4 不可用'} className={`text-[10px] font-mono px-1 rounded ${node.has_ipv4 === 1 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-700/50 text-zinc-500 line-through'}`}>v4</span>
+            )}
+            {node.has_ipv6 != null && (
+              <span title={node.has_ipv6 === 1 ? 'IPv6 可用' : 'IPv6 不可用'} className={`text-[10px] font-mono px-1 rounded ${node.has_ipv6 === 1 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-700/50 text-zinc-500 line-through'}`}>v6</span>
+            )}
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 align-top text-xs text-zinc-300 min-w-[8rem]">
         {/* 离线节点的 cpu/mem/load 是掉线前的陈旧采样(sweeper 不清零),不当现值展示。 */}

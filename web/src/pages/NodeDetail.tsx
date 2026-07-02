@@ -220,6 +220,21 @@ export default function NodeDetail() {
             <Row k="gRPC 端点" v={node.grpc_endpoint || '—'} mono />
             <Row k="端口池" v={`${node.port_pool_min}–${node.port_pool_max}`} />
             <Row k="Agent 版本" v={node.agent_version || '待上报'} mono={!!node.agent_version} />
+            <Row
+              k="网络能力"
+              v={
+                node.has_ipv4 == null && node.has_ipv6 == null ? '待上报' : (
+                  <span className="inline-flex gap-1.5">
+                    {node.has_ipv4 != null && (
+                      <span className={`text-xs font-mono px-1 rounded ${node.has_ipv4 === 1 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-700/50 text-zinc-500 line-through'}`}>IPv4</span>
+                    )}
+                    {node.has_ipv6 != null && (
+                      <span className={`text-xs font-mono px-1 rounded ${node.has_ipv6 === 1 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-700/50 text-zinc-500 line-through'}`}>IPv6</span>
+                    )}
+                  </span>
+                )
+              }
+            />
             <Row k="最后心跳" v={node.last_seen_at ? shortTime(node.last_seen_at) : '从未上线'} />
             <Row k="创建" v={shortTime(node.created_at)} />
           </dl>

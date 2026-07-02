@@ -6,6 +6,7 @@ pub mod control;
 pub mod dns;
 pub mod limit;
 pub mod manager;
+pub mod netcap;
 pub mod probe;
 pub mod relay;
 pub mod retry;

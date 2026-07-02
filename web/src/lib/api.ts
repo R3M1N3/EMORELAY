@@ -135,6 +135,10 @@ export interface NodeView {
   port_pool_max: number
   /** 协议嗅探阻断位掩码:bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。用户视角恒 0 */
   block_protocols: number
+  /** IPv4 网络能力:null=未知, 0=无, 1=有 */
+  has_ipv4: number | null
+  /** IPv6 网络能力:null=未知, 0=无, 1=有 */
+  has_ipv6: number | null
   created_at: string
   updated_at: string
 }
@@ -166,6 +170,8 @@ export interface RuleView {
   max_connections: number | null
   /** 是否向上游发送 PROXY protocol v1(仅非隧道 TCP relay) */
   send_proxy_protocol: boolean
+  /** 出站地址族: "auto" | "v4" | "v6" */
+  remote_af: string
   /** P2 多目标额外目标 + 负载策略 */
   extra_targets: TargetDto[]
   lb_strategy: LbStrategy
@@ -270,6 +276,8 @@ export interface CreateRuleRequest {
   max_connections?: number
   /** 向上游发送 PROXY protocol(admin 管控);不传/false = 关 */
   send_proxy_protocol?: boolean
+  /** 出站地址族;不传 = auto */
+  remote_af?: string
   /** P2 多目标额外目标(空数组 = 单目标)+ 负载策略 */
   extra_targets?: TargetDto[]
   lb_strategy?: LbStrategy
@@ -287,6 +295,8 @@ export interface UpdateRuleRequest {
   max_connections?: number
   /** admin 管控:PROXY protocol 开关;不传 = 不改 */
   send_proxy_protocol?: boolean
+  /** 出站地址族;不传 = 不改 */
+  remote_af?: string
   /** 给定则全量替换额外目标(空 = 清空);不传 = 不改 */
   extra_targets?: TargetDto[]
   lb_strategy?: LbStrategy
@@ -336,6 +346,8 @@ export interface RuleExportItem {
   extra_targets?: TargetDto[]
   /** 负载策略;缺省 fifo */
   lb_strategy?: LbStrategy
+  /** 出站地址族;缺省 auto */
+  remote_af?: string
 }
 
 export interface ImportItemReport {

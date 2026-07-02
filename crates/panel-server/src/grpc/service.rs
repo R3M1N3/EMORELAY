@@ -278,12 +278,18 @@ impl ControlPlane for ControlPlaneImpl {
                 });
         sqlx::query(
             "UPDATE nodes SET cpu_usage = ?, memory_usage = ?, load_average = ?, \
+             has_ipv4 = CASE WHEN ? = 0 THEN has_ipv4 WHEN ? = 1 THEN 1 ELSE 0 END, \
+             has_ipv6 = CASE WHEN ? = 0 THEN has_ipv6 WHEN ? = 1 THEN 1 ELSE 0 END, \
              status = 'online', last_seen_at = datetime('now'), updated_at = datetime('now') \
              WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(inner.cpu_usage)
         .bind(inner.memory_usage)
         .bind(inner.load_average)
+        .bind(inner.ipv4_capability)
+        .bind(inner.ipv4_capability)
+        .bind(inner.ipv6_capability)
+        .bind(inner.ipv6_capability)
         .bind(inner.node_id)
         .execute(&self.state.pool)
         .await

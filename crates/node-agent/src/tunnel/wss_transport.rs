@@ -85,7 +85,7 @@ impl TunnelTransport for WssTransport {
             .expect_client_san
             .clone()
             .context("entry hop (ordinal 0) must not bind a tunnel listener")?;
-        let l = TcpListener::bind(addr)
+        let l = crate::relay::bind_tcp_dual(addr)
             .await
             .with_context(|| format!("tunnel wss bind {addr}"))?;
         Ok(Box::new(WssTunnelListener {

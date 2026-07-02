@@ -454,11 +454,17 @@ function TunnelForm({
                 className={`${fieldInputCls} flex-1`}
               >
                 <option value="">请选择节点</option>
-                {onlineNodes.map((n) => (
-                  <option key={n.id} value={String(n.id)}>
-                    {n.name} ({n.public_ip || '无 IP'})
-                  </option>
-                ))}
+                {onlineNodes.map((n) => {
+                  const caps = [
+                    n.has_ipv4 === 1 ? 'v4' : null,
+                    n.has_ipv6 === 1 ? 'v6' : null,
+                  ].filter(Boolean).join('+')
+                  return (
+                    <option key={n.id} value={String(n.id)}>
+                      {n.name} ({n.public_ip || '无 IP'}){caps ? ` [${caps}]` : ''}
+                    </option>
+                  )
+                })}
               </select>
               <button
                 type="button"

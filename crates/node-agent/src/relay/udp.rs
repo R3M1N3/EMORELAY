@@ -78,6 +78,7 @@ async fn start_inner(
     let target_host = rule.target_host.clone();
     let target_port: u16 = u16::try_from(rule.target_port)
         .with_context(|| format!("target_port out of u16 range: {}", rule.target_port))?;
+    let remote_af = rule.remote_af.clone();
     let rule_id = rule.id;
     let sessions: Arc<Mutex<HashMap<SocketAddr, Session>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -111,6 +112,7 @@ async fn start_inner(
                                 target_port,
                                 &counter,
                                 &bucket,
+                                &remote_af,
                             ).await {
                                 counter.error_count.fetch_add(1, Ordering::Relaxed);
                                 warn!(rule_id, %client_addr, error = ?e, "udp forward error");
@@ -153,6 +155,7 @@ async fn forward(
     target_port: u16,
     counter: &Arc<RuleCounter>,
     bucket: &Option<Arc<TokenBucket>>,
+    remote_af: &str,
 ) -> Result<()> {
     forward_with_resolver(
         rule_id,
@@ -165,6 +168,7 @@ async fn forward(
         target_port,
         counter,
         bucket,
+        remote_af,
         |host| async move { crate::dns::resolve_target(&host).await },
     )
     .await
@@ -190,6 +194,7 @@ async fn forward_with_resolver<F, Fut>(
     target_port: u16,
     counter: &Arc<RuleCounter>,
     bucket: &Option<Arc<TokenBucket>>,
+    remote_af: &str,
     resolve: F,
 ) -> Result<()>
 where
@@ -240,6 +245,10 @@ where
         let ips = resolve(target_host.to_string())
             .await
             .with_context(|| format!("resolve upstream {target_host}"))?;
+        let ips = crate::relay::filter_af(ips, remote_af);
+        if ips.is_empty() {
+            anyhow::bail!("resolve upstream {target_host}: 无匹配 {remote_af} 地址");
+        }
         let mut last: Option<anyhow::Error> = None;
         for ip in ips {
             let sa = SocketAddr::new(ip, target_port);
@@ -248,11 +257,13 @@ where
                 last = Some(e);
                 continue;
             }
-            let sock = Arc::new(
-                UdpSocket::bind("0.0.0.0:0")
-                    .await
-                    .context("bind upstream udp socket")?,
-            );
+            let sock = match UdpSocket::bind(crate::relay::udp_bind_addr_for(&ip)).await {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    last = Some(anyhow::Error::new(e).context(format!("bind upstream udp for {sa}")));
+                    continue;
+                }
+            };
             match sock.connect(sa).await {
                 Ok(()) => return anyhow::Ok(sock),
                 Err(e) => last = Some(anyhow::Error::new(e).context(format!("connect upstream {sa}"))),
@@ -442,6 +453,7 @@ mod tests {
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
             send_proxy_protocol: false,
+            remote_af: String::new(),
             tunnel: None,
         }
     }
@@ -589,6 +601,7 @@ mod tests {
             echo_port,
             &counter,
             &None,
+            "auto",
         )
         .await
         .expect("forward");
@@ -694,6 +707,7 @@ mod tests {
                 echo_port,
                 &counter_a,
                 &None,
+                "auto",
                 slow_resolve,
             )
             .await
@@ -766,6 +780,7 @@ mod tests {
                     echo_port,
                     &counter_c,
                     &None,
+                    "auto",
                     resolve,
                 )
                 .await

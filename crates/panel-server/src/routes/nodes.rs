@@ -46,6 +46,8 @@ pub struct NodeView {
     pub agent_version: String,
     /// 协议嗅探阻断位掩码:bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。
     pub block_protocols: i64,
+    pub has_ipv4: Option<i64>,
+    pub has_ipv6: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -70,6 +72,8 @@ impl From<Node> for NodeView {
             port_pool_max: n.port_pool_max,
             agent_version: n.agent_version,
             block_protocols: n.block_protocols,
+            has_ipv4: n.has_ipv4,
+            has_ipv6: n.has_ipv6,
             created_at: n.created_at,
             updated_at: n.updated_at,
         }

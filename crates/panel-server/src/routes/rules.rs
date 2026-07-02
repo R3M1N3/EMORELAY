@@ -60,6 +60,8 @@ pub struct RuleView {
     pub lb_strategy: String,
     /// 是否向上游发送 PROXY protocol v1(仅非隧道 TCP relay)。
     pub send_proxy_protocol: bool,
+    /// 出站地址族偏好。
+    pub remote_af: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -88,6 +90,7 @@ impl From<Rule> for RuleView {
             extra_targets: parse_extra_targets(r.extra_targets.as_deref()),
             lb_strategy: r.lb_strategy,
             send_proxy_protocol: r.send_proxy_protocol != 0,
+            remote_af: r.remote_af,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -137,6 +140,8 @@ pub struct CreateRuleRequest {
     pub lb_strategy: Option<String>,
     /// realm-parity:向上游发送 PROXY protocol(admin 管控);未传/false = 关。仅非隧道 TCP。
     pub send_proxy_protocol: Option<bool>,
+    /// 出站地址族偏好:auto(默认)/v4/v6。
+    pub remote_af: Option<String>,
 }
 
 fn default_listen_ip() -> String {
@@ -159,6 +164,8 @@ pub struct UpdateRuleRequest {
     pub lb_strategy: Option<String>,
     /// admin 管控:向上游发送 PROXY protocol 开关;None = 不改。
     pub send_proxy_protocol: Option<bool>,
+    /// 出站地址族偏好;None = 不改。
+    pub remote_af: Option<String>,
 }
 
 /// 校验多目标 + 策略,返回 (extra_targets_json, lb_strategy)。每个额外目标做与主目标
@@ -393,6 +400,12 @@ pub async fn create(
             "PROXY protocol 仅对非隧道 TCP 规则生效".into(),
         ));
     }
+    let remote_af = req.remote_af.as_deref().unwrap_or("auto");
+    if !matches!(remote_af, "auto" | "v4" | "v6") {
+        return Err(ApiError::BadRequest(
+            "remote_af 必须为 auto / v4 / v6".into(),
+        ));
+    }
     if matches!(req.max_connections, Some(n) if n < 0) {
         return Err(ApiError::BadRequest("连接数上限不能为负数".into()));
     }
@@ -549,6 +562,7 @@ pub async fn create(
         req.bandwidth_profile_id,
         req.tunnel_id,
         req.max_connections.filter(|n| *n > 0),
+        remote_af,
     )
     .await
     .map_err(map_sqlx_to_api)?;
@@ -662,6 +676,13 @@ pub async fn update(
             "PROXY protocol 仅对非隧道 TCP 规则生效".into(),
         ));
     }
+    if let Some(ref af) = req.remote_af {
+        if !matches!(af.as_str(), "auto" | "v4" | "v6") {
+            return Err(ApiError::BadRequest(
+                "remote_af 必须为 auto / v4 / v6".into(),
+            ));
+        }
+    }
     if matches!(req.max_connections, Some(n) if n < 0) {
         return Err(ApiError::BadRequest("连接数上限不能为负数".into()));
     }
@@ -746,6 +767,10 @@ pub async fn update(
     // PROXY protocol 开关变更(None = 不改)。
     if let Some(v) = req.send_proxy_protocol {
         Rule::set_send_proxy_protocol(&state.pool, id, v).await?;
+    }
+    // 出站地址族偏好变更。
+    if let Some(ref af) = req.remote_af {
+        Rule::set_remote_af(&state.pool, id, af).await?;
     }
     let rule = Rule::find_by_id(&state.pool, id)
         .await?

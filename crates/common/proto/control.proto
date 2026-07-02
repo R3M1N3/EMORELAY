@@ -90,6 +90,8 @@ message Rule {
   string lb_strategy = 16;
   // realm-parity:向上游发送 PROXY protocol v1 头(透传真实客户端 IP)。仅非隧道 TCP relay 生效。
   bool send_proxy_protocol = 17;
+  // 出站地址族偏好："auto"(默认) / "v4"(仅 IPv4) / "v6"(仅 IPv6)。空串按 auto。
+  string remote_af = 18;
 }
 
 message TargetEndpoint {
@@ -196,6 +198,9 @@ message HeartbeatRequest {
   double cpu_usage = 2;
   double memory_usage = 3;
   double load_average = 4;
+  // 网络能力探测结果。0=unknown(旧 agent 未上报), 1=has, 其他非零=no。
+  int32 ipv4_capability = 5;
+  int32 ipv6_capability = 6;
 }
 
 message HeartbeatResponse {

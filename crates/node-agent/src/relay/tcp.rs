@@ -75,6 +75,7 @@ pub async fn start(
     let blocked_protocols = rule.blocked_protocols;
     // realm-parity:是否向上游发送 PROXY protocol v1 头(仅非隧道 TCP relay)。
     let send_proxy = rule.send_proxy_protocol;
+    let remote_af = rule.remote_af.clone();
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     // 取消闩:stop 时置 true,通知存量 bridge task 主动终止(断连=停止计费)。
     // 用 watch 而非 JoinSet/CancellationToken:仅需已启用的 tokio sync feature,零新依赖。
@@ -104,6 +105,7 @@ pub async fn start(
                             let counter = counter.clone();
                             // 限速变更走 re-apply 重建 listener+新桶,但存量连接持旧桶直到自然断开;新限速仅对新连接生效。
                             let bucket = bucket.clone();
+                            let remote_af = remote_af.clone();
                             let mut cancel_rx = cancel_rx.clone();
                             tokio::spawn(async move {
                                 let _permit = permit;
@@ -111,7 +113,7 @@ pub async fn start(
                                     // stop 触发:丢弃 bridge future,client/server socket 随之 drop 关闭。
                                     // wait_for 的 Err(sender 已 drop)亦视为取消,fail-safe 不会漏断。
                                     _ = async { let _ = cancel_rx.wait_for(|c| *c).await; } => {}
-                                    r = bridge(client, &pool, &strategy, &rr, counter.clone(), bucket, blocked_protocols, send_proxy) => {
+                                    r = bridge(client, &pool, &strategy, &rr, counter.clone(), bucket, blocked_protocols, send_proxy, &remote_af) => {
                                         if let Err(e) = r {
                                             counter.error_count.fetch_add(1, Ordering::Relaxed);
                                             warn!(rule_id, %peer, error = ?e, "tcp bridge error");
@@ -153,6 +155,7 @@ async fn bridge(
     bucket: Option<Arc<TokenBucket>>,
     blocked_protocols: u32,
     send_proxy: bool,
+    remote_af: &str,
 ) -> Result<()> {
     // 协议嗅探阻断:peek 首包(不消费,后续 splice/pump 仍能读到),命中被阻断协议则断连。
     // 客户端不先说话(2s 超时)则放行——无法指纹的流量不阻断(best-effort 防滥用)。
@@ -213,7 +216,7 @@ async fn bridge(
         let (host, port) = &pool[idx];
         // DNS 缓存解析(字面 IP 直通,域名走缓存/getaddrinfo);失败记错并试下一个目标。
         let ips = match crate::dns::resolve_target(host).await {
-            Ok(ips) if !ips.is_empty() => ips,
+            Ok(ips) if !ips.is_empty() => crate::relay::filter_af(ips, remote_af),
             Ok(_) => {
                 last_err = Some(anyhow::anyhow!("resolve upstream {host}: 无地址"));
                 continue;
@@ -223,6 +226,10 @@ async fn bridge(
                 continue;
             }
         };
+        if ips.is_empty() {
+            last_err = Some(anyhow::anyhow!("resolve upstream {host}: 无匹配 {remote_af} 地址"));
+            continue;
+        }
         for ip in ips {
             let sa = SocketAddr::new(ip, *port);
             // SSRF 二次防御:域名解析到内网地址则拒绝(字面 IP 由 panel 按角色校验,guard 内部放行)。
@@ -385,6 +392,7 @@ mod tests {
             extra_targets: Vec::new(),
             lb_strategy: String::new(),
             send_proxy_protocol: false,
+            remote_af: String::new(),
             tunnel: None,
         }
     }

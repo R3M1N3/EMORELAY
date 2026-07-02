@@ -15,6 +15,8 @@ pub struct SystemSnapshot {
     pub cpu_usage: f64,
     pub memory_usage: f64,
     pub load_average: f64,
+    pub ipv4_capability: i32,
+    pub ipv6_capability: i32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +31,7 @@ pub struct SystemSample {
 
 pub struct SystemSampler {
     inner: Mutex<Inner>,
+    netcap: crate::netcap::NetCapability,
 }
 
 struct Inner {
@@ -55,6 +58,7 @@ impl SystemSampler {
         // 即便此处 total 仍是 0(平台差异),`primed=false` 也会让首次 drain 强制 delta=0。
         networks.refresh();
         let (rx, tx) = total_traffic(&networks);
+        let netcap = crate::netcap::probe();
         Self {
             inner: Mutex::new(Inner {
                 sys,
@@ -63,6 +67,7 @@ impl SystemSampler {
                 last_tx_total: tx,
                 primed: false,
             }),
+            netcap,
         }
     }
 
@@ -72,7 +77,10 @@ impl SystemSampler {
         let mut g = self.inner.lock().expect("sysinfo sampler poisoned");
         g.sys.refresh_cpu_usage();
         g.sys.refresh_memory();
-        snapshot_of(&g.sys)
+        let mut snap = snapshot_of(&g.sys);
+        snap.ipv4_capability = self.netcap.ipv4;
+        snap.ipv6_capability = self.netcap.ipv6;
+        snap
     }
 
     /// 刷新全部,返回 CPU/MEM/LOAD 采样值 + 自上次 drain 起的 rx/tx 增量。
@@ -140,6 +148,8 @@ fn snapshot_of(sys: &System) -> SystemSnapshot {
         cpu_usage,
         memory_usage,
         load_average,
+        ipv4_capability: 0,
+        ipv6_capability: 0,
     }
 }
 

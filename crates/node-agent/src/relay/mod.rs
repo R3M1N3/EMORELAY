@@ -170,6 +170,71 @@ mod ssrf_tests {
     }
 }
 
+/// 安全拼接 host:port 字符串。host 能 parse 为 IPv6 地址时格式化为 `[host]:port`，
+/// 域名/IPv4 维持 `host:port`。消除 v6 字面量拼接歧义（`2001:db8::1:50100` 不是合法 SocketAddr）。
+pub(crate) fn join_host_port(host: &str, port: u16) -> String {
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// 按目标 IP 族选择 UDP 出站 bind 地址：v6 目标 bind `[::]:0`，v4 目标 bind `0.0.0.0:0`。
+pub(crate) fn udp_bind_addr_for(ip: &IpAddr) -> &'static str {
+    if ip.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    }
+}
+
+/// 按 remote_af 过滤解析到的 IP 列表。
+/// "v4" → 只保留 IPv4；"v6" → 只保留 IPv6；"auto"/空串/其它 → 原样返回。
+pub(crate) fn filter_af(ips: Vec<IpAddr>, remote_af: &str) -> Vec<IpAddr> {
+    match remote_af {
+        "v4" => ips.into_iter().filter(|ip| ip.is_ipv4()).collect(),
+        "v6" => ips.into_iter().filter(|ip| ip.is_ipv6()).collect(),
+        _ => ips,
+    }
+}
+
+/// 双栈 TCP 监听：地址为 `0.0.0.0:{port}` 形态时，先尝试 `[::]:{port}` 并
+/// 显式 `set_only_v6(false)` 使其同时接受 v4/v6；失败（内核禁用 v6 等）回退原地址。
+/// 其余地址原样 bind。
+pub(crate) async fn bind_tcp_dual(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
+    use std::net::SocketAddr;
+    let sa: SocketAddr = addr.parse().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("parse bind addr {addr}: {e}"))
+    })?;
+    if sa.ip() == std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED) {
+        let port = sa.port();
+        match try_bind_dual(port) {
+            Ok(listener) => {
+                tracing::info!(port, "tunnel hop bound [::] dual-stack (v4+v6)");
+                return Ok(listener);
+            }
+            Err(e) => {
+                tracing::warn!(port, error = %e, "dual-stack [::] bind failed, falling back to 0.0.0.0");
+            }
+        }
+    }
+    tokio::net::TcpListener::bind(addr).await
+}
+
+fn try_bind_dual(port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_only_v6(false)?;
+    socket.set_reuse_address(true)?;
+    let bind_addr = std::net::SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, port, 0, 0);
+    socket.bind(&SockAddr::from(bind_addr))?;
+    socket.listen(1024)?;
+    socket.set_nonblocking(true)?;
+    let std_listener: std::net::TcpListener = socket.into();
+    tokio::net::TcpListener::from_std(std_listener)
+}
+
 #[cfg(test)]
 mod backoff_tests {
     use super::is_resource_exhausted;
@@ -219,5 +284,100 @@ mod keepalive_tests {
         assert!(accept_error_is_benign(&Error::from(ErrorKind::ConnectionAborted)));
         assert!(!accept_error_is_benign(&Error::from(ErrorKind::Other)));
         assert!(!accept_error_is_benign(&Error::from(ErrorKind::OutOfMemory)));
+    }
+}
+
+#[cfg(test)]
+mod dualstack_tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    #[test]
+    fn join_host_port_v4() {
+        assert_eq!(join_host_port("1.2.3.4", 80), "1.2.3.4:80");
+    }
+
+    #[test]
+    fn join_host_port_v6() {
+        assert_eq!(join_host_port("2001:db8::1", 443), "[2001:db8::1]:443");
+    }
+
+    #[test]
+    fn join_host_port_domain() {
+        assert_eq!(join_host_port("example.com", 8080), "example.com:8080");
+    }
+
+    #[test]
+    fn join_host_port_v6_mapped() {
+        assert_eq!(
+            join_host_port("::ffff:127.0.0.1", 99),
+            "[::ffff:127.0.0.1]:99"
+        );
+    }
+
+    #[test]
+    fn udp_bind_addr_for_v4() {
+        let ip: IpAddr = "1.2.3.4".parse().unwrap();
+        assert_eq!(udp_bind_addr_for(&ip), "0.0.0.0:0");
+    }
+
+    #[test]
+    fn udp_bind_addr_for_v6() {
+        let ip: IpAddr = "2001:db8::1".parse().unwrap();
+        assert_eq!(udp_bind_addr_for(&ip), "[::]:0");
+    }
+
+    #[test]
+    fn filter_af_v4_only() {
+        let ips: Vec<IpAddr> = vec![
+            "1.1.1.1".parse().unwrap(),
+            "2001:db8::1".parse().unwrap(),
+            "8.8.8.8".parse().unwrap(),
+        ];
+        let filtered = filter_af(ips, "v4");
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|ip| ip.is_ipv4()));
+    }
+
+    #[test]
+    fn filter_af_v6_only() {
+        let ips: Vec<IpAddr> = vec![
+            "1.1.1.1".parse().unwrap(),
+            "2001:db8::1".parse().unwrap(),
+        ];
+        let filtered = filter_af(ips, "v6");
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].is_ipv6());
+    }
+
+    #[test]
+    fn filter_af_auto_keeps_all() {
+        let ips: Vec<IpAddr> = vec![
+            "1.1.1.1".parse().unwrap(),
+            "2001:db8::1".parse().unwrap(),
+        ];
+        assert_eq!(filter_af(ips.clone(), "auto").len(), 2);
+        assert_eq!(filter_af(ips, "").len(), 2);
+    }
+
+    #[test]
+    fn filter_af_all_filtered_out() {
+        let ips: Vec<IpAddr> = vec!["2001:db8::1".parse().unwrap()];
+        assert!(filter_af(ips, "v4").is_empty());
+    }
+
+    #[tokio::test]
+    async fn bind_tcp_dual_loopback() {
+        let l = bind_tcp_dual("0.0.0.0:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        assert!(addr.port() > 0);
+    }
+
+    #[tokio::test]
+    async fn bind_tcp_dual_specific_v4() {
+        let l = bind_tcp_dual("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        assert!(addr.ip().is_loopback());
+        assert!(addr.is_ipv4());
     }
 }

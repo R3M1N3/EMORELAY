@@ -45,6 +45,7 @@ pub fn rule_to_proto(rule: &DbRule, blocked_protocols: u32) -> ProtoRule {
         extra_targets: parse_extra_targets(rule.extra_targets.as_deref()),
         lb_strategy: rule.lb_strategy.clone(),
         send_proxy_protocol: rule.send_proxy_protocol != 0,
+        remote_af: rule.remote_af.clone(),
     }
 }
 

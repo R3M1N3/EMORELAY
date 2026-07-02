@@ -40,10 +40,17 @@ pub struct RuleExportItem {
     /// 负载策略;老文件无此字段默认 fifo。
     #[serde(default = "default_lb_strategy")]
     pub lb_strategy: String,
+    /// 出站地址族偏好;老文件无此字段默认 auto。
+    #[serde(default = "default_remote_af")]
+    pub remote_af: String,
 }
 
 fn default_lb_strategy() -> String {
     "fifo".to_string()
+}
+
+fn default_remote_af() -> String {
+    "auto".to_string()
 }
 
 #[derive(Deserialize)]
@@ -68,6 +75,7 @@ struct ExportRow {
     owner_username: Option<String>,
     extra_targets: Option<String>,
     lb_strategy: String,
+    remote_af: String,
 }
 
 pub async fn export(
@@ -88,7 +96,7 @@ pub async fn export(
     }
     let sql = format!(
         "SELECT fr.name, fr.protocol, fr.listen_ip, fr.listen_port, fr.target_host, \
-                fr.target_port, fr.enabled, fr.extra_targets, fr.lb_strategy, \
+                fr.target_port, fr.enabled, fr.extra_targets, fr.lb_strategy, fr.remote_af, \
                 n.name AS node_name, \
                 t.name AS tunnel_name, \
                 bp.name AS bandwidth_profile_name, \
@@ -129,6 +137,7 @@ pub async fn export(
             owner_username: r.owner_username,
             extra_targets: parse_extra_targets(r.extra_targets.as_deref()),
             lb_strategy: r.lb_strategy,
+            remote_af: r.remote_af,
         })
         .collect();
     let body = serialize_export(&items)?;
@@ -342,6 +351,9 @@ async fn plan_item(
     if !crate::util::is_valid_target_host(item.target_host.trim()) {
         return Ok(PlannedAction::Error("目标主机不是合法 IP 或主机名".into()));
     }
+    if !matches!(item.remote_af.as_str(), "auto" | "v4" | "v6") {
+        return Ok(PlannedAction::Error("remote_af 必须是 auto | v4 | v6".into()));
+    }
 
     let node = match target_node {
         Some(n) => n.clone(),
@@ -468,6 +480,7 @@ async fn execute_create(
         bandwidth_profile_id,
         None,
         None,
+        &item.remote_af,
     )
     .await?;
     // 多目标 / 非默认策略落库(须在 dispatch 前,使下发规则包含全部目标)。
@@ -508,6 +521,7 @@ async fn execute_overwrite(
     Rule::set_enabled(&state.pool, existing_id, item.enabled).await?;
     // 覆盖导入:额外目标 + 策略整组替换(空 = 清空),与导出往返一致。
     Rule::set_targets(&state.pool, existing_id, extra_json, lb_strategy).await?;
+    Rule::set_remote_af(&state.pool, existing_id, &item.remote_af).await?;
     // per-node 锁见 execute_create(勿去):覆盖导入 overwrite 的 ApplyRule 下发同样须互斥。
     if let Some(rule) = Rule::find_by_id(&state.pool, existing_id).await? {
         crate::grpc::tunnel_dispatch::dispatch_rule_apply_locked(state, &rule).await;
@@ -535,6 +549,7 @@ mod tests {
             owner_username: None,
             extra_targets: vec![TargetDto { host: "2.2.2.2".into(), port: 81 }],
             lb_strategy: "round".into(),
+            remote_af: "auto".into(),
         }];
         let s = serialize_export(&items).unwrap();
         assert!(s.contains("\n  "), "导出应为缩进美化 JSON: {s}");

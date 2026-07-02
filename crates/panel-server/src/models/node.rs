@@ -22,13 +22,17 @@ pub struct Node {
     pub agent_version: String,
     /// 协议嗅探阻断位掩码:bit0=http(1) bit1=tls(2) bit2=socks(4);0=不阻断。
     pub block_protocols: i64,
+    /// IPv4 网络能力(Agent heartbeat 上报)。NULL=未知,0=无,1=有。
+    pub has_ipv4: Option<i64>,
+    /// IPv6 网络能力。
+    pub has_ipv6: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 const NODE_COLUMNS: &str = "id, name, region, public_ip, display_address, grpc_endpoint, status, last_seen_at, \
     cpu_usage, memory_usage, load_average, rx_bytes_total, tx_bytes_total, \
-    port_pool_min, port_pool_max, agent_version, block_protocols, created_at, updated_at";
+    port_pool_min, port_pool_max, agent_version, block_protocols, has_ipv4, has_ipv6, created_at, updated_at";
 
 /// 允许的排序字段白名单。SQL 拼接前必须经此过滤。
 pub const SORT_FIELDS: &[&str] = &["id", "name", "status", "region", "created_at", "updated_at"];

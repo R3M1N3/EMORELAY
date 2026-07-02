@@ -21,7 +21,7 @@ impl TunnelTransport for TcpTransport {
     }
 
     async fn bind(&self, addr: &str) -> Result<Box<dyn TunnelListener>> {
-        let l = TcpListener::bind(addr)
+        let l = crate::relay::bind_tcp_dual(addr)
             .await
             .with_context(|| format!("tunnel tcp bind {addr}"))?;
         Ok(Box::new(TcpTunnelListener { inner: l }))
